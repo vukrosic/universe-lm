@@ -4,7 +4,7 @@
 
 Experimental implementation and analysis of DeepSeek V3.2's sparse attention mechanisms. This repository contains systematic experiments comparing sparse vs dense attention across different architectures and sequence lengths.
 
-**📖 Blog Post**: [DeepSeek Sparse Attention Analysis](https://opensuperintelligencelab.com/blog/deepseek-sparse-attention/)
+**📖 Blog Post**: [DeepSeek Sparse Attention](https://opensuperintelligencelab.com/blog/deepseek-sparse-attention/)
 
 ## 🎯 Overview
 
