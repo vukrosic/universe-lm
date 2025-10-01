@@ -16,6 +16,7 @@ Doubling the text length from 10,000 to 20,000 tokens doesn't just double the co
 
 Instead of having each token attend to all previous tokens, DeepSeek Sparse Attention (DSA) intelligently selects a small, fixed-size subset (k) of the most relevant previous tokens to attend to. This changes the complexity from O(L²) to O(L * k), which is much more manageable since k is a small constant (e.g., 2048) and L can be very large (e.g., 128,000).
 
+
 DSA is made of two main components:
 
 The lightning indexer will perform full attention between every token but it's a lot smaller and faster attenion - ReLU actionvation which is very fast and a lot smaller dimension of key and query.
@@ -181,3 +182,94 @@ The beauty of this architecture is how MLA works seamlessly with DSA:
 3. **Memory efficiency is multiplied:** DSA reduces the number of tokens to process, while MLA reduces the memory footprint of each token
 
 This combination allows DeepSeek-V3.2 to process extremely long sequences (128,000+ tokens) while maintaining both computational efficiency and memory efficiency.
+---
+
+## Experimental Research Results
+
+*Preliminary findings from [Open Superintelligence Lab](https://opensuperintelligencelab.com/) research*
+
+### Research Questions
+
+Our experiments aimed to answer:
+
+1. **Does sparse attention improve performance on standard attention architectures?**
+2. **Does sparse attention provide additional benefits when applied to already-efficient Multi-Head Latent Attention (MHLA)?**
+3. **How do these mechanisms scale across different sequence lengths?**
+
+Future research (that you can participate in):
+## Core Architecture
+1. **Why do we need extra weight for indexer score?** (`w_t,j^I` necessity)
+2. **What is the optimal k value for different sequence lengths?**
+
+## Lightning Indexer
+3. **How does indexer performance scale with sequence length?**
+4. **How does scaling influence indexer accuracy and computational efficiency?**
+
+
+### Experiment 1: Standard Attention vs Sparse Attention
+
+| Seq Length | Standard Loss | Sparse Loss | Improvement | Standard Acc | Sparse Acc |
+|------------|---------------|-------------|-------------|--------------|------------|
+| 64         | 8.52          | **3.56**    | **139% better** | 4.3%        | **53.2%**  |
+| 128        | 7.28          | **3.00**    | **143% better** | 6.5%        | **57.6%**  |
+| 256        | 7.15          | **1.78**    | **302% better** | 7.6%        | **68.4%**  |
+
+**Key Finding**: Sparse attention dramatically outperformed standard attention, with benefits increasing for longer sequences.
+
+### Experiment 2: MHLA Dense vs MHLA + Sparse
+
+| Seq Length | MHLA Loss | MHLA+Sparse Loss | Improvement | MHLA Acc | MHLA+Sparse Acc |
+|------------|-----------|------------------|-------------|----------|-----------------|
+| 64         | 7.43      | **6.64**         | **12% better** | 9.2%     | **15.5%**       |
+| 128        | 6.85      | 6.97             | -2% worse    | 10.3%    | 10.3%           |
+| 256        | 6.61      | **6.55**         | **1% better** | 12.5%    | **13.2%**       |
+| 1024       | **4.10**  | 6.91             | **-41% worse** | **32.2%** | 10.7%           |
+| 2048       | 6.64      | **6.63**         | **0% same**   | 11.9%    | **14.4%**       |
+
+**Key Finding**: Mixed results - sparse helped short sequences but significantly hurt long sequences on MHLA.
+
+### Speed Analysis
+
+**Experiment 1**: Similar training speeds (~0.06s per step for both)  
+**Experiment 2**: Sparse version was 1-4% slower due to Lightning Indexer overhead
+
+### Research Insights
+
+**Why Sparse Helps Standard Attention:**
+- **Forced selectivity** acts as regularization
+- **Reduces attention dilution** in dense attention
+- **Prevents overfitting** by focusing on relevant tokens
+
+**Why Sparse May Not Help MHLA:**
+- **Redundant mechanisms**: MHLA already compresses via latent space
+- **Conflicting patterns**: MHLA's learned compression vs Lightning Indexer selection
+- **Double compression**: May be too aggressive for long sequences
+
+### Limitations and Caveats
+
+These are preliminary results from limited experiments. Several factors may affect generalizability:
+
+- **Limited training time**: Only 500-1000 steps per experiment
+- **Small model size**: 512d models may not reflect larger model behavior
+- **Dataset**: Results on TinyStories may not generalize to other domains
+- **Hyperparameters**: Not extensively tuned for each configuration
+
+### Conclusion
+
+Our preliminary findings suggest:
+
+1. **Sparse attention significantly improves standard attention architectures**
+2. **MHLA's latent compression may already provide most benefits of sparsity**
+3. **Combining both mechanisms may be redundant or even harmful for long sequences**
+
+However, these results require further validation with larger models, longer training, and diverse datasets.
+
+### About Open Superintelligence Lab
+
+[Open Superintelligence Lab](https://opensuperintelligencelab.com/) is dedicated to advancing open-source AI research. We conduct experiments like these to understand fundamental mechanisms in large language models and share our findings transparently with the community.
+
+Our research is ongoing, and we welcome collaboration and feedback from the community. These experiments represent active research that may contain flaws or limitations, and we encourage independent verification of our findings.
+
+---
+
+*This research is part of our ongoing investigation into efficient attention mechanisms. Results are preliminary and subject to revision as we conduct more extensive experiments.*
