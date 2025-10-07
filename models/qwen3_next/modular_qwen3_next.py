@@ -20,29 +20,29 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from ...activations import ACT2FN
-from ...cache_utils import Cache
-from ...masking_utils import create_causal_mask
-from ...modeling_flash_attention_utils import FlashAttentionKwargs
-from ...modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
-from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from ...processing_utils import Unpack
-from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.generic import OutputRecorder, check_model_inputs
-from ...utils.import_utils import (
+from transformers.activations import ACT2FN
+from transformers.cache_utils import Cache
+from transformers.masking_utils import create_causal_mask
+from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
+from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from transformers.processing_utils import Unpack
+from transformers.utils import TransformersKwargs, auto_docstring, logging
+from transformers.utils.generic import OutputRecorder, check_model_inputs
+from transformers.utils.import_utils import (
     is_causal_conv1d_available,
     is_flash_linear_attention_available,
 )
-from ..bamba.modeling_bamba import apply_mask_to_padding_states, apply_rotary_pos_emb
-from ..gemma3.modeling_gemma3 import Gemma3RMSNorm
-from ..llama.modeling_llama import (
+from transformers.models.bamba.modeling_bamba import apply_mask_to_padding_states, apply_rotary_pos_emb
+from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
+from transformers.models.llama.modeling_llama import (
     LlamaForQuestionAnswering,
     LlamaForSequenceClassification,
     LlamaForTokenClassification,
 )
-from ..mixtral.modeling_mixtral import MixtralForCausalLM
-from ..qwen2_moe.modeling_qwen2_moe import Qwen2MoeSparseMoeBlock
-from ..qwen3_moe.modeling_qwen3_moe import (
+from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
+from transformers.models.qwen2_moe.modeling_qwen2_moe import Qwen2MoeSparseMoeBlock
+from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeDecoderLayer,
     Qwen3MoeMLP,
