@@ -27,11 +27,13 @@ Fork this repository, create a new experiment in `experiments/` folder, then cre
 
 ## Getting Started
 
-1. Install dependencies: `pip install -r requirements.txt`
-2. Read `CONTRIBUTING.md` for contribution guidelines
-3. Create your own experiment and merge it
-4. Explore the `experiments/` folder for ongoing research and inspiration
-5. Check "Future Work" sections in experiments for inspiration
+1. **Fork this repository** - Click the "Fork" button at the top right of this page to create your own copy
+2. Clone your fork: `git clone https://github.com/YOUR-USERNAME/blueberry-llm.git`
+3. Install dependencies: `pip install -r requirements.txt`
+4. Read `CONTRIBUTING.md` for contribution guidelines
+5. Create your own experiment and merge it
+6. Explore the `experiments/` folder for ongoing research and inspiration
+7. Once you finish with your research, create a pull request to merge it back to this repo
 
 ## Philosophy
 
