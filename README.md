@@ -20,7 +20,9 @@ Fork this repository, create a new experiment in `experiments/` folder, then cre
 
 ## Experiments
 
-> Each experiment below is validated on a specific git tag. Later commits may introduce breaking changes. To run an experiment with correct version of the repo, checkout its validated tag using: `git checkout <tag-name>`
+> Each experiment below is validated on a specific git tag. 
+> Later commits may introduce breaking changes. 
+> To run an experiment with correct version of the repo, checkout its validated tag using: `git checkout <tag-name>`
 
 | Experiment | Researcher | Validated Tag | Research Question | Key Findings |
 |------------|-----------|---------------|-------------------|--------------|
