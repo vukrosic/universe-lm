@@ -8,3 +8,6 @@ matplotlib
 # Single T4 GPU training
 # tensorstore
 # zarr
+
+# Note: Some experiments have additional requirements
+# See individual experiment directories for requirements.txt
