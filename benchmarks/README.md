@@ -25,11 +25,11 @@ Commonsense reasoning via sentence completion (4 choices).
 ```bash
 # ARC-Challenge
 python benchmarks/arc_challenge.py \
-    --checkpoint experiments/exp7_gated_deltanet_training/checkpoints/best_model.pt
+    --checkpoint experiments/exp7_hybrid_deltanet_ablation/checkpoints/best_model.pt
 
 # HellaSwag
 python benchmarks/hellaswag.py \
-    --checkpoint experiments/exp7_gated_deltanet_training/checkpoints/best_model.pt
+    --checkpoint experiments/exp7_hybrid_deltanet_ablation/checkpoints/best_model.pt
 
 # Custom split and sample limit
 python benchmarks/arc_challenge.py \
@@ -44,7 +44,7 @@ python benchmarks/arc_challenge.py \
 # Compare exp6 vs exp7
 python benchmarks/compare_models.py \
     experiments/exp6_gated_deltanet_training/checkpoints/best_model.pt \
-    experiments/exp7_gated_deltanet_training/checkpoints/best_model.pt
+    experiments/exp7_hybrid_deltanet_ablation/checkpoints/best_model.pt
 
 # Quick comparison (100 samples per benchmark)
 python benchmarks/compare_models.py \

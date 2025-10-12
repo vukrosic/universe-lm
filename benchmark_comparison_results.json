@@ -1,7 +1,7 @@
 [
   {
-    "checkpoint": "experiments/exp7_gated_deltanet_training/checkpoints/best_model.pt",
-    "exp_name": "exp7_gated_deltanet_training",
+    "checkpoint": "experiments/exp7_hybrid_deltanet_ablation/checkpoints/best_model.pt",
+    "exp_name": "exp7_hybrid_deltanet_ablation",
     "model_info": {
       "hidden_size": 768,
       "num_layers": 12,
