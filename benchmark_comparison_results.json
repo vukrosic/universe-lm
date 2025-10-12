@@ -1,0 +1,14 @@
+[
+  {
+    "checkpoint": "experiments/exp7_gated_deltanet_training/checkpoints/best_model.pt",
+    "exp_name": "exp7_gated_deltanet_training",
+    "model_info": {
+      "hidden_size": 768,
+      "num_layers": 12,
+      "num_heads": 12
+    },
+    "arc_accuracy": 40.0,
+    "arc_correct": 4,
+    "arc_total": 10
+  }
+]
