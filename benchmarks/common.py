@@ -40,8 +40,8 @@ def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloa
     if 'exp7' in exp_name or 'exp6' in exp_name:
         # Exp6/7 use FLA DeltaNet
         if 'exp7' in exp_name:
-            from experiments.exp7_gated_deltanet_training.models import GatedDeltaNetWrapper
-            from experiments.exp7_gated_deltanet_training.config import ExperimentConfig
+            from experiments.exp7_hybrid_deltanet_ablation.models import GatedDeltaNetWrapper
+            from experiments.exp7_hybrid_deltanet_ablation.config import ExperimentConfig
         else:
             from experiments.exp6_gated_deltanet_training.models import GatedDeltaNetWrapper
             from experiments.exp6_gated_deltanet_training.config import ExperimentConfig
