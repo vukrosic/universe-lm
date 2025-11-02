@@ -9,6 +9,11 @@ class MoEModelConfig:
     n_heads: int = 8
     n_layers: int = 6
     d_ff: int = 1536
+    use_mla: bool = False
+    qk_rope_dim: int | None = 32
+    qk_nope_dim: int | None = 128
+    kv_lora_rank: int | None = 64
+    v_dim: int | None = 128
     batch_size: int = 24
     max_steps: int = 20
 
