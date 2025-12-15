@@ -66,12 +66,12 @@ class GPU24GBMoEModelConfig(MoEModelConfig):
     expert_top_k: int = 2
     
     # Batch size
-    batch_size: int = 12
+    batch_size: int = 16
     gradient_accumulation_steps: int = 1
     
     # Data
     max_seq_len: int = 1024
-    num_documents: int = 10000
+    num_documents: int = 15000
     
     # Reduced logging
     log_milestones: Tuple[int, ...] = (100, 200, 300)

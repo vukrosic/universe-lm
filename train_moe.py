@@ -23,6 +23,77 @@ def print_system_info():
     print(f"PyTorch: {torch.__version__}\n")
 
 
+def prepare_datasets(data_cfg, tokenizer):
+    import json
+    import shutil
+    from datasets import load_from_disk, load_dataset, Dataset
+    from data.loader import tokenize_and_chunk, finalize_dataset
+
+    cache_dir = "./processed_data"
+    train_cache = os.path.join(cache_dir, "train")
+    val_cache = os.path.join(cache_dir, "val")
+    info_path = os.path.join(cache_dir, "dataset_info.json")
+
+    # Define what config parameters invalidate the cache
+    config_state = {
+        "dataset_path": data_cfg.dataset_path,
+        "dataset_name": data_cfg.dataset_name,
+        "tokenizer_name": data_cfg.tokenizer_name,
+        "seq_length": data_cfg.seq_length,
+        "num_samples": data_cfg.num_samples,
+    }
+
+    # 1. Try to load valid cache
+    if os.path.exists(train_cache) and os.path.exists(val_cache) and os.path.exists(info_path):
+        try:
+            with open(info_path, "r") as f:
+                if json.load(f) == config_state:
+                    print(f"Loading cached datasets from {cache_dir}...")
+                    return load_from_disk(train_cache), load_from_disk(val_cache)
+            print("Cache configuration mismatch. Rebuilding...")
+        except Exception as e:
+            print(f"Cache check failed ({e}). Rebuilding...")
+    
+    # 2. Rebuild cache
+    if os.path.exists(cache_dir):
+        print(f"Cleaning old cache at {cache_dir}...")
+        shutil.rmtree(cache_dir)
+    
+    # Load and split
+    print("Loading raw dataset and splitting documents...")
+    raw_dataset = load_dataset(
+        data_cfg.dataset_path,
+        data_cfg.dataset_name,
+        split=data_cfg.split,
+        cache_dir=data_cfg.cache_dir,
+        streaming=True,
+    )
+    
+    raw_samples = list(raw_dataset.take(data_cfg.num_samples))
+    num_val = int(len(raw_samples) * 0.1)
+    num_train = len(raw_samples) - num_val
+    
+    raw_train = Dataset.from_list(raw_samples[:num_train])
+    raw_val = Dataset.from_list(raw_samples[num_train:])
+    print(f"Split into {len(raw_train):,} train docs and {len(raw_val):,} val docs")
+    
+    # Tokenize and save
+    print("Tokenizing train set...")
+    data_cfg.save_to_disk = train_cache
+    train_ds = finalize_dataset(tokenize_and_chunk(raw_train, tokenizer, data_cfg), data_cfg)
+    
+    print("Tokenizing validation set...")
+    data_cfg.save_to_disk = val_cache
+    val_ds = finalize_dataset(tokenize_and_chunk(raw_val, tokenizer, data_cfg), data_cfg)
+
+    # Save cache info
+    with open(info_path, "w") as f:
+        json.dump(config_state, f, indent=2)
+    print("Saved dataset cache info.")
+
+    return train_ds, val_ds
+
+
 def main():
     logger = setup_logging(log_dir="./logs")
     logger.info("Starting MoE training")
@@ -43,54 +114,14 @@ def main():
         cache_dir="./hf_cache",
     )
 
-    from data.loader import setup_tokenizer, tokenize_and_chunk, finalize_dataset
-    from datasets import load_from_disk, load_dataset, Dataset
+    from data.loader import setup_tokenizer
     
     # Setup tokenizer first to get vocab size
     tokenizer = setup_tokenizer(data_cfg)
     config.vocab_size = tokenizer.vocab_size
 
-    # Define cache paths
-    cache_dir = "./processed_data"
-    train_cache = os.path.join(cache_dir, "train")
-    val_cache = os.path.join(cache_dir, "val")
-
-    if os.path.exists(train_cache) and os.path.exists(val_cache):
-        print(f"Loading cached datasets from {cache_dir}...")
-        train_ds = load_from_disk(train_cache)
-        val_ds = load_from_disk(val_cache)
-    else:
-        # Split documents BEFORE tokenization to prevent data leakage
-        print("Loading raw dataset and splitting documents...")
-        raw_dataset = load_dataset(
-            data_cfg.dataset_path,
-            data_cfg.dataset_name,
-            split=data_cfg.split,
-            cache_dir=data_cfg.cache_dir,
-            streaming=True,
-        )
-        
-        # Take samples and split into train/val
-        raw_samples = list(raw_dataset.take(data_cfg.num_samples))
-        num_val = int(len(raw_samples) * 0.1)
-        num_train = len(raw_samples) - num_val
-        
-        raw_train = Dataset.from_list(raw_samples[:num_train])
-        raw_val = Dataset.from_list(raw_samples[num_train:])
-        logger.info(f"Split into {len(raw_train):,} train docs and {len(raw_val):,} val docs")
-        
-        # Now tokenize each split separately
-        print("Tokenizing train set...")
-        train_ds = tokenize_and_chunk(raw_train, tokenizer, data_cfg)
-        # Save train split
-        data_cfg.save_to_disk = train_cache
-        train_ds = finalize_dataset(train_ds, data_cfg)
-        
-        print("Tokenizing validation set...")
-        val_ds = tokenize_and_chunk(raw_val, tokenizer, data_cfg)
-        # Save val split
-        data_cfg.save_to_disk = val_cache
-        val_ds = finalize_dataset(val_ds, data_cfg)
+    # Prepare datasets (handles caching automatically)
+    train_ds, val_ds = prepare_datasets(data_cfg, tokenizer)
     
     logger.info(f"Train sequences: {len(train_ds):,}, Val sequences: {len(val_ds):,}")
 
