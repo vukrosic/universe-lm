@@ -114,6 +114,7 @@ def train_model(
     metrics_history = {
         'steps': [],
         'val_losses': [],
+        'val_aux_losses': [],
         'val_accuracies': [],
         'val_perplexities': [],
         'elapsed_times': [],
@@ -233,12 +234,14 @@ def train_model(
                 # Track metrics
                 metrics_history['steps'].append(step)
                 metrics_history['val_losses'].append(eval_metrics['val_loss'])
+                metrics_history['val_aux_losses'].append(eval_metrics['val_aux_loss'])
                 metrics_history['val_accuracies'].append(eval_metrics['val_accuracy'])
                 metrics_history['val_perplexities'].append(eval_metrics['val_perplexity'])
                 metrics_history['elapsed_times'].append(elapsed_time)
                 metrics_history['learning_rates'].append(current_lr)
                 
                 print(f"\nStep {step}: Val Loss: {eval_metrics['val_loss']:.4f}, "
+                      f"Val Aux Loss: {eval_metrics['val_aux_loss']:.4f}, "
                       f"Val Acc: {eval_metrics['val_accuracy']:.4f}, "
                       f"Val PPL: {eval_metrics['val_perplexity']:.2f}, "
                       f"LR: {current_lr:.5f}")
@@ -266,6 +269,7 @@ def train_model(
         
         metrics_history['steps'].append(step)
         metrics_history['val_losses'].append(final_eval['val_loss'])
+        metrics_history['val_aux_losses'].append(final_eval['val_aux_loss'])
         metrics_history['val_accuracies'].append(final_eval['val_accuracy'])
         metrics_history['val_perplexities'].append(final_eval['val_perplexity'])
         metrics_history['elapsed_times'].append(elapsed_time)
@@ -283,6 +287,7 @@ def train_model(
     
     print(f"\n📊 Final Results:")
     print(f"   Val Loss: {final_eval['val_loss']:.4f}")
+    print(f"   Val Aux Loss: {final_eval['val_aux_loss']:.4f}")
     print(f"   Val Accuracy: {final_eval['val_accuracy']:.4f}")
     print(f"   Val Perplexity: {final_eval['val_perplexity']:.2f}")
     print(f"   Total Time: {total_time:.2f} min")

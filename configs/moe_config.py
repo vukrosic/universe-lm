@@ -75,11 +75,11 @@ class GPU24GBMoEModelConfig(MoEModelConfig):
     
     # Data
     max_seq_len: int = 1024
-    num_documents: int = 15000
+    num_documents: int = 25000
     
     # Reduced logging
     log_milestones: Tuple[int, ...] = (100, 200, 300)
-    max_steps: int = 500
+    max_steps: int = 800
     eval_every: int = 50
     
     def __post_init__(self):

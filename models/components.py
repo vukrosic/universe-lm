@@ -121,10 +121,8 @@ class MixtureOfExperts(nn.Module):
                 # Add weighted expert output to result
                 output[expert_mask] += expert_weights.unsqueeze(-1) * expert_output
 
-        # Compute load balancing loss during training
-        aux_loss = None
-        if self.training:
-            aux_loss = self._compute_load_balancing_loss(router_probs, expert_indices)
+        # Compute load balancing loss
+        aux_loss = self._compute_load_balancing_loss(router_probs, expert_indices)
 
         return output, aux_loss
 

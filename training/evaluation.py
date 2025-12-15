@@ -11,6 +11,7 @@ def evaluate_model(model: nn.Module, val_loader: DataLoader, config: MoEModelCon
     """Evaluate model performance"""
     model.eval()
     total_loss = 0
+    total_aux_loss = 0
     total_tokens = 0
     total_correct = 0
 
@@ -43,7 +44,7 @@ def evaluate_model(model: nn.Module, val_loader: DataLoader, config: MoEModelCon
 
             with autocast('cuda', dtype=torch.float16, enabled=config.use_amp):
                 # MoE model evaluation
-                logits = model(x, return_aux_loss=False)  # Don't return aux loss during eval
+                logits, aux_loss = model(x, return_aux_loss=True)
                 # Shift for causal LM: predict next token
                 shift_logits = logits[:, :-1, :].contiguous()
                 shift_labels = y[:, 1:].contiguous()
@@ -55,14 +56,23 @@ def evaluate_model(model: nn.Module, val_loader: DataLoader, config: MoEModelCon
             # Count tokens correctly (we lose one token per sequence due to shifting)
             num_tokens = shift_labels.numel()
             total_loss += loss.item() * num_tokens
+            if aux_loss is not None:
+                total_aux_loss += aux_loss.item() * num_tokens
+            
             total_tokens += num_tokens
 
             predictions = shift_logits.argmax(dim=-1)
             total_correct += (predictions == shift_labels).sum().item()
 
     avg_loss = total_loss / total_tokens
+    avg_aux_loss = total_aux_loss / total_tokens if total_tokens > 0 else 0.0
     accuracy = total_correct / total_tokens
     perplexity = math.exp(min(avg_loss, 20))
 
     model.train()
-    return {'val_loss': avg_loss, 'val_accuracy': accuracy, 'val_perplexity': perplexity}
+    return {
+        'val_loss': avg_loss, 
+        'val_aux_loss': avg_aux_loss, 
+        'val_accuracy': accuracy, 
+        'val_perplexity': perplexity
+    }
