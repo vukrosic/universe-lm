@@ -60,6 +60,16 @@ We maintain baseline performance metrics to track improvements. All experiments 
 
 *Full baseline results are stored in `baselines/gpu_24gb/`.*
 
+## 🧪 Running Experiments
+
+To run a new experiment without overwriting the baseline, simply provide a unique experiment name:
+
+```bash
+python train_moe.py --experiment_name my_new_experiment
+```
+
+Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/` for easy comparison.
+
 ## 🤝 Contributing
 
 We welcome all contributions!
