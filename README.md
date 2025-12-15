@@ -2,6 +2,11 @@
 
 **Open Superintelligence Lab** - Open research for everyone. We publish all of our research for the sake of accelerating science. Learn real AI research from a real research lab.
 
+### Goals
+
+1. Create a network of contributors and open lab structure to develop the best LLMs.
+2. Get more compute for a large-scale LLM project that will compete with the best LLMs.
+
 ## Quick Start
 
 ```bash
