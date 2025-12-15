@@ -7,12 +7,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataConfig:
     # Dataset source (supports HF dataset path format)
-    dataset_path: str  # e.g., "wikipedia/20231101.en" or "HuggingFaceTB/smollm-corpus"
-    dataset_name: Optional[str] = None  # e.g., "cosmopedia-v2"
+    dataset_path: str = "HuggingFaceTB/smollm-corpus"
+    dataset_name: Optional[str] = "cosmopedia-v2"
     split: str = "train"
     
     # Tokenizer
-    tokenizer_name: str = "gpt2"
+    tokenizer_name: str = "HuggingFaceTB/SmolLM-135M"
     use_fast: bool = True
     trust_remote_code: bool = False
     

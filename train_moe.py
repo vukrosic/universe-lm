@@ -126,9 +126,6 @@ def main():
 
     print("Loading dataset with Hugging Face Datasets API...")
     data_cfg = DataConfig(
-        dataset_path="HuggingFaceTB/smollm-corpus",
-        dataset_name="cosmopedia-v2",
-        tokenizer_name="HuggingFaceTB/SmolLM-135M",
         seq_length=config.max_seq_len,
         num_samples=config.num_documents,
         cache_dir="./hf_cache",
