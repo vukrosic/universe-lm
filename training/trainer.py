@@ -386,7 +386,7 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
     print(f"   📊 Plots saved to {plot_path}")
 
 
-def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None):
+def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None, experiment_name: Optional[str] = None):
     """
     Train the MoE model with default Muon optimizer setup.
     This is a convenience wrapper around the generic train_model function.
@@ -435,7 +435,7 @@ def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader
         schedulers=schedulers,
         early_stopper=None,
         output_dir=output_dir,
-        experiment_name=None,
+        experiment_name=experiment_name,
         plot_fn=None,
         extra_config=None,
     )
