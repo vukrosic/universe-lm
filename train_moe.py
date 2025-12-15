@@ -94,6 +94,20 @@ def main():
     
     logger.info(f"Train sequences: {len(train_ds):,}, Val sequences: {len(val_ds):,}")
 
+    # Check for sufficient data
+    total_needed = config.max_steps * config.batch_size
+    if len(train_ds) < total_needed:
+        msg = (
+            f"Insufficient training data! "
+            f"Need {total_needed} sequences (max_steps={config.max_steps} * batch_size={config.batch_size}) "
+            f"but only have {len(train_ds)} sequences. "
+            f"The model will overfit if data repeats. "
+            f"To fix: increase num_documents (currently {config.num_documents}) "
+            f"or reduce max_steps."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+
     loader_args = dict(
         batch_size=config.batch_size,
         num_workers=2,

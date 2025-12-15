@@ -71,7 +71,7 @@ class GPU24GBMoEModelConfig(MoEModelConfig):
     
     # Data
     max_seq_len: int = 1024
-    num_documents: int = 1000
+    num_documents: int = 10000
     
     # Reduced logging
     log_milestones: Tuple[int, ...] = (100, 200, 300)
