@@ -1,3 +1,4 @@
+import argparse
 import time
 import os
 import torch
@@ -100,9 +101,28 @@ def main():
 
     print_system_info()
     set_seed(42)
+    parser = argparse.ArgumentParser(description="Train MoE Model")
+    parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
+    parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
+    parser.add_argument("--max_steps", type=int, help="Override max_steps")
+    parser.add_argument("--experiment_name", type=str, default="moe_training", help="Name of the experiment")
+    parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
+    args = parser.parse_args()
+
     # For H100 uncomment MoEModelConfig, for small GPU uncomment GPU24GBMoEModelConfig
     # config = MoEModelConfig()
     config = GPU24GBMoEModelConfig()
+
+    # Override config with args
+    if args.muon_lr is not None:
+        config.muon_lr = args.muon_lr
+    if args.adamw_lr is not None:
+        config.adamw_lr = args.adamw_lr
+    if args.max_steps is not None:
+        config.max_steps = args.max_steps
+    
+    experiment_name = args.experiment_name
+    output_dir = os.path.join(args.output_dir, experiment_name)
 
     print("Loading dataset with Hugging Face Datasets API...")
     data_cfg = DataConfig(
@@ -161,7 +181,7 @@ def main():
     print("-" * 70)
     start = time.time()
 
-    model, metrics = train_moe_model(config, train_loader, val_loader, output_dir="./checkpoints")
+    model, metrics = train_moe_model(config, train_loader, val_loader, output_dir=output_dir, experiment_name=experiment_name)
     elapsed = (time.time() - start) / 60
     logger.info("Training complete")
 
@@ -173,7 +193,7 @@ def main():
     print(f"Val perplexity: {metrics['val_perplexity']:.2f}")
     logger.info(f"Final metrics: {metrics}")
 
-    ckpt_path = "./checkpoints/final_model.pt"
+    ckpt_path = os.path.join(output_dir, "final_model.pt")
     os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     torch.save(
         {"model_state_dict": model.state_dict(),

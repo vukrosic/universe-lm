@@ -68,6 +68,10 @@ class GPU24GBMoEModelConfig(MoEModelConfig):
     # Batch size
     batch_size: int = 16
     gradient_accumulation_steps: int = 1
+
+    # Training parameters (Optimized via sweep)
+    muon_lr: float = 0.04
+    adamw_lr: float = 0.006
     
     # Data
     max_seq_len: int = 1024
