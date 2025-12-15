@@ -4,11 +4,47 @@
 
 **Open Superintelligence Lab** - Open research for everyone. We publish all of our research for the sake of accelerating science. Learn real AI research from a real research lab.
 
+## 📺 YouTube Video
+
+[![Watch the video](https://img.youtube.com/vi/dayc3y34XXs/maxresdefault.jpg)](https://youtu.be/dayc3y34XXs)
+
+🎥 **[Watch our introduction video](https://youtu.be/dayc3y34XXs)** to learn more about the project!
+
+## 🗺️ Roadmap
+
+**Our goals:**
+1. **Top 150** in LMArena (GPT-4o-mini level) by April 2026
+2. **Top 50** by Dec 2026
+3. **Top 10** by April 2027
+4. We could aim for **Top 1** by 2028, TBD
+
+**Likely architecture for our first LLM (Top 150, April 2026):**
+- 8 Billion Parameters
+- 15 Trillion Tokens
+
+This requires 300,000 H100 hours or equivalent.
+
+We will partner with one or multiple partners for this compute while keeping all research / engineering / code FULLY open source (and making daily videos on everything we do), for the sake of open science that benefits everyone.
+
+**Potential partners include:**
+Hugging Face, NVIDIA, Microsoft, Google, Amazon, Meta, IBM, Oracle, Alibaba, Tencent, Huawei, Baidu, CoreWeave, Lambda Labs, Hyperbolic, Stability AI, OpenAI, Anthropic, xAI, Cohere, Mistral AI, Graphcore, Tenstorrent, Intel, AMD, Dell Technologies, ai2, a16z, Sequoia Capital, and more.
+
+As a community, we will find ways to get the compute.
+
+Currently LLMs are the most useful AI models, so it's a clear way for us to do useful research. As we gain more experience, we will expand towards more speculative research that could lead to better AI models.
+
+**If you or someone you know has extensive research experience and can offer advisory or leadership support, please contact me.**
+
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting Started & Contributing
 
-To get started with development, follow these steps to set up your environment.
+We welcome all contributions! Follow this workflow to get started:
+
+### 1. **Pick a task**
+Check the [Tasks](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/issues) and carefully read and understand the task you want to work on. Leave a comment or send a Discord message when you begin working on it. If you want to do something that is not listed, please tell us on Discord to ensure you do it in a way that aligns with our goal.
+
+### 2. **Set up your environment**
 
 1. **Fork this repository** - Click the "Fork" button at the top right to create your own copy.
 2. **Clone your fork**:
@@ -24,6 +60,9 @@ To get started with development, follow these steps to set up your environment.
    ```bash
    pip install -r requirements.txt
    ```
+
+### 3. **Implement your changes**
+Write your code following the setup instructions above and our coding standards.
 
 ## ⚡ Quick Start
 
@@ -75,21 +114,11 @@ Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/`
 
 > **Performance Test (optional):** We will run the experiments anyways, but you may also run it yourself. Make sure to specify a new name so you don't overwrite the baseline.
 
-## 🤝 Contributing
-
-We welcome all contributions!
-
-### Contribution Workflow
-
-1. **Pick a task**: Check the [Issues](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/issues) tab and carefully read and understand the task.
-2. **Write your code**: Fork, clone, and implement your experiment following the setup instructions above.
-3. **Verification & Testing**:
+### 4. **Verification & Testing**
    - **Debug Mode:** Run `python debug_moe.py` to quickly verify your code runs without errors.
    - **Performance Test (optional):** Run your experiment with a unique name to test performance.
-4. **Submission**: Once finished, create a Pull Request into the `development` branch. Please notify us on [Discord](https://discord.gg/6AbXGpKTwN).
 
-Please read `CONTRIBUTING.md` for detailed guidelines.
+### 5. **Submission**
+Once finished, create a Pull Request into the `development` branch. Please notify us on [Discord](https://discord.gg/6AbXGpKTwN).
 
-### Goals
-1. Create a network of contributors and open lab structure to develop state-of-the-art LLMs.
-2. Secure compute resources for a larger-scale LLM project to compete with top LLMs.
+> Please read `CONTRIBUTING.md` for detailed guidelines.
