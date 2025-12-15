@@ -24,13 +24,13 @@ def print_system_info():
     print(f"PyTorch: {torch.__version__}\n")
 
 
-def prepare_datasets(data_cfg, tokenizer):
+def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
     import json
     import shutil
     from datasets import load_from_disk, load_dataset, Dataset
     from data.loader import tokenize_and_chunk, finalize_dataset
 
-    cache_dir = "./processed_data"
+    # cache_dir provided via argument
     train_cache = os.path.join(cache_dir, "train")
     val_cache = os.path.join(cache_dir, "val")
     info_path = os.path.join(cache_dir, "dataset_info.json")
@@ -59,6 +59,9 @@ def prepare_datasets(data_cfg, tokenizer):
     if os.path.exists(cache_dir):
         print(f"Cleaning old cache at {cache_dir}...")
         shutil.rmtree(cache_dir)
+    
+    # Ensure directory exists immediately
+    os.makedirs(cache_dir, exist_ok=True)
     
     # Load and split
     print("Loading raw dataset and splitting documents...")

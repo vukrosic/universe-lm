@@ -1,18 +1,15 @@
 # Looking for a name for this LLM
 
+Training the best possbile LLM from scratch for 5$.
+
 **Open Superintelligence Lab** - Open research for everyone. We publish all of our research for the sake of accelerating science. Learn real AI research from a real research lab.
-
-### Goals
-
-1. Create a network of contributors and open lab structure to develop the best LLMs.
-2. Get more compute for a large-scale LLM project that will compete with the best LLMs.
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
 
-
+# This will run the 24GB GPU config
 python train_moe.py
 ```
 
@@ -83,3 +80,8 @@ Full baseline results (metrics and plots) are stored in `baselines/gpu_24gb/`.
 4. Once finished, report it back on Discord / Issue, we may merge your full code or just final results, depending on the task
 
 See `CONTRIBUTING.md` for guidelines on how to contribute to this project
+
+### Goals
+
+1. Create a network of contributors and open lab structure to develop the best LLMs.
+2. Get more compute for a large-scale LLM project that will compete with the best LLMs.

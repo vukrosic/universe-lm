@@ -41,7 +41,7 @@ def main():
     config.vocab_size = tokenizer.vocab_size
 
     # Prepare datasets (handles caching automatically)
-    train_ds, val_ds = prepare_datasets(data_cfg, tokenizer)
+    train_ds, val_ds = prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data_debug")
     
     logger.info(f"Train sequences: {len(train_ds):,}, Val sequences: {len(val_ds):,}")
 
