@@ -91,7 +91,6 @@ def tokenize_and_chunk(
         )
     
     block_size = config.seq_length
-    stride = config.stride if config.stride is not None else block_size
     
     def group_texts(examples):
         # Concatenate all sequences in this batch
@@ -108,24 +107,10 @@ def tokenize_and_chunk(
         
         # Drop partial block at the end
         trunc = (total // block_size) * block_size
-        
-        if stride == block_size:
-            # Non-overlapping windows (fast path)
-            n = trunc // block_size
-            return {k: v[:trunc].reshape(n, block_size) for k, v in arrays.items()}
-        
-        # Overlapping windows using strided views
-        n_windows = (trunc - block_size) // stride + 1
-        return {
-            k: as_strided(
-                v, 
-                shape=(n_windows, block_size), 
-                strides=(stride * v.strides[0], v.strides[0])
-            )
-            for k, v in arrays.items()
-        }
+        n = trunc // block_size
+        return {k: v[:trunc].reshape(n, block_size) for k, v in arrays.items()}
 
-    logger.info(f"Grouping texts into blocks of size {block_size} with stride {stride}")
+    logger.info(f"Grouping texts into blocks of size {block_size}")
     if is_streaming:
         lm_dataset = tokenized.map(
             group_texts,
@@ -166,8 +151,9 @@ def finalize_dataset(dataset: Union[Dataset, IterableDataset], config: DataConfi
     # Set PyTorch format
     dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     
-    if config.save_to_disk:
-        logger.info(f"Saving preprocessed dataset to {config.save_to_disk}")
-        dataset.save_to_disk(config.save_to_disk)
+    # save_to_disk handling moved to external logic or removed
+    # from config, but the trainer might still manually save.
+    # For now, simply return the dataset as explicit save_to_disk
+    # in config is removed.
     
     return dataset

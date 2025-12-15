@@ -18,15 +18,15 @@ class DataConfig:
     
     # Sequence processing
     seq_length: int = 512
-    stride: Optional[int] = None  # For overlapping windows, None = seq_length
+    # stride: removed (unused)
     
     # Limits
     num_samples: Optional[int] = None  # Limit number of documents
     
     # Columns and preprocessing
     text_column: str = "text"
-    preprocessing_fn: Optional[Callable[[dict], dict]] = None
-    filter_fn: Optional[Callable[[dict], bool]] = None
+    # preprocessing_fn: removed (unused)
+    # filter_fn: removed (unused)
     
     # Caching
     cache_dir: Optional[str] = "./hf_cache"
@@ -36,16 +36,14 @@ class DataConfig:
     streaming: bool = True  # Stream dataset to avoid downloading everything upfront
 
     # Persistence
-    save_to_disk: Optional[str] = None  # path to save preprocessed dataset
-    load_from_disk: Optional[str] = None  # path to load preprocessed dataset
+    # save_to_disk / load_from_disk: removed (unused/handled externally)
 
     def __post_init__(self) -> None:
-        # Validate dataset_path (only required if not loading from disk)
-        if not self.load_from_disk:
-            if not self.dataset_path or not isinstance(self.dataset_path, str):
-                raise ValueError("dataset_path must be a non-empty string when not loading from disk")
-            if not self.dataset_path.strip():
-                raise ValueError("dataset_path cannot be empty or whitespace")
+        # Validate dataset_path
+        if not self.dataset_path or not isinstance(self.dataset_path, str):
+            raise ValueError("dataset_path must be a non-empty string")
+        if not self.dataset_path.strip():
+            raise ValueError("dataset_path cannot be empty or whitespace")
         
         # Validate tokenizer_name
         if not self.tokenizer_name or not isinstance(self.tokenizer_name, str):
@@ -64,17 +62,6 @@ class DataConfig:
             raise TypeError(f"seq_length must be an integer, got {type(self.seq_length).__name__}")
         if self.seq_length <= 0:
             raise ValueError(f"seq_length must be positive, got {self.seq_length}")
-        
-        # Validate stride
-        if self.stride is not None:
-            if not isinstance(self.stride, int):
-                raise TypeError(f"stride must be an integer, got {type(self.stride).__name__}")
-            if self.stride <= 0:
-                raise ValueError(f"stride must be positive, got {self.stride}")
-            if self.stride > self.seq_length:
-                raise ValueError(
-                    f"stride ({self.stride}) cannot be greater than seq_length ({self.seq_length})"
-                )
         
         # Validate num_samples
         if self.num_samples is not None:
@@ -95,10 +82,3 @@ class DataConfig:
                 raise TypeError(f"num_proc must be an integer, got {type(self.num_proc).__name__}")
             if self.num_proc <= 0:
                 raise ValueError(f"num_proc must be positive, got {self.num_proc}")
-        
-        # Warn if both save_to_disk and load_from_disk are set
-        if self.save_to_disk and self.load_from_disk:
-            logger.warning(
-                "Both save_to_disk and load_from_disk are set. "
-                "The dataset will be loaded from disk, ignoring save_to_disk."
-            )
