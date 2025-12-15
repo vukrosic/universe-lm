@@ -55,9 +55,9 @@ We maintain baseline performance metrics to track improvements. All experiments 
 
 | Metric | Value |
 | :--- | :--- |
-| **Validation Loss** | 4.0977 |
-| **Validation Accuracy** | 31.90% |
-| **Perplexity** | 60.20 |
+| **Validation Loss** | 3.6684 |
+| **Validation Accuracy** | 35.64% |
+| **Perplexity** | 39.19 |
 
 ![GPU 24GB Baseline Metrics](baselines/gpu_24gb/metrics_plot.png)
 
