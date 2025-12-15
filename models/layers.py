@@ -8,7 +8,9 @@ from .components import MixtureOfExperts
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
         super().__init__()
-        self.rope = RotaryPositionalEmbeddings(dim=dim, max_seq_len=max_seq_len, base=10000)
+        self.rope = RotaryPositionalEmbeddings(
+            dim=dim, max_seq_len=max_seq_len, base=10000
+        )
 
     def forward(self, x_BTHD: torch.Tensor):
         # x_BTHD shape: [B, T, H, D] - need to convert to [B, T, H, D] for torchtune
@@ -18,7 +20,9 @@ class Rotary(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1):
+    def __init__(
+        self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1
+    ):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
@@ -26,6 +30,8 @@ class MultiHeadAttention(nn.Module):
 
         self.qkv = nn.Linear(d_model, d_model * 3, bias=False)
         self.w_o = nn.Linear(d_model, d_model, bias=False)
+        self.q_norm = nn.RMSNorm(self.d_k)
+        self.k_norm = nn.RMSNorm(self.d_k)
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
 
@@ -37,18 +43,20 @@ class MultiHeadAttention(nn.Module):
 
         qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
         qkv = qkv.permute(2, 0, 3, 1, 4)
-        Q, K, V = qkv[0], qkv[1], qkv[2] # [B, H, T, D]
+        Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
 
         # Q = self.rotary(Q)
         # K = self.rotary(K)
         # Apply RoPE on [B, T, H, D]
-        Q = self.rotary(Q.transpose(1, 2)).transpose(1, 2)
-        K = self.rotary(K.transpose(1, 2)).transpose(1, 2)
+        Q = self.rotary(self.q_norm(Q.transpose(1, 2))).transpose(1, 2)
+        K = self.rotary(self.k_norm(K.transpose(1, 2))).transpose(1, 2)
 
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
         )
-        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.d_model)
+        attn_output = attn_output.transpose(1, 2).reshape(
+            batch_size, seq_len, self.d_model
+        )
         # attn_output = attn_output.transpose(1, 2).reshape(B, T, self.d_model)
         return self.w_o(attn_output)
 
