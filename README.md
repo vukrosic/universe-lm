@@ -55,6 +55,12 @@ Run on a single 24GB VRAM GPU (e.g., RTX 3090/4090).
 - **Validation Accuracy**: 31.90%
 - **Perplexity**: 60.20
 
+![GPU 24GB Baseline Metrics](baselines/gpu_24gb/metrics_plot.png)
+
+Trained on 1x4090.
+
+If your experiment runs for more time, doesn't mean it's worse, you may be using weaker hardware. We will test it.
+
 Full baseline results (metrics and plots) are stored in `baselines/gpu_24gb/`.
 
 
@@ -70,5 +76,10 @@ Full baseline results (metrics and plots) are stored in `baselines/gpu_24gb/`.
 7. Once you finish with your research, create a pull request to merge it back to this repo
 
 ## Contributing
+
+1. Pick a topic / task from [issues](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/issues) (issues are general name for tasks), carefully read it and understand it
+2. Fork the repo
+3. Clone it and implement the experiment, follow README
+4. Once finished, report it back on Discord / Issue, we may merge your full code or just final results, depending on the task
 
 See `CONTRIBUTING.md` for guidelines on how to contribute to this project

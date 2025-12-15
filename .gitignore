@@ -228,3 +228,4 @@ processed_data/
 !benchmark_comparison_results.json
 # Keep all JSON files in baselines folder
 !baselines/*.json
+!baselines/**/*.json
