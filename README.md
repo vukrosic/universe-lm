@@ -15,7 +15,7 @@ python train_moe.py
 To optimize training for your specific hardware or architecture changes, you can use the quick sweep tool:
 
 ```bash
-python quick_sweep.py
+python experiments/quick_sweep.py
 ```
 
 This script will:
