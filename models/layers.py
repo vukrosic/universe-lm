@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import MixtureOfExperts
+from .components import MixtureOfExperts, SwiGLUFeedForward
 
 
 class Rotary(nn.Module):
@@ -21,14 +21,18 @@ class Rotary(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(
-        self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1
+        self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1, n_kv_heads: int | None = None
     ):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_heads
+        self.num_key_value_groups = self.n_heads // self.n_kv_heads
         self.d_k = d_model // n_heads
 
-        self.qkv = nn.Linear(d_model, d_model * 3, bias=False)
+        self.q_proj = nn.Linear(d_model, d_model, bias=False)
+        self.k_proj = nn.Linear(d_model, self.n_kv_heads * self.d_k, bias=False)
+        self.v_proj = nn.Linear(d_model, self.n_kv_heads * self.d_k, bias=False)
         self.w_o = nn.Linear(d_model, d_model, bias=False)
         self.q_norm = nn.RMSNorm(self.d_k)
         self.k_norm = nn.RMSNorm(self.d_k)
@@ -37,19 +41,22 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x):
         batch_size, seq_len = x.size(0), x.size(1)
-        # B, T = x.size(0), x.size(1)
-        # qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_k).permute(2, 0, 3, 1, 4)
-        # Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
+        
+        # Calculate queries, keys, and values
+        q = self.q_proj(x).reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2) # [B, H, T, D]
+        k = self.k_proj(x).reshape(batch_size, seq_len, self.n_kv_heads, self.d_k).transpose(1, 2) # [B, KV_H, T, D]
+        v = self.v_proj(x).reshape(batch_size, seq_len, self.n_kv_heads, self.d_k).transpose(1, 2) # [B, KV_H, T, D]
+        
+        Q, K, V = q, k, v
 
-        qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
-
-        # Q = self.rotary(Q)
-        # K = self.rotary(K)
-        # Apply RoPE on [B, T, H, D]
+        # Apply RoPE
         Q = self.rotary(self.q_norm(Q.transpose(1, 2))).transpose(1, 2)
         K = self.rotary(self.k_norm(K.transpose(1, 2))).transpose(1, 2)
+        
+        # Repeat K/V for GQA if needed
+        if self.n_kv_heads != self.n_heads:
+            K = torch.repeat_interleave(K, self.num_key_value_groups, dim=1)
+            V = torch.repeat_interleave(V, self.num_key_value_groups, dim=1)
 
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
@@ -141,6 +148,8 @@ class MoETransformerBlock(nn.Module):
         num_experts: int = 8,
         top_k: int = 2,
         dropout: float = 0.1,
+        use_moe: bool = True,
+        n_kv_heads: int | None = None,
     ):
         super().__init__()
 
@@ -157,10 +166,14 @@ class MoETransformerBlock(nn.Module):
                 dropout,
             )
         else:
-            self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout)
+            self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout, n_kv_heads)
 
-        # MoE layer
-        self.feed_forward = MixtureOfExperts(d_model, d_ff, num_experts, top_k, dropout)
+        # Feed-forward layer (MoE or Dense)
+        self.use_moe = use_moe
+        if use_moe:
+            self.feed_forward = MixtureOfExperts(d_model, d_ff, num_experts, top_k, dropout)
+        else:
+            self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
 
         # Normalization layers
         self.norm1 = nn.RMSNorm(d_model)
@@ -172,7 +185,12 @@ class MoETransformerBlock(nn.Module):
         attn_out = self.attention(self.norm1(x))
         x = x + self.dropout(attn_out)
 
-        # MoE feed-forward
-        ff_out, aux_loss = self.feed_forward(self.norm2(x))
+        # Feed-forward
+        if self.use_moe:
+            ff_out, aux_loss = self.feed_forward(self.norm2(x))
+        else:
+            ff_out = self.feed_forward(self.norm2(x))
+            aux_loss = None
+            
         x = x + self.dropout(ff_out)
         return x, aux_loss

@@ -16,6 +16,19 @@ class Expert(nn.Module):
         return self.linear2(self.dropout(F.silu(self.linear1(x))))
 
 
+class SwiGLUFeedForward(nn.Module):
+    """SwiGLU FeedForward layer (Llama-style)"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+        super().__init__()
+        self.gate_proj = nn.Linear(d_model, d_ff, bias=False)
+        self.up_proj = nn.Linear(d_model, d_ff, bias=False)
+        self.down_proj = nn.Linear(d_ff, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        return self.down_proj(self.dropout(F.silu(self.gate_proj(x)) * self.up_proj(x)))
+
+
 class TopKRouter(nn.Module):
     """Router that selects top-k experts for each token"""
     def __init__(self, d_model: int, num_experts: int, top_k: int = 2):

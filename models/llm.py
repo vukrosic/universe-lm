@@ -33,6 +33,8 @@ class MoEMinimalLLM(nn.Module):
                     config.num_experts,
                     config.expert_top_k,
                     config.dropout,
+                    use_moe=config.use_moe,
+                    n_kv_heads=config.n_kv_heads,
                 )
                 for i in range(config.n_layers)
             ]

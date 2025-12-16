@@ -44,9 +44,13 @@ class MoEModelConfig:
     log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
 
     # MoE specific parameters
+    use_moe: bool = True
     num_experts: int = 8
     expert_top_k: int = 2
     load_balancing_weight: float = 0.01
+    
+    # GQA parameters
+    n_kv_heads: Optional[int] = None
 
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads
