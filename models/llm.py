@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 from typing import Optional
-from configs.moe_config import MoEModelConfig
+from configs.llm_config import MoEModelConfig
 from models.layers import MoETransformerBlock
 
 

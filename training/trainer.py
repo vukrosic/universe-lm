@@ -10,8 +10,8 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
-from configs.moe_config import MoEModelConfig
-from models.moe_llm import MoEMinimalLLM
+from configs.llm_config import MoEModelConfig
+from models.llm import MoEMinimalLLM
 from optimizers.muon import Muon
 from training.evaluation import evaluate_model
 from utils.helpers import set_seed
