@@ -26,8 +26,8 @@ class MoEModelConfig:
 
     # Data parameters
     max_seq_len: int = 512
-    num_documents: int = 2000
-    max_tokens: int = 500000
+
+
 
     # Evaluation
     eval_every: int = 10
@@ -75,7 +75,7 @@ class GPU24GBMoEModelConfig(MoEModelConfig):
     
     # Data
     max_seq_len: int = 1024
-    num_documents: int = 25000
+
     
     # Reduced logging
     log_milestones: Tuple[int, ...] = (100, 200, 300)
@@ -108,7 +108,7 @@ class DebugMoEConfig(MoEModelConfig):
     
     # Data
     max_seq_len: int = 128
-    num_documents: int = 100
+
     
     # Reduced logging
     log_milestones: Tuple[int, ...] = (10, 50, 80)

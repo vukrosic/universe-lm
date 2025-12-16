@@ -34,9 +34,11 @@ def main():
     config = DebugMoEConfig()
     
     print("Loading dataset with Hugging Face Datasets API...")
+    # For debug, we just want a small number of docs
+    num_docs = 100
     data_cfg = DataConfig(
         seq_length=config.max_seq_len,
-        num_samples=config.num_documents,
+        num_samples=num_docs,
         cache_dir="./hf_cache_debug",
     )
 
