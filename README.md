@@ -72,14 +72,14 @@ Once installed, you can train a model using our default configurations.
 To train the main MoE model (configured for a single 24GB GPU like an RTX 3090/4090):
 
 ```bash
-python train_moe.py
+python train_llm.py
 ```
 
 ### Debugging (Any Hardware)
 To quickly check if your code runs without errors on any hardware (including CPU/GPU), use the debug script:
 
 ```bash
-python debug_moe.py
+python debug_llm.py
 ```
 *Runs a `DebugMoEConfig` with a tiny model for 100 steps.*
 
@@ -124,7 +124,7 @@ To establish a reliable baseline for comparisons and measure system noise, we ra
 To run a new experiment without overwriting the baseline, simply provide a unique experiment name:
 
 ```bash
-python train_moe.py --experiment_name my_new_experiment
+python train_llm.py --experiment_name my_new_experiment
 ```
 
 Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/` for easy comparison.
@@ -132,7 +132,7 @@ Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/`
 > **Performance Test (optional):** We will run the experiments anyways, but you may also run it yourself. Make sure to specify a new name so you don't overwrite the baseline.
 
 ### 4. **Verification & Testing**
-   - **Debug Mode:** Run `python debug_moe.py` to quickly verify your code runs without errors.
+   - **Debug Mode:** Run `python debug_llm.py` to quickly verify your code runs without errors.
    - **Performance Test (optional):** Run your experiment with a unique name to test performance.
 
 ### 5. **Submission**
