@@ -103,18 +103,19 @@ We maintain baseline performance metrics to track improvements. All experiments 
 *Full baseline results are stored in `baselines/gpu_24gb/`.*
 
 ### Statistical Significance Analysis (450 Steps)
-To establish a reliable baseline for comparisons, we ran the `GPU24GBMoEModelConfig` for 450 steps across 3 different random seeds (42, 43, 44).
+To establish a reliable baseline for comparisons and measure system noise, we ran the `GPU24GBMoEModelConfig` for 450 steps across 4 independent runs using the same random seed (42).
 
 | Run | Seed | Val Loss | Val Accuracy | Val Perplexity |
 | :--- | :--- | :--- | :--- | :--- |
-| Run 1 | 42 | 4.1138 | 31.87% | 61.18 |
-| Run 2 | 43 | 4.1078 | 32.02% | 60.81 |
-| Run 3 | 44 | 4.0902 | 32.13% | 59.75 |
+| Run 1 | 42 | 4.1098 | 31.89% | 60.94 |
+| Run 2 | 42 | 4.1009 | 32.00% | 60.40 |
+| Run 3 | 42 | 4.1082 | 31.91% | 60.84 |
+| Run 4 | 42 | 4.1131 | 31.89% | 61.13 |
 
 **Aggregated Results (Mean ± Std Dev):**
-*   **Validation Loss**: 4.104 ± 0.012
-*   **Validation Accuracy**: 32.01% ± 0.13%
-*   **Validation Perplexity**: 60.58 ± 0.74
+*   **Validation Loss**: 4.1080 ± 0.0045
+*   **Validation Accuracy**: 31.92% ± 0.05%
+*   **Validation Perplexity**: 60.83 ± 0.27
 
 *Future experiments running for 450 steps should be compared against these statistically derived bounds to determine significance.*
 
