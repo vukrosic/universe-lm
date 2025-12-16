@@ -156,7 +156,7 @@ def train_model(
 
             # Forward pass
             if config.use_amp:
-                with autocast('cuda', dtype=torch.float16):
+                with autocast('cuda', dtype=torch.bfloat16):
                     logits, aux_loss = model(x, return_aux_loss=True)
                     shift_logits = logits[:, :-1, :].contiguous()
                     shift_labels = y[:, 1:].contiguous()
