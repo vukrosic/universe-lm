@@ -1,7 +1,10 @@
 # 🏆 Blueberry-Nano Speedrun Leaderboard
 
+> Training is run on 1x4090 RTX.
+
 ## ⚡ Fastest To 4.2 Val Loss
 *Goal: Fastest Time to Reach Loss ≤ 4.2*
+> Everyone is GPU poor, let's make every FLOP count.
 
 | Rank | User | Time | Tokens Used | Notes |
 | :--- | :--- | :--- | :--- | :--- |
@@ -9,6 +12,7 @@
 
 ## 🎯 Best Loss @ 67M Tokens
 *Goal: Lowest Validation Loss after 67,000,000 Training Tokens*
+> Once you go big, data is the bottleneck.
 
 | Rank | User | Val Loss | Time | Notes |
 | :--- | :--- | :--- | :--- | :--- |
