@@ -1,0 +1,50 @@
+GPT-1 Level Model (Blueberry-Nano) Inference Samples
+Date: 2025-12-17
+Model Params: 151M
+Tokens: 1B
+
+---
+PROMPT: "Once upon a time"
+OUTPUT:
+Once upon a time, in a small town named Harmonyville, there lived two best friends named Sammy and Sally. They loved exploring their town and learning new things every day. One sunny day, they decided to go on a journey to visit the neighboring town of Harmonyville.
+
+As they walked around, they noticed people gathering in the park asking about everything they learned about the town. He said, "Ah, I see you have a fascinating question! We can ask someone like you to help me understand what makes our town so special."
+
+Sammy asked, "But how do we know when to visit these new places?"
+
+Sammy explained, "Well, dear, let me tell you a secret - just like when you take a walk outside after school
+
+---
+PROMPT: "The capital of France is"
+OUTPUT:
+The capital of France is the city of Paris. The city of Paris is a city of 200,000 inhabitants, and its population is estimated at 35 million. The city of Paris is the largest city in the world.
+
+---
+PROMPT: "The future of artificial intelligence is"
+OUTPUT:
+The future of artificial intelligence is uncertain.
+What the future may be is that AI will be able to predict what will be expected of intelligent agents, and even predict where the intelligent agents will be. The AI will have a high probability of predicting what will be expected of intelligent agents, and the probability of the intelligent agents will be high. The decision-making powers of intelligent agents will be significantly lower in the future.    What are the major implications of AI?
+The technology of artificial intelligence has been around for over a century
+
+---
+PROMPT: "A poem about a lonely robot on Mars:"
+OUTPUT:
+A poem about a lonely robot on Mars:
+1962: A German physicist who invented the theory of quantum mechanics.                                                                  1972: A German scientist who invented the theory of quantum theory, and who first proposed the theory of quantum mechanics.             1973: A German chemist who invented the theory of quantum theory, and who invented the theory of quantum mechanics.                     1973: A German physicist who invented the theory of quantum mechanics.                                                                  1973: The German chemist who invented the theory
+
+---
+PROMPT: "Explain the concept of backpropagation in simple terms:"
+OUTPUT:
+Explain the concept of backpropagation in simple terms:
+
+* **Backpropagation** refers to the process of increasing the probability of a given feature from one or more features, such as the size of a block of cells or a small sample of tissue.                   * **Neuralization** refers to the process of applying a special type of neural network to the data.                                     
+In Python, we can create a simple example of a neural network using the `numpy` library. Here is an example of a function that takes in the features of a dataset and returns a dictionary of features:     ```python
+def _input_features(feature_number, features_number):
+    """
+    Create a dictionary of features and use them to generate a list of features.                                                            Parameters:
+    features
+
+---
+PROMPT: "for i in range(10):"
+OUTPUT:
+for i in range(10):10000000000000000000000000000000000000000000000000
