@@ -29,17 +29,37 @@ We compared the dense SmolLM2-135M against a 160M parameter Mixture-of-Experts (
 *Figure 1: Validation loss comparison over a short 500-step training run.*
 
 **Observations:**
-- **Speed:** SmolLM2-135M is approximately **23% faster** to train than the MoE baseline due to the efficiency of Grouped Query Attention (GQA) and dense matrix operations.
-- **Convergence:** While it starts with higher loss (typical for deeper dense models compared to shallow MoEs), it shows steady convergence.
+
+
+### Power-of-2 Optimization Study
+We conducted an extended **5000-step** training run to definitively compare the original parameter set against a hardware-optimized "Power-of-2" variant.
+
+| Aspect | Original Config | Pow2 Config |
+|:-------|:---------------:|:-----------:|
+| **Params** | ~174M | ~151M |
+| **Dimensions** | 576 / 9 / 30 | 512 / 8 / 32 |
+| **Training Time** | 10.76 min | **10.06 min (-6.5%)** |
+| **Val Loss** | **3.626** | 3.628 |
+| **Val Accuracy** | 36.01% | **36.03%** |
+
+#### Original Config Metrics (5k steps)
+![Original 5k Metrics](original_5k_metrics_plot.png)
+
+#### Power-of-2 Config Metrics (5k steps)
+![Pow2 5k Metrics](pow2_5k_metrics_plot.png)
+
+**Conclusion:**
+The Power-of-2 configuration is significantly faster (~6.5% faster training) while maintaining comparable performance to the original configuration. Although the original configuration achieved a marginally lower validation loss (3.626 vs 3.628), the Power-of-2 variant actually achieved slightly higher validation accuracy (36.03% vs 36.01%). Given the speed advantage and standard architecture dimensions, we recommend the **Pow2 Config** for efficiency.
+
 
 ## Usage
 ```python
 import torch
-from configs.smollm2_135m_config import SmolLM2_135M_Config
+from configs.smollm2_135m_pow2_config import SmolLM2_135M_Pow2_Config
 from models.llm import MoEMinimalLLM
 
-# Initialize config
-config = SmolLM2_135M_Config()
+# Initialize optimized config
+config = SmolLM2_135M_Pow2_Config()
 
 # Initialize model
 model = MoEMinimalLLM(config)
@@ -49,6 +69,11 @@ input_ids = torch.randint(0, config.vocab_size, (1, 32))
 logits = model(input_ids)
 print(logits.shape) # torch.Size([1, 32, 49152])
 ```
+
+## Next Steps / Future Work
+1.  **Downstream Tasks:** Evaluate the superior Pow2 model on standard benchmarks (HellaSwag, ARC).
+2.  **Quantization:** Verify that the power-of-2 dimensions facilitate efficient quantization as expected.
+
 
 ## Intended Use
 - Educational experimentation with SLMs (Small Language Models).

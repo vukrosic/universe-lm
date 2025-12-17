@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig
+from configs.smollm2_135m_pow2_config import SmolLM2_135M_Pow2_Config
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed
@@ -115,7 +116,9 @@ def main():
 
     # For H100 uncomment MoEModelConfig, for small GPU uncomment GPU24GBMoEModelConfig
     # config = MoEModelConfig()
-    config = GPU24GBMoEModelConfig()
+    # config = GPU24GBMoEModelConfig()
+    # Default to the optimized Pow2 config
+    config = SmolLM2_135M_Pow2_Config()
 
     # Override config with args
     if args.muon_lr is not None:
