@@ -265,42 +265,14 @@ def main():
     print("-" * 70)
     start = time.time()
 
-    # If loading checkpoint (weights only)
-    if args.load_checkpoint:
-        print(f"Loading weights from {args.load_checkpoint}...")
-        try:
-            checkpoint = torch.load(args.load_checkpoint, map_location="cpu")
-            if "model_state_dict" in checkpoint:
-                state_dict = checkpoint["model_state_dict"]
-            else:
-                state_dict = checkpoint # Assume raw state dict
-            
-            # Create a temporary model to verify loading or just load inside trainer?
-            # Trainer initializes model fresh. We should probably pass the loaded state_dict 
-            # or handle it here.
-            # Ideally, we allow the trainer to handle initialization, but we want to inject weights.
-            # train_moe_model initializes the model internally.
-            # We should modify train_moe_model to accept a pretrained_state_dict or model instance.
-            # For now, let's pass a special argument to train_moe_model via config or modifying calling convention.
-            # Actually, looking at imports: `from training.trainer import train_moe_model`.
-            # We can't easily inject the model unless we modify trainer.py or train_llm.py to init model here.
-            # Let's check trainer.py first. It does `model = MoEMinimalLLM(config).to(device)`.
-            # We should modify trainer.py to accept `model` argument or `resume_from_checkpoint`.
-            pass 
-        except Exception as e:
-            print(f"Failed to load checkpoint: {e}")
-            raise e
-
-    # We need to modify train_moe_model signature to separate model creation or accept weights.
-    # Hack for now: we will rely on trainer.py modification in next step.
-    
+    # Train the model (checkpoint loading handled by trainer if load_checkpoint is provided)
     model, metrics, _ = train_moe_model(
         config, 
         train_loader, 
         val_loader, 
         output_dir=output_dir, 
         experiment_name=experiment_name,
-        load_weights_path=args.load_checkpoint # Pending change in trainer.py
+        load_weights_path=args.load_checkpoint
     )
     elapsed = (time.time() - start) / 60
     logger.info("Training complete")
