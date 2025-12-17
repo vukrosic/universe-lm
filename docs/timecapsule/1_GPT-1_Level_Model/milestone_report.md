@@ -4,6 +4,8 @@
 **Project**: 5-Dollar-LLM  
 **Milestone**: 151M parameters trained on 1 Billion tokens.
 
+[YouTube](https://youtu.be/R4_Dl8b9MCw)
+
 ## 🚀 Model Identity: Blueberry-Nano
 The Blueberry-Nano represents our first major leap into training "real" language models from scratch on consumer hardware. With 151M parameters, it sits in the same class as the original OpenAI GPT-1 (117M), but benefits from modern architectural improvements.
 
