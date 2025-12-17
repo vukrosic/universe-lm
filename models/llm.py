@@ -24,7 +24,6 @@ class MoEMinimalLLM(nn.Module):
                     config.d_model,
                     config.n_heads,
                     config.d_ff,
-                    config.use_mla,
                     config.qk_rope_dim,
                     config.qk_nope_dim,
                     config.kv_lora_rank,

@@ -9,7 +9,6 @@ class MoEModelConfig:
     n_heads: int = 12  # Updated for ~3B params
     n_layers: int = 26  # Updated for ~3B params
     d_ff: int = 4096  # Updated for ~3B params (~2.67x d_model)
-    use_mla: bool = False
     qk_rope_dim: int | None = 32
     qk_nope_dim: int | None = 128
     kv_lora_rank: int | None = 64
