@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataConfig:
     # Dataset source (supports HF dataset path format)
-    dataset_path: str = "HuggingFaceTB/smollm-corpus"
+    dataset_path: str = "processed_data/pretrain_mix_1000000000"
     dataset_name: Optional[str] = "cosmopedia-v2"
     split: str = "train"
     

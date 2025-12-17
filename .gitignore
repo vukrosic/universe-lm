@@ -221,6 +221,9 @@ __marimo__/
 data_cache/
 # Processed data cache
 processed_data/
+processed_data_debug/
+logs/
+logs_debug/
 *.arrow
 # We probably want to ignore most json files generated in data processing, but keep config/results
 # For now, following user request strictly to ignore json

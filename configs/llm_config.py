@@ -39,7 +39,7 @@ class BlueberryConfig:
     warmup_ratio: float = 0.01
 
     # Evaluation
-    eval_every: int = 100
+    eval_every: int = 2000
     eval_steps: int = 100
     
     # Regularization
