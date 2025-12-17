@@ -19,6 +19,7 @@ class BlueberryConfig:
     # RoPE / Attention defaults (inherited from previous Base but assumed used)
     qk_rope_dim: int | None = 32
     qk_nope_dim: int | None = 128
+    kv_lora_rank: int | None = 64
     v_dim: int | None = 128
     
     # Data params
@@ -29,7 +30,7 @@ class BlueberryConfig:
     compile_model: bool = True
     batch_size: int = 4
     gradient_accumulation_steps: int = 12
-    max_steps: int = 10000
+    train_tokens: int = 100_000_000 # Default 100M tokens
     
     # Learning Rate (Aggressive for pre-training)
     muon_lr: float = 0.003
@@ -58,8 +59,7 @@ class BlueberryConfig:
 @dataclass
 class Blueberry24GBConfig(BlueberryConfig):
     # Optimized for RTX 4090 (24GB)
-    pbatch_size: int = 16
-    gradient_accumulation_steps: int = 2
+    pass
 
 
 @dataclass
@@ -70,18 +70,15 @@ class Blueberry80GBConfig(BlueberryConfig):
 
 
 @dataclass
-class DebugMoEConfig(BlueberryConfig):
+class DebugConfig(BlueberryConfig):
     # Tiny architecture for fast debugging
     d_model: int = 128
     n_heads: int = 4
     n_layers: int = 2
     d_ff: int = 512
     
-    # MoE settings
+    # Standard settings (Dense)
     use_moe: bool = False
-    # num_experts: int = 4
-    # expert_top_k: int = 2
-    # load_balancing_weight: float = 0.01
     
     # Reduced resources
     batch_size: int = 2
@@ -89,10 +86,12 @@ class DebugMoEConfig(BlueberryConfig):
     max_seq_len: int = 128
     
     # Shorter training
-    max_steps: int = 100
+    train_tokens: int = 100_000 # ~100 steps
+    
     log_milestones: Tuple[int, ...] = (10, 50, 80)
     muon_lr: float = 0.01
     adamw_lr: float = 0.001
 
     def __post_init__(self):
         super().__post_init__()
+
