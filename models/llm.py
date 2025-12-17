@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import math
 from typing import Optional
-from configs.llm_config import MoEModelConfig
+from configs.llm_config import Blueberry80GBConfig
 from models.layers import MoETransformerBlock
 
 
 class MoEMinimalLLM(nn.Module):
     """Minimal LLM with Mixture of Experts"""
 
-    def __init__(self, config: MoEModelConfig):
+    def __init__(self, config: Blueberry80GBConfig):
         super().__init__()
         self.config = config
 
@@ -29,10 +29,10 @@ class MoEMinimalLLM(nn.Module):
                     config.kv_lora_rank,
                     config.v_dim,
                     config.max_seq_len,
-                    config.num_experts,
-                    config.expert_top_k,
+                    getattr(config, 'num_experts', 8),
+                    getattr(config, 'expert_top_k', 2),
                     config.dropout,
-                    use_moe=config.use_moe,
+                    use_moe=getattr(config, 'use_moe', False),
                     n_kv_heads=config.n_kv_heads,
                 )
                 for i in range(config.n_layers)

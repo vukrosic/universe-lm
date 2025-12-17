@@ -1,6 +1,8 @@
-# 5-Dollar LLM (looking for a better name)
+# 5-Dollar LLM (Blueberry 151M)
 
 > Training the best possible LLM from scratch for $5.
+
+- 151M paramters dense LLM.
 
 **Open Superintelligence Lab** - Open research for everyone. We publish all of our research for the sake of accelerating science. Learn real AI research from a real research lab.
 

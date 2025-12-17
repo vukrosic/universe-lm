@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
-from configs.llm_config import MoEModelConfig
+from configs.llm_config import Blueberry80GBConfig
 from models.llm import MoEMinimalLLM
 from optimizers.muon import Muon
 from training.evaluation import evaluate_model
@@ -42,7 +42,7 @@ class EarlyStopping:
             return False
 
 
-def setup_muon_optimizer(model: nn.Module, config: MoEModelConfig):
+def setup_muon_optimizer(model: nn.Module, config: Blueberry80GBConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
     adamw_params = []
@@ -71,7 +71,7 @@ def setup_muon_optimizer(model: nn.Module, config: MoEModelConfig):
 
 def train_model(
     model: nn.Module,
-    config: MoEModelConfig,
+    config: Blueberry80GBConfig,
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizers: List[torch.optim.Optimizer],
@@ -386,12 +386,12 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
     print(f"   📊 Plots saved to {plot_path}")
 
 
-def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None, experiment_name: Optional[str] = None, load_weights_path: Optional[str] = None):
+def train_moe_model(config: Blueberry80GBConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None, experiment_name: Optional[str] = None, load_weights_path: Optional[str] = None):
     """
     Train the MoE model with default Muon optimizer setup.
     This is a convenience wrapper around the generic train_model function.
     """
-    print(f"\n🚀 Training MoE model with {config.num_experts} experts (top-{config.expert_top_k})")
+    print(f"\n🚀 Training model with {getattr(config, 'num_experts', 'N/A')} experts (top-{getattr(config, 'expert_top_k', 'N/A')})")
 
     # Initialize model
     set_seed(42)

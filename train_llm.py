@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig, SmolLM2_135M_Pow2_Config
+from configs.llm_config import Blueberry80GBConfig, DebugConfig, Blueberry24GBConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed
@@ -152,10 +152,10 @@ def main():
     parser = argparse.ArgumentParser(description="Train MoE Model")
     parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
     parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
-    parser.add_argument("--max_steps", type=int, help="Override max_steps")
+    parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
     parser.add_argument("--experiment_name", type=str, default="moe_training", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
-    parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.pretrain_config.PretrainConfig)")
+    parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.Blueberry24GBConfig)")
     parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from (for fine-tuning)")
     parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
     parser.add_argument("--dataset_path", type=str, help="Path to preprocessed dataset directory")
@@ -177,15 +177,15 @@ def main():
             raise e
     else:
         # Default to the optimized Pow2 config
-        config = SmolLM2_135M_Pow2_Config()
+        config = Blueberry24GBConfig()
 
     # Override config with args
     if args.muon_lr is not None:
         config.muon_lr = args.muon_lr
     if args.adamw_lr is not None:
         config.adamw_lr = args.adamw_lr
-    if args.max_steps is not None:
-        config.max_steps = args.max_steps
+    if args.train_tokens is not None:
+        config.train_tokens = args.train_tokens
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     if args.eval_every is not None:
@@ -201,7 +201,14 @@ def main():
     # Safety factor 2.0 to ensure enough data
     avg_tokens_per_doc = 1000
     safety_factor = 2.0
-    total_tokens_needed = config.max_steps * config.batch_size * config.max_seq_len
+    
+    # Calculate max_steps from train_tokens
+    tokens_per_step = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
+    config.max_steps = int(config.train_tokens / tokens_per_step)
+    if config.max_steps < 1:
+        config.max_steps = 1
+        
+    total_tokens_needed = config.train_tokens
     calc_num_docs = int((total_tokens_needed / avg_tokens_per_doc) * safety_factor)
     
     # For very short runs (debugging), we verify we have at least some docs.
@@ -262,7 +269,7 @@ def main():
     print("-" * 70)
     print(f"d_model: {config.d_model}, layers: {config.n_layers}, heads: {config.n_heads}")
     print(f"ff dim: {config.d_ff}")
-    print(f"experts: {config.num_experts}, top‑k: {config.expert_top_k}")
+    print(f"experts: {getattr(config, 'num_experts', 'N/A')}, top‑k: {getattr(config, 'expert_top_k', 'N/A')}")
     print(f"steps: {config.max_steps}, batch size: {config.batch_size}")
     print(f"vocab size: {config.vocab_size}\n")
     logger.info(f"Model configuration: {vars(config)}")

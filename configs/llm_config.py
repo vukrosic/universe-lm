@@ -3,54 +3,53 @@ from typing import Optional, Tuple
 
 
 @dataclass
-class MoEModelConfig:
-    # Model architecture
-    d_model: int = 1536  # Updated for ~3B params
-    n_heads: int = 12  # Updated for ~3B params
-    n_layers: int = 26  # Updated for ~3B params
-    d_ff: int = 4096  # Updated for ~3B params (~2.67x d_model)
+class BlueberryConfig:
+    # Model architecture (151M Params - Blueberry-Nano)
+    d_model: int = 512       
+    n_heads: int = 8         
+    n_layers: int = 32       
+    d_ff: int = 2048         
+    
+    # GQA parameters
+    n_kv_heads: int = 4      
+    
+    # Dense model settings (MoE disabled by default)
+    use_moe: bool = False
+    
+    # RoPE / Attention defaults (inherited from previous Base but assumed used)
     qk_rope_dim: int | None = 32
     qk_nope_dim: int | None = 128
     kv_lora_rank: int | None = 64
     v_dim: int | None = 128
-    batch_size: int = 8  # Reduced for 3B model memory efficiency
-    max_steps: int = 10000  # Increased for better training
-
-    # Training parameters
-    gradient_accumulation_steps: int = 12  # Increased to maintain effective batch size
-    muon_lr: float = 0.02  # Reduced for 3B model stability
-    muon_momentum: float = 0.95  # Slightly increased for larger model
-    adamw_lr: float = 0.003  # Reduced for 3B model stability
-    warmup_ratio: float = 0.05
-
-    # Data parameters
-    max_seq_len: int = 512
-
-
+    
+    # Data params
+    max_seq_len: int = 2048  
+    vocab_size: int = 49152  
+    
+    # Base Training Defaults
+    compile_model: bool = True
+    batch_size: int = 4
+    gradient_accumulation_steps: int = 12
+    train_tokens: int = 10_000_000
+    
+    # Learning Rate (Aggressive for pre-training)
+    muon_lr: float = 0.003
+    muon_momentum: float = 0.95
+    adamw_lr: float = 0.0003
+    warmup_ratio: float = 0.01
 
     # Evaluation
     eval_every: int = 10
     eval_steps: int = 100
-
+    
     # Regularization
     weight_decay: float = 0.2
     dropout: float = 0.1
     grad_clip: float = 1.0
-
-    # Technical
     use_amp: bool = True
-    compile_model: bool = False
-    vocab_size: Optional[int] = None
-    log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
-
-    # MoE specific parameters
-    use_moe: bool = True
-    num_experts: int = 8
-    expert_top_k: int = 2
-    load_balancing_weight: float = 0.01
     
-    # GQA parameters
-    n_kv_heads: Optional[int] = None
+    # Logging
+    log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
 
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads
@@ -58,92 +57,41 @@ class MoEModelConfig:
 
 
 @dataclass
-class GPU24GBMoEModelConfig(MoEModelConfig):
-    # Reduced architecture for debugging on 4090 (24GB VRAM)
-    d_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 8
-    d_ff: int = 2048
-    
-    # MoE settings
-    num_experts: int = 8
-    expert_top_k: int = 2
-    
-    # Batch size
-    batch_size: int = 16
-    gradient_accumulation_steps: int = 1
-
-    # Training parameters (Optimized via sweep)
-    muon_lr: float = 0.04
-    adamw_lr: float = 0.006
-    
-    # Data
-    max_seq_len: int = 1024
-
-    
-    # Reduced logging
-    log_milestones: Tuple[int, ...] = (100, 200, 300)
-    max_steps: int = 800
-    eval_every: int = 50
-    
-    def __post_init__(self):
-        super().__post_init__()
+class Blueberry24GBConfig(BlueberryConfig):
+    # Optimized for RTX 4090 (24GB)
+    pass
 
 
 @dataclass
-class DebugMoEConfig(MoEModelConfig):
-    # Tiny architecture for fast debugging on any hardware
+class Blueberry80GBConfig(BlueberryConfig):
+    # Optimized for H100 (80GB)
+    batch_size: int = 128
+    gradient_accumulation_steps: int = 16
+
+
+@dataclass
+class DebugConfig(BlueberryConfig):
+    # Tiny architecture for fast debugging
     d_model: int = 128
     n_heads: int = 4
     n_layers: int = 2
     d_ff: int = 512
     
-    # MoE settings
-    num_experts: int = 4
-    expert_top_k: int = 2
-    
-    # Batch size
-    batch_size: int = 2
-    gradient_accumulation_steps: int = 1
-
-    # Training parameters
-    muon_lr: float = 0.01
-    adamw_lr: float = 0.001
-    
-    # Data
-    max_seq_len: int = 128
-
-    
-    # Reduced logging
-    log_milestones: Tuple[int, ...] = (10, 50, 80)
-    max_steps: int = 100
-    eval_every: int = 10
-    
-    def __post_init__(self):
-        super().__post_init__()
-
-
-@dataclass
-class SmolLM2_135M_Pow2_Config(MoEModelConfig):
-    # Architecture params - Powers of 2 optimized
-    d_model: int = 512       # 2^9
-    n_heads: int = 8         # 2^3
-    n_layers: int = 32       # 2^5 (Increased from 30 to match param count approx)
-    d_ff: int = 2048         # 2^11
-    
-    # GQA params
-    n_kv_heads: int = 4      # 2^2 (GQA group size 2)
-    
-    # Dense model settings
+    # Standard settings (Dense)
     use_moe: bool = False
     
-    # Data params
-    max_seq_len: int = 2048  # 2^11
-    vocab_size: int = 49152  # Not power of 2, kept from tokenizer
+    # Reduced resources
+    batch_size: int = 2
+    gradient_accumulation_steps: int = 1
+    max_seq_len: int = 128
     
-    # Training defaults
-    batch_size: int = 4
-    compile_model: bool = True
+    # Shorter training
+    train_tokens: int = 100_000 # ~100 steps
     
+    log_milestones: Tuple[int, ...] = (10, 50, 80)
+    muon_lr: float = 0.01
+    adamw_lr: float = 0.001
+
     def __post_init__(self):
         super().__post_init__()
+

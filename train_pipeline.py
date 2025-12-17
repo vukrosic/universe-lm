@@ -61,10 +61,10 @@ def main():
     
     cmd_stage1 = (
         f"python train_llm.py "
-        f"--config_class configs.pretrain_config.PretrainConfig "
+        f"--config_class configs.llm_config.Blueberry24GBConfig "
         f"--dataset_path {pretrain_data} "
         f"--experiment_name stage1_pretrain_100m "
-        f"--max_steps 1000"
+        f"--train_tokens {args.pretrain_tokens}"
     )
     
     try:
@@ -83,14 +83,18 @@ def main():
     if not os.path.exists(ckpt_path):
          print("❌ Stage 1 checkpoint not found!")
          return
-         
+    
+    # Calculate SFT tokens (rough estimate)
+    # samples * avg_tokens
+    sft_tokens = sft_samples * AVG_TOKENS_PER_SAMPLE
+    
     cmd_stage2 = (
         f"python train_llm.py "
         f"--config_class configs.sft_config.SFTConfig "
         f"--dataset_path {sft_data} "
         f"--experiment_name stage2_sft "
         f"--load_checkpoint {ckpt_path} "
-        f"--max_steps 500"
+        f"--train_tokens {sft_tokens}"
     )
     
     try:
