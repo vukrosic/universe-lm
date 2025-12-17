@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig
+from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig, SmolLM2_135M_Pow2_Config
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed
@@ -115,7 +115,9 @@ def main():
 
     # For H100 uncomment MoEModelConfig, for small GPU uncomment GPU24GBMoEModelConfig
     # config = MoEModelConfig()
-    config = GPU24GBMoEModelConfig()
+    # config = GPU24GBMoEModelConfig()
+    # Default to the optimized Pow2 config
+    config = SmolLM2_135M_Pow2_Config()
 
     # Override config with args
     if args.muon_lr is not None:
@@ -202,7 +204,7 @@ def main():
     print("-" * 70)
     start = time.time()
 
-    model, metrics = train_moe_model(config, train_loader, val_loader, output_dir=output_dir, experiment_name=experiment_name)
+    model, metrics, _ = train_moe_model(config, train_loader, val_loader, output_dir=output_dir, experiment_name=experiment_name)
     elapsed = (time.time() - start) / 60
     logger.info("Training complete")
 

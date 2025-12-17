@@ -44,9 +44,13 @@ class MoEModelConfig:
     log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
 
     # MoE specific parameters
+    use_moe: bool = True
     num_experts: int = 8
     expert_top_k: int = 2
     load_balancing_weight: float = 0.01
+    
+    # GQA parameters
+    n_kv_heads: Optional[int] = None
 
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads
@@ -114,6 +118,31 @@ class DebugMoEConfig(MoEModelConfig):
     log_milestones: Tuple[int, ...] = (10, 50, 80)
     max_steps: int = 100
     eval_every: int = 10
+    
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@dataclass
+class SmolLM2_135M_Pow2_Config(MoEModelConfig):
+    # Architecture params - Powers of 2 optimized
+    d_model: int = 512       # 2^9
+    n_heads: int = 8         # 2^3
+    n_layers: int = 32       # 2^5 (Increased from 30 to match param count approx)
+    d_ff: int = 2048         # 2^11
+    
+    # GQA params
+    n_kv_heads: int = 4      # 2^2 (GQA group size 2)
+    
+    # Dense model settings
+    use_moe: bool = False
+    
+    # Data params
+    max_seq_len: int = 2048  # 2^11
+    vocab_size: int = 49152  # Not power of 2, kept from tokenizer
+    
+    # Training defaults
+    batch_size: int = 4
     
     def __post_init__(self):
         super().__post_init__()
