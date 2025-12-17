@@ -2,7 +2,7 @@
 
 **Date**: December 17, 2025  
 **Project**: 5-Dollar-LLM  
-**Milestone**: Reaching 151M parameters trained on 1 Billion tokens.
+**Milestone**: 151M parameters trained on 1 Billion tokens.
 
 ## 🚀 Model Identity: Blueberry-Nano
 The Blueberry-Nano represents our first major leap into training "real" language models from scratch on consumer hardware. With 151M parameters, it sits in the same class as the original OpenAI GPT-1 (117M), but benefits from modern architectural improvements.
@@ -56,4 +56,4 @@ In 2018, OpenAI's GPT-1 changed the world with:
 Our **Blueberry-Nano** (151M) reached similar complexity in **under 3 hours** on a single consumer GPU, thanks to modern efficiencies like Flash Attention, GQA, and optimized training pipelines. This demonstrates the democratization of large-scale model training.
 
 ---
-*Created by the 5-Dollar-LLM project - Scaling the intelligence of the future.*
+*Created by the Open Superintelligence Lab.*
