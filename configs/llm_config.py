@@ -29,17 +29,17 @@ class BlueberryConfig:
     # Base Training Defaults
     compile_model: bool = True
     batch_size: int = 4
-    gradient_accumulation_steps: int = 12
+    gradient_accumulation_steps: int = 2
     train_tokens: int = 10_000_000
     
     # Learning Rate (Aggressive for pre-training)
-    muon_lr: float = 0.003
+    muon_lr: float = 0.01
     muon_momentum: float = 0.95
-    adamw_lr: float = 0.0003
+    adamw_lr: float = 0.001
     warmup_ratio: float = 0.01
 
     # Evaluation
-    eval_every: int = 10
+    eval_every: int = 100
     eval_steps: int = 100
     
     # Regularization
@@ -66,7 +66,9 @@ class Blueberry24GBConfig(BlueberryConfig):
 class Blueberry80GBConfig(BlueberryConfig):
     # Optimized for H100 (80GB)
     batch_size: int = 128
-    gradient_accumulation_steps: int = 16
+    # Optimized for H100 (80GB)
+    batch_size: int = 128
+    gradient_accumulation_steps: int = 2
 
 
 @dataclass

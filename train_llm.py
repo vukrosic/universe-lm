@@ -71,6 +71,24 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
             return splitted["train"], splitted["test"]
 
         except Exception as e:
+
+            # Fallback: try loading "train" and "val" subdirectories directly
+            try:
+                train_path = os.path.join(data_cfg.dataset_path, "train")
+                val_path = os.path.join(data_cfg.dataset_path, "val")
+                if os.path.exists(train_path) and os.path.exists(val_path):
+                    print(f"Loading separate train/val datasets from {data_cfg.dataset_path}...")
+                    train_ds = load_from_disk(train_path)
+                    val_ds = load_from_disk(val_path)
+                    
+                    if hasattr(train_ds, 'set_format'):
+                        train_ds.set_format(type="torch", columns=["input_ids", "labels"])
+                    if hasattr(val_ds, 'set_format'):
+                        val_ds.set_format(type="torch", columns=["input_ids", "labels"])
+                    return train_ds, val_ds
+            except Exception as e2:
+                print(f"Sub-directory load failed: {e2}")
+
             print(f"Could not load as direct dataset ({e}). Falling back to HF loading...")
 
     # cache_dir provided via argument
@@ -161,6 +179,8 @@ def main():
     parser.add_argument("--dataset_path", type=str, help="Path to preprocessed dataset directory")
     parser.add_argument("--eval_every", type=int, help="Override eval_every steps")
     parser.add_argument("--save_every", type=int, help="Override save_every steps")
+    parser.add_argument("--batch_size", type=int, help="Override batch_size")
+    parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     args = parser.parse_args()
 
     # Load Config
@@ -192,6 +212,10 @@ def main():
         config.eval_every = args.eval_every
     if args.save_every is not None:
         config.save_every = args.save_every
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
+    if args.gradient_accumulation_steps is not None:
+        config.gradient_accumulation_steps = args.gradient_accumulation_steps
     
     experiment_name = args.experiment_name
     output_dir = os.path.join(args.output_dir, experiment_name)
