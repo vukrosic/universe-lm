@@ -40,6 +40,7 @@ class MoEModelConfig:
 
     # Technical
     use_amp: bool = True
+    compile_model: bool = False
     vocab_size: Optional[int] = None
     log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
 
@@ -143,6 +144,7 @@ class SmolLM2_135M_Pow2_Config(MoEModelConfig):
     
     # Training defaults
     batch_size: int = 4
+    compile_model: bool = True
     
     def __post_init__(self):
         super().__post_init__()

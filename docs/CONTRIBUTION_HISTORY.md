@@ -1,6 +1,8 @@
 
 # Research / Engineering Contributions
 
+Contributors list (growing): [@RohanKhanBD](https://github.com/RohanKhanBD)
+
 ## Adding QK Norm
 
 2025-12-15 <br>

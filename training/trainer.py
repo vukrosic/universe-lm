@@ -411,6 +411,19 @@ def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader
     # Setup optimizers
     optimizers = setup_muon_optimizer(model, config)
 
+    # Compile the model if requested (PyTorch 2.0+)
+    if config.compile_model:
+        print("🚀 Compiling model with torch.compile...")
+        # Reduce compilation overhead for MoE by not enforcing fullgraphs
+        # mode='max-autotune' gives best perf but takes longest to compile
+        # mode='reduce-overhead' is good for small batches
+        try:
+            model = torch.compile(model)
+            print("✅ Model compiled successfully")
+        except Exception as e:
+            print(f"⚠️ Model compilation failed: {e}")
+            print("Running in eager mode instead.")
+
     # Learning rate schedule with cosine decay
     schedulers = []
     warmup_steps = max(1, int(config.max_steps * config.warmup_ratio))
