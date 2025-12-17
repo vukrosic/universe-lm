@@ -399,7 +399,7 @@ def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader
     
     if load_weights_path:
         print(f"Loading pretrained weights from {load_weights_path}...")
-        checkpoint = torch.load(load_weights_path, map_location="cpu")
+        checkpoint = torch.load(load_weights_path, map_location="cpu", weights_only=False)
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]
         else:
