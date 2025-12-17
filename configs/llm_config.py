@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 
 
 @dataclass
-class MoEModelConfig:
+class Blueberry80GBConfig:
     # Model architecture
     d_model: int = 1536  # Updated for ~3B params
     n_heads: int = 12  # Updated for ~3B params
@@ -42,13 +42,10 @@ class MoEModelConfig:
     compile_model: bool = False
     vocab_size: Optional[int] = None
     log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
-
-    # MoE specific parameters
-    use_moe: bool = True
-    num_experts: int = 8
-    expert_top_k: int = 2
-    load_balancing_weight: float = 0.01
     
+    # Dense model settings (MoE disabled by default)
+    use_moe: bool = False
+
     # GQA parameters
     n_kv_heads: Optional[int] = None
 
@@ -57,50 +54,21 @@ class MoEModelConfig:
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
 
 
-@dataclass
-class GPU24GBMoEModelConfig(MoEModelConfig):
-    # Reduced architecture for debugging on 4090 (24GB VRAM)
-    d_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 8
-    d_ff: int = 2048
-    
-    # MoE settings
-    num_experts: int = 8
-    expert_top_k: int = 2
-    
-    # Batch size
-    batch_size: int = 16
-    gradient_accumulation_steps: int = 1
-
-    # Training parameters (Optimized via sweep)
-    muon_lr: float = 0.04
-    adamw_lr: float = 0.006
-    
-    # Data
-    max_seq_len: int = 1024
-
-    
-    # Reduced logging
-    log_milestones: Tuple[int, ...] = (100, 200, 300)
-    max_steps: int = 800
-    eval_every: int = 50
-    
-    def __post_init__(self):
-        super().__post_init__()
 
 
 @dataclass
-class DebugMoEConfig(MoEModelConfig):
+class DebugMoEConfig(Blueberry80GBConfig):
     # Tiny architecture for fast debugging on any hardware
     d_model: int = 128
     n_heads: int = 4
     n_layers: int = 2
     d_ff: int = 512
     
-    # MoE settings
+    # MoE settings (Added back since removed from base)
+    use_moe: bool = True
     num_experts: int = 4
     expert_top_k: int = 2
+    load_balancing_weight: float = 0.01
     
     # Batch size
     batch_size: int = 2
@@ -124,7 +92,7 @@ class DebugMoEConfig(MoEModelConfig):
 
 
 @dataclass
-class SmolLM2_135M_Pow2_Config(MoEModelConfig):
+class Blueberry24GBConfig(Blueberry80GBConfig):
     # Architecture params - Powers of 2 optimized
     d_model: int = 512       # 2^9
     n_heads: int = 8         # 2^3

@@ -1,8 +1,8 @@
-from .llm_config import SmolLM2_135M_Pow2_Config
+from .llm_config import Blueberry24GBConfig
 from dataclasses import dataclass
 
 @dataclass
-class SFTConfig(SmolLM2_135M_Pow2_Config):
+class SFTConfig(Blueberry24GBConfig):
     # SFT Specifics
     # Lower LR to preserve pre-training knowledge
     muon_lr: float = 0.0003      # 10x lower than pretrain
@@ -19,4 +19,4 @@ class SFTConfig(SmolLM2_135M_Pow2_Config):
     # We will likely explicitly set max_steps based on dataset size for 1 epoch.
     warmup_ratio: float = 0.03
     
-    use_moe: bool = False
+    # use_moe: bool = False (Already in base)

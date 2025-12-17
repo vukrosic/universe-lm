@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig, SmolLM2_135M_Pow2_Config
+from configs.llm_config import Blueberry80GBConfig, DebugMoEConfig, Blueberry24GBConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed
@@ -177,7 +177,7 @@ def main():
             raise e
     else:
         # Default to the optimized Pow2 config
-        config = SmolLM2_135M_Pow2_Config()
+        config = Blueberry24GBConfig()
 
     # Override config with args
     if args.muon_lr is not None:
@@ -262,7 +262,7 @@ def main():
     print("-" * 70)
     print(f"d_model: {config.d_model}, layers: {config.n_layers}, heads: {config.n_heads}")
     print(f"ff dim: {config.d_ff}")
-    print(f"experts: {config.num_experts}, top‑k: {config.expert_top_k}")
+    print(f"experts: {getattr(config, 'num_experts', 'N/A')}, top‑k: {getattr(config, 'expert_top_k', 'N/A')}")
     print(f"steps: {config.max_steps}, batch size: {config.batch_size}")
     print(f"vocab size: {config.vocab_size}\n")
     logger.info(f"Model configuration: {vars(config)}")
