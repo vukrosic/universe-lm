@@ -30,7 +30,7 @@ class BlueberryConfig:
     compile_model: bool = True
     batch_size: int = 4
     gradient_accumulation_steps: int = 12
-    train_tokens: int = 100_000_000 # Default 100M tokens
+    train_tokens: int = 10_000_000
     
     # Learning Rate (Aggressive for pre-training)
     muon_lr: float = 0.003
