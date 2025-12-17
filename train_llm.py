@@ -30,6 +30,49 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
     from datasets import load_from_disk, load_dataset, Dataset
     from data.loader import tokenize_and_chunk, finalize_dataset
 
+    # CASE 0: Dataset path is already a processed on-disk dataset
+    # We check if the path passed in data_cfg.dataset_path is a directory containing a dataset dict
+    if os.path.isdir(data_cfg.dataset_path):
+        # Heuristic: check if it has dataset_dict.json or state.json or just load it
+        try:
+            print(f"Loading pre-processed dataset from {data_cfg.dataset_path}...")
+            # We assume it's a dataset with "input_ids" and "labels"
+            ds = load_from_disk(data_cfg.dataset_path)
+            
+            # Set format to torch for preprocessed datasets
+            if hasattr(ds, 'set_format'):
+                # Single dataset
+                if "input_ids" in ds.column_names and "labels" in ds.column_names:
+                    ds.set_format(type="torch", columns=["input_ids", "labels"])
+            
+            # If it's a DatasetDict (train, val), return it
+            if isinstance(ds, dict) or hasattr(ds, "keys"):
+                if "train" in ds and "val" in ds:
+                    # Set format for both splits
+                    if hasattr(ds["train"], 'set_format'):
+                        ds["train"].set_format(type="torch", columns=["input_ids", "labels"])
+                        ds["val"].set_format(type="torch", columns=["input_ids", "labels"])
+                    return ds["train"], ds["val"]
+                elif "train" in ds:
+                    # Splitting manually if only train exists
+                    print("Found only 'train' split. Creating validation split...")
+                    splitted = ds["train"].train_test_split(test_size=0.1, seed=42)
+                    # Set format for both splits
+                    splitted["train"].set_format(type="torch", columns=["input_ids", "labels"])
+                    splitted["test"].set_format(type="torch", columns=["input_ids", "labels"])
+                    return splitted["train"], splitted["test"]
+            
+            # If it's a single Dataset (just rows)
+            print("Loaded single dataset. Splitting into train/val...")
+            splitted = ds.train_test_split(test_size=0.1, seed=42)
+            # Set format for both splits
+            splitted["train"].set_format(type="torch", columns=["input_ids", "labels"])
+            splitted["test"].set_format(type="torch", columns=["input_ids", "labels"])
+            return splitted["train"], splitted["test"]
+
+        except Exception as e:
+            print(f"Could not load as direct dataset ({e}). Falling back to HF loading...")
+
     # cache_dir provided via argument
     train_cache = os.path.join(cache_dir, "train")
     val_cache = os.path.join(cache_dir, "val")
@@ -73,6 +116,7 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
         streaming=True,
     )
     
+    # Streaming requires taking samples explicitly
     raw_samples = list(raw_dataset.take(data_cfg.num_samples))
     num_val = int(len(raw_samples) * 0.1)
     num_train = len(raw_samples) - num_val
@@ -111,13 +155,27 @@ def main():
     parser.add_argument("--max_steps", type=int, help="Override max_steps")
     parser.add_argument("--experiment_name", type=str, default="moe_training", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
+    parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.pretrain_config.PretrainConfig)")
+    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from (for fine-tuning)")
+    parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
+    parser.add_argument("--dataset_path", type=str, help="Path to preprocessed dataset directory")
     args = parser.parse_args()
 
-    # For H100 uncomment MoEModelConfig, for small GPU uncomment GPU24GBMoEModelConfig
-    # config = MoEModelConfig()
-    # config = GPU24GBMoEModelConfig()
-    # Default to the optimized Pow2 config
-    config = SmolLM2_135M_Pow2_Config()
+    # Load Config
+    if args.config_class:
+        import importlib
+        try:
+            module_name, class_name = args.config_class.rsplit(".", 1)
+            module = importlib.import_module(module_name)
+            ConfigClass = getattr(module, class_name)
+            print(f"Loading config from {args.config_class}")
+            config = ConfigClass()
+        except Exception as e:
+            print(f"Error loading config class {args.config_class}: {e}")
+            raise e
+    else:
+        # Default to the optimized Pow2 config
+        config = SmolLM2_135M_Pow2_Config()
 
     # Override config with args
     if args.muon_lr is not None:
@@ -126,6 +184,8 @@ def main():
         config.adamw_lr = args.adamw_lr
     if args.max_steps is not None:
         config.max_steps = args.max_steps
+    if args.compile is not None:
+        config.compile_model = (args.compile.lower() == "true")
     
     experiment_name = args.experiment_name
     output_dir = os.path.join(args.output_dir, experiment_name)
@@ -150,8 +210,9 @@ def main():
     # config.num_documents = calc_num_docs # Removed from config
     num_docs = calc_num_docs
 
-    print("Loading dataset with Hugging Face Datasets API...")
+    print("Loading dataset with Hugging Face Datasets API...")
     data_cfg = DataConfig(
+        dataset_path=args.dataset_path if args.dataset_path else DataConfig.dataset_path,
         seq_length=config.max_seq_len,
         num_samples=num_docs,
         cache_dir="./hf_cache",
@@ -204,7 +265,43 @@ def main():
     print("-" * 70)
     start = time.time()
 
-    model, metrics, _ = train_moe_model(config, train_loader, val_loader, output_dir=output_dir, experiment_name=experiment_name)
+    # If loading checkpoint (weights only)
+    if args.load_checkpoint:
+        print(f"Loading weights from {args.load_checkpoint}...")
+        try:
+            checkpoint = torch.load(args.load_checkpoint, map_location="cpu")
+            if "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            else:
+                state_dict = checkpoint # Assume raw state dict
+            
+            # Create a temporary model to verify loading or just load inside trainer?
+            # Trainer initializes model fresh. We should probably pass the loaded state_dict 
+            # or handle it here.
+            # Ideally, we allow the trainer to handle initialization, but we want to inject weights.
+            # train_moe_model initializes the model internally.
+            # We should modify train_moe_model to accept a pretrained_state_dict or model instance.
+            # For now, let's pass a special argument to train_moe_model via config or modifying calling convention.
+            # Actually, looking at imports: `from training.trainer import train_moe_model`.
+            # We can't easily inject the model unless we modify trainer.py or train_llm.py to init model here.
+            # Let's check trainer.py first. It does `model = MoEMinimalLLM(config).to(device)`.
+            # We should modify trainer.py to accept `model` argument or `resume_from_checkpoint`.
+            pass 
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}")
+            raise e
+
+    # We need to modify train_moe_model signature to separate model creation or accept weights.
+    # Hack for now: we will rely on trainer.py modification in next step.
+    
+    model, metrics, _ = train_moe_model(
+        config, 
+        train_loader, 
+        val_loader, 
+        output_dir=output_dir, 
+        experiment_name=experiment_name,
+        load_weights_path=args.load_checkpoint # Pending change in trainer.py
+    )
     elapsed = (time.time() - start) / 60
     logger.info("Training complete")
 

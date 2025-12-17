@@ -386,7 +386,7 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
     print(f"   📊 Plots saved to {plot_path}")
 
 
-def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None, experiment_name: Optional[str] = None):
+def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader: DataLoader, output_dir: Optional[str] = None, experiment_name: Optional[str] = None, load_weights_path: Optional[str] = None):
     """
     Train the MoE model with default Muon optimizer setup.
     This is a convenience wrapper around the generic train_model function.
@@ -396,6 +396,17 @@ def train_moe_model(config: MoEModelConfig, train_loader: DataLoader, val_loader
     # Initialize model
     set_seed(42)
     model = MoEMinimalLLM(config)
+    
+    if load_weights_path:
+        print(f"Loading pretrained weights from {load_weights_path}...")
+        checkpoint = torch.load(load_weights_path, map_location="cpu")
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
+            
+        keys = model.load_state_dict(state_dict, strict=False)
+        print(f"Weights loaded: {keys}")
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
