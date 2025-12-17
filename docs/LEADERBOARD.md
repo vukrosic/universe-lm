@@ -8,7 +8,7 @@
 
 | # | Date | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-17 | 1m 4s | 2,457,600 | [vukrosic](https://x.com/VukRosic99) | Optimized Baseline (LR 0.02, GradAcc 1) |
+| **1** | 2025-12-17 | 1m 4s | 2,457,600 | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Baseline (LR 0.02, GradAcc 1) |
 
 ## 🎯 Best Loss @ 67M Tokens
 *Goal: Lowest Validation Loss after 67,000,000 Training Tokens*
@@ -16,14 +16,14 @@
 
 | # | Date | Val Loss | Time | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **-** | 2025-12-17 | TBD | TBD | [vukrosic](https://x.com/VukRosic99) | Baseline (In Progress) |
+| **-** | 2025-12-17 | TBD | TBD | [Vuk Rosić](https://x.com/VukRosic99) | Baseline (In Progress) |
 
 ## 🏅 The 1B Marathon (World Record)
 *Goal: Best Model @ 1B Tokens (Time < 4h)*
 
 | # | Date | Val Loss | Time | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **-** | 2025-12-17 | TBD | ~2h 40m | [vukrosic](https://x.com/VukRosic99) | Baseline (In Progress) |
+| **1** | 2025-12-17 | 3.1940 | 2h 37m | [Vuk Rosić](https://x.com/VukRosic99) | Final Milestone Record |
 
 
 ## 🤝 Compute Sponsorship & Verification
