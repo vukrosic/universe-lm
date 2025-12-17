@@ -14,7 +14,7 @@ if not torch.cuda.is_available():
     # Suppress torch.compile errors on CPU and fall back to eager mode
     torch._dynamo.config.suppress_errors = True
 
-from configs.llm_config import DebugMoEConfig
+from configs.llm_config import DebugConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed
@@ -30,8 +30,9 @@ def main():
     
     set_seed(42)
     
-    # Use DebugMoEConfig
-    config = DebugMoEConfig()
+    # Use DebugConfig
+    config = DebugConfig()
+    config.compile_model = False
     
     print("Loading dataset with Hugging Face Datasets API...")
     # For debug, we just want a small number of docs
@@ -47,6 +48,12 @@ def main():
     # Setup tokenizer first to get vocab size
     tokenizer = setup_tokenizer(data_cfg)
     config.vocab_size = tokenizer.vocab_size
+
+    # Calculate max_steps from train_tokens
+    tokens_per_step = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
+    config.max_steps = int(config.train_tokens / tokens_per_step)
+    if config.max_steps < 1:
+        config.max_steps = 1
 
     # Prepare datasets (handles caching automatically)
     train_ds, val_ds = prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data_debug")
@@ -70,7 +77,7 @@ def main():
     print("-" * 70)
     print(f"d_model: {config.d_model}, layers: {config.n_layers}, heads: {config.n_heads}")
     print(f"ff dim: {config.d_ff}")
-    print(f"experts: {config.num_experts}, top‑k: {config.expert_top_k}")
+    print(f"experts: {getattr(config, 'num_experts', 'N/A')}, top‑k: {getattr(config, 'expert_top_k', 'N/A')}")
     print(f"steps: {config.max_steps}, batch size: {config.batch_size}")
     print(f"vocab size: {config.vocab_size}\n")
     logger.info(f"Model configuration: {vars(config)}")
