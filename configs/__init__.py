@@ -1,8 +1,8 @@
-from .llm_config import MoEModelConfig, SmolLM2_135M_Pow2_Config
+from .llm_config import Blueberry80GBConfig, Blueberry24GBConfig
 from .dataset_config import DataConfig
 
 __all__ = [
-    "MoEModelConfig",
+    "Blueberry80GBConfig",
     "DataConfig",
-    "SmolLM2_135M_Pow2_Config",
+    "Blueberry24GBConfig",
 ]

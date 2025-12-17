@@ -12,7 +12,7 @@ sys.path.insert(0, str(root_dir))
 sys.path.append(str(root_dir))
 
 from models.llm import MoEMinimalLLM
-from configs.llm_config import MoEModelConfig, GPU24GBMoEModelConfig
+from configs.llm_config import Blueberry80GBConfig, GPU24GBMoEModelConfig
 
 def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloat16):
     """
@@ -35,7 +35,7 @@ def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloa
     
     # Load checkpoint
     # Safe globals to allow loading custom config class
-    torch.serialization.add_safe_globals([MoEModelConfig, GPU24GBMoEModelConfig])
+    torch.serialization.add_safe_globals([Blueberry80GBConfig, GPU24GBMoEModelConfig])
     
     try:
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
@@ -46,8 +46,8 @@ def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloa
     if 'config' in checkpoint:
         config = checkpoint['config']
     else:
-        print("Warning: Config not found in checkpoint, using default MoEModelConfig")
-        config = MoEModelConfig()
+        print("Warning: Config not found in checkpoint, using default Blueberry80GBConfig")
+        config = Blueberry80GBConfig()
 
     # Ensure max_seq_len is large enough for benchmarks
     # RoPE can handle extrapolation/longer sequences to some extent, but cache must be initialized

@@ -1,8 +1,8 @@
-from .llm_config import SmolLM2_135M_Pow2_Config
+from .llm_config import Blueberry24GBConfig
 from dataclasses import dataclass
 
 @dataclass
-class PretrainConfig(SmolLM2_135M_Pow2_Config):
+class PretrainConfig(Blueberry24GBConfig):
     # Training
     # For H100: batch_size=128, grad_accum=16 -> 2048 seqs -> ~4M tokens
     # For 4090: batch_size=4, grad_accum=12 -> 48 seqs -> ~100k tokens
