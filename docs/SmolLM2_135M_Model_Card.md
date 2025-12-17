@@ -23,3 +23,14 @@ We tested the impact of `torch.compile` on training speed for the dense model ar
 
 **Conclusion:**
 For training runs longer than ~500 steps, **`torch.compile` provides substantial speedups (~30%+)**, as the initial compilation overhead is amortized over the longer run. The default configuration now enables `compile_model=True` for this model.
+
+### Training Cost Estimates
+Based on the optimized throughput (~2.08 steps/sec) and default batch settings (Batch 4, GradAccum 12, Seq 2048 = ~98k tokens/step):
+
+| Tokens | Steps | RTX 4090 (24GB) | H100 (80GB)* |
+|:---|:---|:---|:---|
+| **1 Billion** | ~10k | ~1.4 hours | ~34 mins |
+| **10 Billion** | ~101k | ~13.6 hours | ~5.4 hours |
+| **100 Billion** | ~1M | ~5.7 days | ~2.3 days |
+
+*\*H100 estimates assume ~2.5x speedup via larger batch size (80GB VRAM) and faster compute.*
