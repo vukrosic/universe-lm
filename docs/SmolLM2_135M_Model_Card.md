@@ -55,7 +55,7 @@ The Power-of-2 configuration is significantly faster (~6.5% faster training) whi
 ## Usage
 ```python
 import torch
-from configs.smollm2_135m_pow2_config import SmolLM2_135M_Pow2_Config
+from configs.llm_config import SmolLM2_135M_Pow2_Config
 from models.llm import MoEMinimalLLM
 
 # Initialize optimized config
