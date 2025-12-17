@@ -12,13 +12,18 @@
 
 🎥 **[Watch our introduction video](https://youtu.be/dayc3y34XXs)** to learn more about the project!
 
+> Check out our speedrun [leaderboard](docs/LEADERBOARD.md)!
+
 ## 🗺️ Roadmap
 
 **Our goals:**
-1. **Top 150** in LMArena (GPT-4o-mini level) by April 2026
-2. **Top 50** by Dec 2026
-3. **Top 10** by April 2027
-4. We could aim for **Top 1** by 2028, TBD
+1. **GPT-1** Level by Dec 20 2025
+2. **GPT-2** Level by Jan 20 2026
+3. **GPT-3** Level by Feb 20 2027
+4. **Top 150** in LMArena (GPT-4o-mini level) by April 2026
+5. **Top 50** by Dec 2026
+6. **Top 10** by April 2027
+7. We could aim for **Top 1** by 2028, TBD
 
 **Likely architecture for our first LLM (Top 150, April 2026):**
 - 8 Billion Parameters
@@ -38,6 +43,30 @@ Currently LLMs are the most useful AI models, so it's a clear way for us to do u
 **If you or someone you know has extensive research experience and can offer advisory or leadership support, please contact me.**
 
 ---
+
+## 🏎️ 1B Token Speedrun Challenge (Current Experiment)
+
+We are currently running a "speedrun" to train a **151M parameter model on 1 Billion tokens**.
+
+- **Dataset**: 1B tokens (70% FineWeb-Edu, 30% Cosmopedia).
+- **Time Estimate**: ~2 hours 40 minutes on a single RTX 4090.
+- **Goal**: Rapidly verify architecture changes before scaling.
+
+### How to Replicate
+The dataset takes hours to generate, so we recommend loading the pre-shuffled version directly from Hugging Face:
+
+```bash
+# 1. Clone repository
+git clone https://github.com/Open-Superintelligence-Lab/5-dollar-llm
+cd 5-dollar-llm
+
+# 2. Download Pre-Processed Data (Fast)
+python download_data.py
+
+# 3. Start Training
+python train_llm.py --dataset_path processed_data/pretrain_mix_1000000000
+```
+
 
 ## 🚀 Getting Started & Contributing
 

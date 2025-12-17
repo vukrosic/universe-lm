@@ -44,9 +44,7 @@ def prepare_pretraining_data(args):
     jsonl_path = os.path.join(args.output_dir, "temp_mix.jsonl")
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Ratios - NOTE: Python-Edu is skipped because it requires downloading
-    # actual code content from Software Heritage S3 (only metadata is in dataset)
-    # For quick debugging, we redistribute: 70% FineWeb-Edu, 30% Cosmopedia
+    # Ratios - 70% FineWeb-Edu, 30% Cosmopedia
     target_fw = int(args.target_tokens * 0.7)
     target_cosmo = int(args.target_tokens * 0.3)
     
@@ -59,14 +57,7 @@ def prepare_pretraining_data(args):
         ds_cosmo = load_dataset("HuggingFaceTB/smollm-corpus", "cosmopedia-v2", split="train", streaming=True)
         process_stream("Cosmopedia", ds_cosmo, tokenizer, target_cosmo, f)
         
-        # 3. Python-Edu - SKIPPED for now
-        # Python-Edu requires downloading content from Software Heritage S3 bucket
-        # using blob_id. The dataset only contains metadata (blob_id, repo_name, path).
-        # To add Python-Edu support, implement S3 download as shown in:
-        # https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus
-        # ds_python = load_dataset("HuggingFaceTB/smollm-corpus", "python-edu", split="train", streaming=True)
-        # ... = ds_python.map(download_contents, input_columns="blob_id", num_proc=num_proc)
-        # process_stream("Python-Edu", ds_python, tokenizer, target_py, f)
+        # 3. Python-Edu removed as requested
         
     print("\nLoading JSONL...")
     ds = load_dataset("json", data_files=jsonl_path, split="train")

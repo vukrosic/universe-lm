@@ -4,96 +4,114 @@ import numpy as np
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer
 
-def apply_chat_template(example, tokenizer):
+def process_messages_with_masking(messages, tokenizer):
     """
-    Formats the conversation using the tokenizer's chat template.
-    Expects example['messages'] to be a list of dicts: [{'role': 'user', 'content': ...}, ...]
+    Tokenizes messages strictly ensuring ChatML format.
+    Returns input_ids and labels (masked user tokens).
     """
-    messages = example['messages']
-    # Use standard chat template (ensure tokenizer has one set, or use default ChatML)
-    try:
-        formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-    except Exception as e:
-        # Fallback to manual ChatML if apply_chat_template fails/isn't set
-        formatted = ""
-        for msg in messages:
-            role = msg['role']
-            content = msg['content']
-            formatted += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-        formatted += "<|im_start|>assistant\n" # Only if we were prompting generation, but for training we want full text
-        # Actually for training we just want the full string.
+    input_ids = []
+    labels = []
     
-    return {"text": formatted}
+    # Check if messages is None or empty
+    if not messages:
+        return [], []
+
+    for msg in messages:
+        role = msg.get('role', '')
+        content = msg.get('content', '')
+        
+        if not role or not content:
+            continue
+            
+        # Format: <|im_start|>role\ncontent<|im_end|>\n
+        # We manually tokenize each part to ensure control
+        
+        # 1. Header: <|im_start|>role\n
+        header_text = f"<|im_start|>{role}\n"
+        header_ids = tokenizer.encode(header_text, add_special_tokens=False)
+        
+        # 2. Content
+        content_ids = tokenizer.encode(content, add_special_tokens=False)
+        
+        # 3. Footer: <|im_end|>\n
+        footer_text = "<|im_end|>\n"
+        footer_ids = tokenizer.encode(footer_text, add_special_tokens=False)
+        
+        # Combine
+        part_input_ids = header_ids + content_ids + footer_ids
+        
+        # Build Labels
+        if role == "assistant":
+            # Assistant: Train on content and footer (to learn when to stop)
+            # Mask header? Usually yes, we prompt with header.
+            # Label = [-100]*header + content + footer
+            part_labels = [-100] * len(header_ids) + content_ids + footer_ids
+        else:
+            # User/System: Mask everything
+            part_labels = [-100] * len(part_input_ids)
+            
+        input_ids.extend(part_input_ids)
+        labels.extend(part_labels)
+        
+    return input_ids, labels
 
 def prepare_sft_data(args):
-    print(f"🚀 Preparing SFT data (max {args.max_samples} samples)...")
+    print(f"🚀 Preparing SFT data (Assist-Only Prediction, max {args.max_samples} samples)...")
     
+    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
+    # Check special tokens
+    if "<|im_start|>" not in tokenizer.get_vocab():
+        print("Warning:Tokenizer might not support ChatML special tokens directly. Ensure they are added if needed.")
+    
     # 1. Load Data
-    # SmolTalk has multiple configs (subsets)
-    # subset 1: smol-magpie-ultra (High quality instructions)
     print("Loading smol-magpie-ultra...")
     ds_magpie = load_dataset("HuggingFaceTB/smoltalk", "smol-magpie-ultra", split="train")
     
-    # subset 2: everyday-conversations (Natural chat)
-    print("Loading everyday-conversations...")
-    ds_chat = load_dataset("HuggingFaceTB/smoltalk", "everyday-conversations", split="train")
+    # 2. Select Subset
+    ds_magpie = ds_magpie.shuffle(seed=42).select(range(min(len(ds_magpie), args.max_samples)))
     
-    # 2. Select Subsets
-    # Shuffle and take top N
-    max_magpie = min(len(ds_magpie), int(args.max_samples * 0.8))
-    max_chat = min(len(ds_chat), int(args.max_samples * 0.2))
+    # 3. Process
+    print("Processing and Tokenizing...")
     
-    ds_magpie = ds_magpie.shuffle(seed=42).select(range(max_magpie))
-    ds_chat = ds_chat.shuffle(seed=42).select(range(max_chat))
+    all_input_ids = []
+    all_label_ids = []
     
-    # 3. Format
-    print("Formatting with ChatML...")
-    
-    # Combine
-    combined_samples = []
-    
-    # Process Magpie
+    count = 0
     for sample in ds_magpie:
-         # Magpie structure is usually 'messages' column
-         combined_samples.append(apply_chat_template(sample, tokenizer)['text'])
-         
-    # Process Chat
-    for sample in ds_chat:
-         combined_samples.append(apply_chat_template(sample, tokenizer)['text'])
+        # Expect 'messages' list
+        msgs = sample.get('messages', [])
+        ids, labs = process_messages_with_masking(msgs, tokenizer)
+        
+        all_input_ids.extend(ids)
+        all_label_ids.extend(labs)
+        
+        count += 1
+        if count % 1000 == 0:
+            print(f"  Processed {count} conversations...", end='\r')
+            
+    print(f"\nTotal tokens collected: {len(all_input_ids):,}")
     
-    print(f"Total samples: {len(combined_samples)}")
+    # 4. Packing
+    chunk_size = 2048
+    total_length = len(all_input_ids)
+    # Truncate to multiple of chunk_size
+    n_chunks = total_length // chunk_size
+    valid_len = n_chunks * chunk_size
     
-    # 4. Tokenize
-    print("Tokenizing...")
-    all_token_ids = []
-    for text in combined_samples:
-        ids = tokenizer.encode(text, add_special_tokens=True)
-        # For SFT, we ideally want to train on (Prompt + Response), masking Prompt loss.
-        # But for simple LLM training we often just train on everything with packing.
-        # Given "SmolLM2" style, we will just Pack them similar to pre-training for efficiency.
-        # However, strictly SFT masking is better. 
-        # For this implementation, we will use PACKING (next token prediction on full sequence)
-        # to mesh well with our existing trainer which expects standard packed input_ids.
-        all_token_ids.extend(ids)
+    print(f"Packing into {n_chunks} sequences of {chunk_size}...")
     
-    print(f"Total tokens collected: {len(all_token_ids):,}")
+    packed_input_ids = np.array(all_input_ids[:valid_len]).reshape(-1, chunk_size)
+    packed_labels = np.array(all_label_ids[:valid_len]).reshape(-1, chunk_size)
     
     # 5. Save
     output_path = os.path.join(args.output_dir, "sft_mix")
     os.makedirs(output_path, exist_ok=True)
     
-    chunk_size = 2048
-    total_length = len(all_token_ids)
-    total_length = (total_length // chunk_size) * chunk_size
-    reshaped_ids = np.array(all_token_ids[:total_length]).reshape(-1, chunk_size)
-    
-    print(f"Packed into {len(reshaped_ids):,} sequences.")
-    
     final_ds = Dataset.from_dict({
-        "input_ids": reshaped_ids,
-        "labels": reshaped_ids 
+        "input_ids": packed_input_ids,
+        "labels": packed_labels 
     })
     
     print(f"Saving to {output_path}...")
@@ -104,7 +122,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default="./processed_data", help="Output directory")
     parser.add_argument("--tokenizer_name", type=str, default="HuggingFaceTB/SmolLM2-135M", help="Tokenizer")
-    parser.add_argument("--max_samples", type=int, default=1000, help="Max samples for testing")
+    parser.add_argument("--max_samples", type=int, default=50000, help="Max samples") # Default to reasonable amount for 1B run info
     
     args = parser.parse_args()
     prepare_sft_data(args)
