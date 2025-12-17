@@ -12,6 +12,8 @@
 
 🎥 **[Watch our introduction video](https://youtu.be/dayc3y34XXs)** to learn more about the project!
 
+> Check out our speedrun [leaderboard](docs/LEADERBOARD.md)!
+
 ## 🗺️ Roadmap
 
 **Our goals:**

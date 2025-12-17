@@ -24,3 +24,10 @@
 | Rank | User | Val Loss | Time | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **Baseline** | Default | TBD | ~2h 40m | Running now... |
+
+
+## 🤝 Compute Sponsorship & Verification
+**Don't have a 4090? We've got you.**
+
+1.  **Verification**: If you optimize the code but can't verify the exact time, submit a Pull Request. We will run your code on our standardized hardware to confirm the record!
+2.  **Sponsorship**: If you have a great idea (e.g., a new architecture) but no GPU, open an Issue/Ticket. If the idea looks promising, we will run the experiment for you and credit you.
