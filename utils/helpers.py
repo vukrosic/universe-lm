@@ -1,4 +1,5 @@
 import random
+import os
 import numpy as np
 import torch
 
@@ -11,7 +12,11 @@ def set_seed(seed: int = 42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    print(f"🌱 Set all seeds to {seed}")
+    # Enable deterministic algorithms for CUDA operations
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    print(f"🌱 Set all seeds to {seed} (deterministic mode)")
+
 
 
 def count_parameters(model):

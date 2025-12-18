@@ -3,6 +3,8 @@ import time
 import os
 import torch
 import logging
+import random
+import numpy as np
 from torch.utils.data import DataLoader
 
 # Fix tokenizer parallelism warning when using DataLoader workers
@@ -267,14 +269,27 @@ def main():
     
     logger.info(f"Train sequences: {len(train_ds):,}, Val sequences: {len(val_ds):,}")
 
+    # Worker init function to ensure each worker has a deterministic seed
+    def worker_init_fn(worker_id):
+        worker_seed = 42 + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    # Generator for reproducible shuffling
+    g = torch.Generator()
+    g.manual_seed(42)
+
     loader_args = dict(
         batch_size=config.batch_size,
         num_workers=2,
         pin_memory=torch.cuda.is_available(),
         persistent_workers=True,
+        worker_init_fn=worker_init_fn,
+        generator=g,
     )
     train_loader = DataLoader(train_ds, shuffle=True, **loader_args)
     val_loader = DataLoader(val_ds, shuffle=False, **loader_args)
+
 
     print("\nModel configuration")
     print("-" * 70)
