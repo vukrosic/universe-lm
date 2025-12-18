@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--experiment_name", type=str, default="moe_training", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.Blueberry24GBConfig)")
-    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from (for fine-tuning)")
+    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")
     parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
     parser.add_argument("--dataset_path", type=str, help="Path to preprocessed dataset directory")
     parser.add_argument("--eval_every", type=int, help="Override eval_every steps")

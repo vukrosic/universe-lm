@@ -29,12 +29,9 @@ ds_pretrain = load_dataset("vukrosic/blueberry-1B-pretrain")
 # Save to disk so the trainer can read it as a folder
 ds_pretrain.save_to_disk("processed_data/pretrain_mix_1000000000")
 
-# 2. Download SFT Data
-print("Downloading SFT Data...")
-ds_sft = load_dataset("vukrosic/blueberry-1B-sft")
-ds_sft.save_to_disk("processed_data/sft_mix")
 
 print("✅ Data Ready!")
+
 ```
 
 Run it:
@@ -54,14 +51,4 @@ python train_llm.py \
     --dataset_path processed_data/pretrain_mix_1000000000
 ```
 
-### SFT (Fine-Tuning)
-After pretraining finishes, fine-tune on the instruction data.
 
-```bash
-python train_llm.py \
-    --config_class configs.llm_config.Blueberry24GBConfig \
-    --dataset_path processed_data/sft_mix \
-    --load_checkpoint checkpoints/moe_training/final_model.pt \
-    --train_tokens 10000000 \
-    --experiment_name sft_run
-```
