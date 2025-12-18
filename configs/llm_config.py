@@ -29,14 +29,15 @@ class BlueberryConfig:
     # Base Training Defaults
     compile_model: bool = True
     batch_size: int = 4
-    gradient_accumulation_steps: int = 2
+    gradient_accumulation_steps: int = 1
     train_tokens: int = 1_000_000_000
     
     # Learning Rate (Aggressive for pre-training)
-    muon_lr: float = 0.01
+    muon_lr: float = 0.015
     muon_momentum: float = 0.95
     adamw_lr: float = 0.001
     warmup_ratio: float = 0.01
+    schedule_type: str = "cosine"
 
     # Evaluation
     eval_every: int = 2000

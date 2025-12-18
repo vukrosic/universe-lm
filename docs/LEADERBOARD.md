@@ -8,7 +8,8 @@
 
 | # | Date | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-17 | 1m 4s | 2,457,600 | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Baseline (LR 0.02, GradAcc 1) |
+| **1** | 2025-12-18 | **22.31s** | **385,024** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Schedule (LR 0.015, Warmup 0.01) + [Enabled per-step target check] |
+| **2** | 2025-12-17 | 1m 4s | 2,457,600 | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Baseline (LR 0.02, GradAcc 1) |
 
 ## 🎯 Best Loss @ 67M Tokens
 *Goal: Lowest Validation Loss after 67,000,000 Training Tokens*

@@ -82,6 +82,7 @@ def train_model(
     plot_fn: Optional[Callable] = None,
     extra_config: Optional[Dict[str, Any]] = None,
     target_train_loss: Optional[float] = None,
+    log_every: int = 100,
 ) -> Any:
     """
     Generic training function that can be used by experiments.
@@ -204,12 +205,17 @@ def train_model(
                     for scheduler in schedulers:
                         scheduler.step()
 
+            # Target train loss check (every step for precision)
+            current_loss = ce_loss.item()
+            if target_train_loss is not None and current_loss <= target_train_loss:
+                print(f"\n🎯 Target train loss {target_train_loss} reached at step {step}!")
+                stopped_early = True
+                
             # Logging
-            if step % 100 == 0:
+            if step % log_every == 0 or stopped_early:
                 with torch.no_grad():
                     predictions = logits.argmax(dim=-1)
                     accuracy = (predictions == y).float().mean().item()
-                    current_loss = ce_loss.item()
                     perplexity = math.exp(min(current_loss, 20))
                     current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
 
@@ -221,11 +227,8 @@ def train_model(
                     'lr': f'{current_lr:.5f}'
                 })
 
-                # Target train loss check
-                if target_train_loss is not None and current_loss <= target_train_loss:
-                    print(f"\n🎯 Target train loss {target_train_loss} reached at step {step}!")
-                    stopped_early = True
-                    break
+            if stopped_early:
+                break
 
             # Evaluation
             if step % config.eval_every == 0 and step > 0:
@@ -278,12 +281,20 @@ def train_model(
         metrics_history['learning_rates'].append(current_lr)
     else:
         # Use best metrics if stopped early
-        best_idx = metrics_history['val_losses'].index(min(metrics_history['val_losses']))
-        final_eval = {
-            'val_loss': metrics_history['val_losses'][best_idx],
-            'val_accuracy': metrics_history['val_accuracies'][best_idx],
-            'val_perplexity': metrics_history['val_perplexities'][best_idx],
-        }
+        if metrics_history['val_losses']:
+            best_idx = metrics_history['val_losses'].index(min(metrics_history['val_losses']))
+            final_eval = {
+                'val_loss': metrics_history['val_losses'][best_idx],
+                'val_accuracy': metrics_history['val_accuracies'][best_idx],
+                'val_perplexity': metrics_history['val_perplexities'][best_idx],
+            }
+        else:
+            final_eval = {
+                'val_loss': current_loss if 'current_loss' in locals() else 0.0,
+                'val_aux_loss': aux_loss.item() if ('aux_loss' in locals() and aux_loss is not None) else 0.0,
+                'val_accuracy': accuracy if 'accuracy' in locals() else 0.0,
+                'val_perplexity': perplexity if 'perplexity' in locals() else 0.0,
+            }
     
     total_time = (time.time() - train_start_time) / 60
     
@@ -450,16 +461,34 @@ def train_moe_model(
             print(f"⚠️ Model compilation failed: {e}")
             print("Running in eager mode instead.")
 
-    # Learning rate schedule with cosine decay
+    # Learning rate schedule
+    schedule_type = getattr(config, 'schedule_type', 'cosine')
     schedulers = []
     warmup_steps = max(1, int(config.max_steps * config.warmup_ratio))
+    
     for optimizer in optimizers:
-        def lr_lambda(step):
-            if step < warmup_steps:
-                return step / warmup_steps
-            else:
-                progress = (step - warmup_steps) / (config.max_steps - warmup_steps)
-                return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
+        if schedule_type == 'cosine':
+            def lr_lambda(step):
+                if step < warmup_steps:
+                    return step / warmup_steps
+                else:
+                    progress = (step - warmup_steps) / max(1, config.max_steps - warmup_steps)
+                    return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
+        elif schedule_type == 'linear':
+            def lr_lambda(step):
+                if step < warmup_steps:
+                    return step / warmup_steps
+                else:
+                    progress = (step - warmup_steps) / max(1, config.max_steps - warmup_steps)
+                    return max(0.1, 1.0 - progress)
+        elif schedule_type == 'constant':
+            def lr_lambda(step):
+                if step < warmup_steps:
+                    return step / warmup_steps
+                else:
+                    return 1.0
+        else:
+            raise ValueError(f"Unknown schedule_type: {schedule_type}")
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         schedulers.append(scheduler)
@@ -478,6 +507,7 @@ def train_moe_model(
         plot_fn=None,
         extra_config=None,
         target_train_loss=target_train_loss,
+        log_every=getattr(config, 'log_every', 100),
     )
 
     return model, final_eval, metrics_history
