@@ -24,7 +24,7 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 
 | # | Date | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-18 | **3m 2s** | **6,086,656** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
+| **1** | 2025-12-18 | **2m 31s** | **6,537,216** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
 
 > First benchmark is faster to itterate. Every few records we can search and combine them to see what transfers to the longer training well.
 

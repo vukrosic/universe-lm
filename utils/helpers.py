@@ -12,10 +12,7 @@ def set_seed(seed: int = 42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # Enable deterministic algorithms for CUDA operations
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    torch.use_deterministic_algorithms(True, warn_only=True)
-    print(f"🌱 Set all seeds to {seed} (deterministic mode)")
+    print(f"🌱 Set all seeds to {seed} (benchmark mode, data seeding only)")
 
 
 
