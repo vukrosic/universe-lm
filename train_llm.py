@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import Blueberry80GBConfig, DebugConfig, Blueberry24GBConfig
+from configs.llm_config import Blueberry80GBConfig, Blueberry24GBConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_moe_model
 from utils.helpers import set_seed

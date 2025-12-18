@@ -68,31 +68,3 @@ class Blueberry80GBConfig(BlueberryConfig):
     # Optimized for H100 (80GB)
     batch_size: int = 128
     gradient_accumulation_steps: int = 2
-
-
-@dataclass
-class DebugConfig(BlueberryConfig):
-    # Tiny architecture for fast debugging
-    d_model: int = 128
-    n_heads: int = 4
-    n_layers: int = 2
-    d_ff: int = 512
-    
-    # Standard settings (Dense)
-    use_moe: bool = False
-    
-    # Reduced resources
-    batch_size: int = 2
-    gradient_accumulation_steps: int = 1
-    max_seq_len: int = 128
-    
-    # Shorter training
-    train_tokens: int = 100_000 # ~100 steps
-    
-    log_milestones: Tuple[int, ...] = (10, 50, 80)
-    muon_lr: float = 0.01
-    adamw_lr: float = 0.001
-
-    def __post_init__(self):
-        super().__post_init__()
-
