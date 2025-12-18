@@ -123,14 +123,15 @@ def train_model(
     # Training loop
     model.train()
     step = 0
+    tokens_seen = 0
     desc = f"Training {experiment_name}" if experiment_name else "Training"
-    pbar = tqdm(total=config.max_steps, desc=desc)
+    pbar = tqdm(total=config.train_tokens, desc=desc, unit="tokens")
     
     stopped_early = False
 
-    while step < config.max_steps:
+    while tokens_seen < config.train_tokens:
         for batch_idx, batch in enumerate(train_loader):
-            if step >= config.max_steps:
+            if tokens_seen >= config.train_tokens:
                 break
 
             # Handle different batch formats
@@ -152,6 +153,9 @@ def train_model(
             x, y = x.to(device), y.to(device)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(device)
+            
+            # Count tokens in this batch (approx: batch_size * seq_len)
+            batch_tokens = x.numel()
 
             # Forward pass
             if config.use_amp:
@@ -189,14 +193,14 @@ def train_model(
                         optimizer.step()
                         optimizer.zero_grad()
                     for scheduler in schedulers:
-                        scheduler.step()
+                        scheduler.step(tokens_seen)
                 else:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
                     for optimizer in optimizers:
                         optimizer.step()
                         optimizer.zero_grad()
                     for scheduler in schedulers:
-                        scheduler.step()
+                        scheduler.step(tokens_seen)
 
             # Target train loss check (every step for precision)
             current_loss = ce_loss.item()
@@ -212,12 +216,9 @@ def train_model(
                     perplexity = math.exp(min(current_loss, 20))
                     current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
 
-                pbar.set_postfix({
-                    'loss': f'{current_loss:.4f}',
-                    'acc': f'{accuracy:.3f}',
-                    'ppl': f'{perplexity:.1f}',
-                    'lr': f'{current_lr:.5f}'
-                })
+                pbar.update(batch_tokens)
+            
+            tokens_seen += batch_tokens
 
             if stopped_early:
                 break
@@ -248,8 +249,6 @@ def train_model(
                         break
 
             step += 1
-            if step % 20 == 0:
-                pbar.update(20)
         
         if stopped_early:
             break
@@ -257,7 +256,7 @@ def train_model(
     pbar.close()
 
     # Final evaluation (if not stopped early)
-    if not stopped_early or step == config.max_steps:
+    if not stopped_early or tokens_seen >= config.train_tokens:
         final_eval = evaluate_model(model, val_loader, config)
         elapsed_time = (time.time() - train_start_time) / 60
         current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
@@ -445,32 +444,37 @@ def train_minimal_llm(
     # Learning rate schedule
     schedule_type = getattr(config, 'schedule_type', 'cosine')
     schedulers = []
-    warmup_steps = max(1, int(config.max_steps * config.warmup_ratio))
+    warmup_tokens = max(1, int(config.train_tokens * config.warmup_ratio))
     
     for optimizer in optimizers:
         if schedule_type == 'cosine':
-            def lr_lambda(step):
-                if step < warmup_steps:
-                    return step / warmup_steps
+            def lr_lambda(current_tokens):
+                if current_tokens < warmup_tokens:
+                    return current_tokens / warmup_tokens
                 else:
-                    progress = (step - warmup_steps) / max(1, config.max_steps - warmup_steps)
+                    progress = (current_tokens - warmup_tokens) / max(1, config.train_tokens - warmup_tokens)
                     return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
         elif schedule_type == 'linear':
-            def lr_lambda(step):
-                if step < warmup_steps:
-                    return step / warmup_steps
+            def lr_lambda(current_tokens):
+                if current_tokens < warmup_tokens:
+                    return current_tokens / warmup_tokens
                 else:
-                    progress = (step - warmup_steps) / max(1, config.max_steps - warmup_steps)
+                    progress = (current_tokens - warmup_tokens) / max(1, config.train_tokens - warmup_tokens)
                     return max(0.1, 1.0 - progress)
         elif schedule_type == 'constant':
-            def lr_lambda(step):
-                if step < warmup_steps:
-                    return step / warmup_steps
+            def lr_lambda(current_tokens):
+                if current_tokens < warmup_tokens:
+                    return current_tokens / warmup_tokens
                 else:
                     return 1.0
         else:
             raise ValueError(f"Unknown schedule_type: {schedule_type}")
 
+        # Note: scheduler.step() in the loop should now pass tokens_seen if we want token-based decay
+        # But LambdaLR by default increments an internal 'last_epoch'. 
+        # We need to call scheduler.step(tokens_seen) or similar.
+        # Actually, let's keep it as step-based for the LambdaLR internal state but use tokens_seen as the input.
+        # We'll update the trainer call to scheduler.step(tokens_seen).
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         schedulers.append(scheduler)
 
