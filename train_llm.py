@@ -171,7 +171,7 @@ def main():
     parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
     parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
     parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
-    parser.add_argument("--experiment_name", type=str, default="speedrun_6.7", help="Name of the experiment")
+    parser.add_argument("--experiment_name", type=str, default="speedrun_4.5", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.Blueberry24GBConfig)")
     parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")

@@ -226,6 +226,9 @@ def train_model(
                     'acc': f'{accuracy:.3f}',
                     'lr': f'{current_lr:.5f}'
                 })
+                # Console print for visibility
+                if step % (log_every * 10) == 0 or stopped_early:
+                    print(f" [Step {step}] Loss: {current_loss:.4f} | Acc: {accuracy:.3f} | LR: {current_lr:.6f}")
             
             pbar.update(batch_tokens)
             tokens_seen += batch_tokens

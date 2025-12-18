@@ -6,14 +6,13 @@
 - compile: False
 
 
-## ⚡ Fastest To 6.7 Train Loss
-*Goal: Fastest Time to Reach Loss ≤ 6.7*
+## ⚡ Fastest To 4.5 Train Loss
+*Goal: Fastest Time to Reach Loss ≤ 4.5*
 > Everyone is GPU poor, let's make every FLOP count.
 
 | # | Date | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-18 | **22.24s** | **385,024** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
-| **2** | 2025-12-17 | 1m 4s | 2,457,600 | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Baseline (LR 0.02, GradAcc 1) |
+| **1** | 2025-12-18 | **3m 2s** | **6,086,656** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
 
 ## 🎯 Best Loss @ 67M Tokens
 *Goal: Lowest Validation Loss after 67,000,000 Training Tokens*
