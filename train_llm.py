@@ -183,6 +183,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     parser.add_argument("--target_train_loss", type=float, default=4.5, help="Stop training when training loss reaches this value")
     parser.add_argument("--log_every", type=int, default=1, help="Logging frequency in steps")
+    parser.add_argument("--warmup", type=str, default="true", help="Whether to perform untimed compilation warmup (true/false)")
 
     args = parser.parse_args()
 
@@ -221,6 +222,8 @@ def main():
         config.gradient_accumulation_steps = args.gradient_accumulation_steps
     if args.log_every is not None:
         config.log_every = args.log_every
+    
+    use_warmup = (args.warmup.lower() == "true")
 
     
     experiment_name = args.experiment_name
@@ -284,24 +287,27 @@ def main():
 
     print("Starting training...")
     print("-" * 70)
-    start = time.time()
-
+    
     # Train the model (checkpoint loading handled by trainer if load_checkpoint is provided)
-    model, metrics, _ = train_minimal_llm(
+    results = train_minimal_llm(
         config, 
         train_loader, 
         val_loader, 
         output_dir=output_dir, 
         experiment_name=experiment_name,
         load_weights_path=args.load_checkpoint,
-        target_train_loss=args.target_train_loss
+        target_train_loss=args.target_train_loss,
+        warmup=use_warmup
     )
-    total_seconds = time.time() - start
+    
+    model, metrics, _, setup_time, training_time = results
     logger.info("Training complete")
 
     print("\nResults")
     print("-" * 70)
-    print(f"Training time: {format_time(total_seconds)}")
+    print(f"Setup & Compilation: {setup_time:.2f}s")
+    print(f"Active Training:     {format_time(training_time)}")
+    print(f"Total Wall Time:     {format_time(setup_time + training_time)}")
     print(f"Val loss:       {metrics['val_loss']:.4f}")
     print(f"Val accuracy:   {metrics['val_accuracy']:.4f}")
     print(f"Val perplexity: {metrics['val_perplexity']:.2f}")

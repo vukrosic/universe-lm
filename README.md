@@ -48,7 +48,11 @@ Currently LLMs are the most useful AI models, so it's a clear way for us to do u
 
 Can you train a model to **4.5 loss** in under 3 minutes?
 
-### ⚡ Quick Start (3-Minute Test)
+### ⚡ Speedrun 1 (The 3-Minute Challenge)
+Reach **4.5 loss** as fast as possible.
+- **Rules:** 151M params ± 5%, must use speedrun data. See [Official Rules](docs/LEADERBOARD.md#📜-official-rules).
+- **Timing:** Uses untimed compilation warmup for fair benchmarking.
+
 ```bash
 git clone https://github.com/Open-Superintelligence-Lab/5-dollar-llm
 cd 5-dollar-llm
