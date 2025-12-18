@@ -11,8 +11,8 @@ root_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.append(str(root_dir))
 
-from models.llm import MoEMinimalLLM
-from configs.llm_config import Blueberry80GBConfig, GPU24GBMoEModelConfig
+from models.llm import MinimalLLM
+from configs.llm_config import Blueberry80GBConfig
 
 def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloat16):
     """
@@ -57,7 +57,7 @@ def load_model_from_checkpoint(checkpoint_path, device='cuda', dtype=torch.bfloa
 
     # Create model
     # Note: the config object should already have the right parameters
-    model = MoEMinimalLLM(config)
+    model = MinimalLLM(config)
     
     # Load state dict
     if 'model_state_dict' in checkpoint:

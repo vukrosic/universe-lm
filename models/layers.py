@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import MixtureOfExperts, SwiGLUFeedForward
+from .components import SwiGLUFeedForward
 
 
 class Rotary(nn.Module):
@@ -79,8 +79,8 @@ class MultiHeadAttention(nn.Module):
         return self.w_o(attn_output)
 
 
-class MoETransformerBlock(nn.Module):
-    """Transformer block with MoE"""
+class TransformerBlock(nn.Module):
+    """Standard transformer block with dense feed-forward"""
 
     def __init__(
         self,
@@ -88,22 +88,13 @@ class MoETransformerBlock(nn.Module):
         n_heads: int,
         d_ff: int,
         max_seq_len: int,
-        num_experts: int = 8,
-        top_k: int = 2,
         dropout: float = 0.1,
-        use_moe: bool = True,
         n_kv_heads: int | None = None,
     ):
         super().__init__()
 
         self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout, n_kv_heads)
-
-        # Feed-forward layer (MoE or Dense)
-        self.use_moe = use_moe
-        if use_moe:
-            self.feed_forward = MixtureOfExperts(d_model, d_ff, num_experts, top_k, dropout)
-        else:
-            self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
+        self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
 
         # Normalization layers
         self.norm1 = nn.RMSNorm(d_model)
@@ -116,11 +107,6 @@ class MoETransformerBlock(nn.Module):
         x = x + self.dropout(attn_out)
 
         # Feed-forward
-        if self.use_moe:
-            ff_out, aux_loss = self.feed_forward(self.norm2(x))
-        else:
-            ff_out = self.feed_forward(self.norm2(x))
-            aux_loss = None
-            
+        ff_out = self.feed_forward(self.norm2(x))
         x = x + self.dropout(ff_out)
-        return x, aux_loss
+        return x

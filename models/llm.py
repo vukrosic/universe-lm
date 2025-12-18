@@ -3,11 +3,11 @@ import torch.nn as nn
 import math
 from typing import Optional
 from configs.llm_config import Blueberry80GBConfig
-from models.layers import MoETransformerBlock
+from models.layers import TransformerBlock
 
 
-class MoEMinimalLLM(nn.Module):
-    """Minimal LLM with Mixture of Experts"""
+class MinimalLLM(nn.Module):
+    """Minimal dense LLM"""
 
     def __init__(self, config: Blueberry80GBConfig):
         super().__init__()
@@ -17,18 +17,15 @@ class MoEMinimalLLM(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_dropout = nn.Dropout(config.dropout)
 
-        # Transformer blocks with MoE
+        # Transformer blocks
         self.transformer_blocks = nn.ModuleList(
             [
-                MoETransformerBlock(
+                TransformerBlock(
                     config.d_model,
                     config.n_heads,
                     config.d_ff,
                     config.max_seq_len,
-                    getattr(config, 'num_experts', 8),
-                    getattr(config, 'expert_top_k', 2),
                     config.dropout,
-                    use_moe=getattr(config, 'use_moe', False),
                     n_kv_heads=config.n_kv_heads,
                 )
                 for i in range(config.n_layers)
@@ -53,28 +50,18 @@ class MoEMinimalLLM(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, x, return_aux_loss=True):
+    def forward(self, x):
         # Token embeddings
         x = self.token_embedding(x) * math.sqrt(self.config.d_model)
         x = self.position_dropout(x)
 
-        # Collect auxiliary losses from MoE layers
-        aux_losses = []
-
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x, aux_loss = block(x)
-            if aux_loss is not None and return_aux_loss:
-                aux_losses.append(aux_loss)
+            x = block(x)
 
         # Output projection
         x = self.norm(x)
         x = self.output_dropout(x)
         logits = self.lm_head(x)
 
-        # Combine auxiliary losses
-        total_aux_loss = sum(aux_losses) if aux_losses else None
-
-        if return_aux_loss:
-            return logits, total_aux_loss
         return logits

@@ -1,17 +1,15 @@
-from .components import Expert, TopKRouter, MixtureOfExperts
+from .components import SwiGLUFeedForward
 from .layers import (
     Rotary,
     MultiHeadAttention,
-    MoETransformerBlock,
+    TransformerBlock,
 )
-from .llm import MoEMinimalLLM
+from .llm import MinimalLLM
 
 __all__ = [
-    "Expert",
-    "TopKRouter",
-    "MixtureOfExperts",
+    "SwiGLUFeedForward",
     "Rotary",
     "MultiHeadAttention",
-    "MoETransformerBlock",
-    "MoEMinimalLLM",
+    "TransformerBlock",
+    "MinimalLLM",
 ]

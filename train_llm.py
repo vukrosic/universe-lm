@@ -10,7 +10,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import Blueberry80GBConfig, Blueberry24GBConfig
 from configs.dataset_config import DataConfig
-from training.trainer import train_moe_model
+from training.trainer import train_minimal_llm
 from utils.helpers import set_seed
 from utils.logger import setup_logging
 
@@ -163,7 +163,7 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
 
 def main():
     logger = setup_logging(log_dir="./logs")
-    logger.info("Starting MoE training")
+    logger.info("Starting training")
 
     print_system_info()
     set_seed(42)
@@ -306,7 +306,6 @@ def main():
     print("-" * 70)
     print(f"d_model: {config.d_model}, layers: {config.n_layers}, heads: {config.n_heads}")
     print(f"ff dim: {config.d_ff}")
-    print(f"experts: {getattr(config, 'num_experts', 'N/A')}, top‑k: {getattr(config, 'expert_top_k', 'N/A')}")
     print(f"steps: {config.max_steps}, batch size: {config.batch_size}")
     print(f"vocab size: {config.vocab_size}\n")
     logger.info(f"Model configuration: {vars(config)}")
@@ -316,7 +315,7 @@ def main():
     start = time.time()
 
     # Train the model (checkpoint loading handled by trainer if load_checkpoint is provided)
-    model, metrics, _ = train_moe_model(
+    model, metrics, _ = train_minimal_llm(
         config, 
         train_loader, 
         val_loader, 

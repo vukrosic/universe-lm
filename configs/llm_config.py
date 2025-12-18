@@ -13,9 +13,6 @@ class BlueberryConfig:
     # GQA parameters
     n_kv_heads: int = 4      
     
-    # Dense model settings (MoE disabled by default)
-    use_moe: bool = False
-
     # Data params
     max_seq_len: int = 2048  
     vocab_size: int = 49152  

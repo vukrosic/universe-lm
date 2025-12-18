@@ -11,7 +11,7 @@ from torch.amp import autocast
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
 from configs.llm_config import Blueberry80GBConfig
-from models.llm import MoEMinimalLLM
+from models.llm import MinimalLLM
 from optimizers.muon import Muon
 from training.evaluation import evaluate_model
 from utils.helpers import set_seed
@@ -114,7 +114,6 @@ def train_model(
     metrics_history = {
         'steps': [],
         'val_losses': [],
-        'val_aux_losses': [],
         'val_accuracies': [],
         'val_perplexities': [],
         'elapsed_times': [],
@@ -157,7 +156,7 @@ def train_model(
             # Forward pass
             if config.use_amp:
                 with autocast('cuda', dtype=torch.bfloat16):
-                    logits, aux_loss = model(x, return_aux_loss=True)
+                    logits = model(x)
                     shift_logits = logits[:, :-1, :].contiguous()
                     shift_labels = y[:, 1:].contiguous()
                     ce_loss = F.cross_entropy(
@@ -166,13 +165,10 @@ def train_model(
                     )
 
                     total_loss = ce_loss
-                    if aux_loss is not None:
-                        total_loss = total_loss + aux_loss
-
                     loss = total_loss / config.gradient_accumulation_steps
                 loss.backward()
             else:
-                logits, aux_loss = model(x, return_aux_loss=True)
+                logits = model(x)
                 shift_logits = logits[:, :-1, :].contiguous()
                 shift_labels = y[:, 1:].contiguous()
                 ce_loss = F.cross_entropy(
@@ -181,9 +177,6 @@ def train_model(
                 )
 
                 total_loss = ce_loss
-                if aux_loss is not None:
-                    total_loss = total_loss + aux_loss
-
                 loss = total_loss / config.gradient_accumulation_steps
                 loss.backward()
 
@@ -221,7 +214,6 @@ def train_model(
 
                 pbar.set_postfix({
                     'loss': f'{current_loss:.4f}',
-                    'aux': f'{aux_loss.item() if aux_loss is not None else 0:.4f}',
                     'acc': f'{accuracy:.3f}',
                     'ppl': f'{perplexity:.1f}',
                     'lr': f'{current_lr:.5f}'
@@ -239,14 +231,12 @@ def train_model(
                 # Track metrics
                 metrics_history['steps'].append(step)
                 metrics_history['val_losses'].append(eval_metrics['val_loss'])
-                metrics_history['val_aux_losses'].append(eval_metrics['val_aux_loss'])
                 metrics_history['val_accuracies'].append(eval_metrics['val_accuracy'])
                 metrics_history['val_perplexities'].append(eval_metrics['val_perplexity'])
                 metrics_history['elapsed_times'].append(elapsed_time)
                 metrics_history['learning_rates'].append(current_lr)
                 
                 print(f"\nStep {step}: Val Loss: {eval_metrics['val_loss']:.4f}, "
-                      f"Val Aux Loss: {eval_metrics['val_aux_loss']:.4f}, "
                       f"Val Acc: {eval_metrics['val_accuracy']:.4f}, "
                       f"Val PPL: {eval_metrics['val_perplexity']:.2f}, "
                       f"LR: {current_lr:.5f}")
@@ -274,7 +264,6 @@ def train_model(
         
         metrics_history['steps'].append(step)
         metrics_history['val_losses'].append(final_eval['val_loss'])
-        metrics_history['val_aux_losses'].append(final_eval['val_aux_loss'])
         metrics_history['val_accuracies'].append(final_eval['val_accuracy'])
         metrics_history['val_perplexities'].append(final_eval['val_perplexity'])
         metrics_history['elapsed_times'].append(elapsed_time)
@@ -291,7 +280,6 @@ def train_model(
         else:
             final_eval = {
                 'val_loss': current_loss if 'current_loss' in locals() else 0.0,
-                'val_aux_loss': aux_loss.item() if ('aux_loss' in locals() and aux_loss is not None) else 0.0,
                 'val_accuracy': accuracy if 'accuracy' in locals() else 0.0,
                 'val_perplexity': perplexity if 'perplexity' in locals() else 0.0,
             }
@@ -300,7 +288,6 @@ def train_model(
     
     print(f"\n📊 Final Results:")
     print(f"   Val Loss: {final_eval['val_loss']:.4f}")
-    print(f"   Val Aux Loss: {final_eval['val_aux_loss']:.4f}")
     print(f"   Val Accuracy: {final_eval['val_accuracy']:.4f}")
     print(f"   Val Perplexity: {final_eval['val_perplexity']:.2f}")
     print(f"   Total Time: {total_time:.2f} min")
@@ -404,7 +391,7 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
     print(f"   📊 Plots saved to {plot_path}")
 
 
-def train_moe_model(
+def train_minimal_llm(
     config: Blueberry80GBConfig,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -414,14 +401,14 @@ def train_moe_model(
     target_train_loss: Optional[float] = None
 ):
     """
-    Train the MoE model with default Muon optimizer setup.
+    Train the Minimal LLM with default Muon optimizer setup.
     This is a convenience wrapper around the generic train_model function.
     """
-    print(f"\n🚀 Training model with {getattr(config, 'num_experts', 'N/A')} experts (top-{getattr(config, 'expert_top_k', 'N/A')})")
+    print(f"\n🚀 Training dense model")
 
     # Initialize model
     set_seed(42)
-    model = MoEMinimalLLM(config)
+    model = MinimalLLM(config)
     
     if load_weights_path:
         print(f"Loading pretrained weights from {load_weights_path}...")
@@ -436,14 +423,8 @@ def train_moe_model(
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
-    active_params = sum(p.numel() for n, p in model.named_parameters()
-                       if 'expert' not in n)
-    expert_params = total_params - active_params
 
     print(f"  📊 Total parameters: {total_params:,}")
-    print(f"  📊 Active parameters: {active_params:,}")
-    print(f"  📊 Expert parameters: {expert_params:,}")
-    print(f"  📊 Parameter efficiency: {active_params/total_params:.1%} active per forward pass")
 
     # Setup optimizers
     optimizers = setup_muon_optimizer(model, config)
