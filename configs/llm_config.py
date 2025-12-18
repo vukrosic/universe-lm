@@ -15,13 +15,7 @@ class BlueberryConfig:
     
     # Dense model settings (MoE disabled by default)
     use_moe: bool = False
-    
-    # RoPE / Attention defaults (inherited from previous Base but assumed used)
-    qk_rope_dim: int | None = 32
-    qk_nope_dim: int | None = 128
-    kv_lora_rank: int | None = 64
-    v_dim: int | None = 128
-    
+
     # Data params
     max_seq_len: int = 2048  
     vocab_size: int = 49152  

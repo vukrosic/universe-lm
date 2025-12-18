@@ -21,7 +21,12 @@ class Rotary(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(
-        self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1, n_kv_heads: int | None = None
+        self,
+        d_model: int,
+        n_heads: int,
+        max_seq_len: int,
+        dropout: float = 0.1,
+        n_kv_heads: int | None = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -41,22 +46,28 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x):
         batch_size, seq_len = x.size(0), x.size(1)
-        
+
         # Calculate queries, keys, and values
-        q = self.q_proj(x).reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2) # [B, H, T, D]
-        k = self.k_proj(x).reshape(batch_size, seq_len, self.n_kv_heads, self.d_k).transpose(1, 2) # [B, KV_H, T, D]
-        v = self.v_proj(x).reshape(batch_size, seq_len, self.n_kv_heads, self.d_k).transpose(1, 2) # [B, KV_H, T, D]
-        
-        Q, K, V = q, k, v
+        Q = self.q_proj(x).reshape(
+            batch_size, seq_len, self.n_heads, self.d_k
+        )  # [B, T, H, D]
+        K = self.k_proj(x).reshape(
+            batch_size, seq_len, self.n_kv_heads, self.d_k
+        )  # [B, T, KV_H, D]
+        V = self.v_proj(x).reshape(
+            batch_size, seq_len, self.n_kv_heads, self.d_k
+        )  # [B, T, KV_H, D]
 
         # Apply RoPE
-        Q = self.rotary(self.q_norm(Q.transpose(1, 2))).transpose(1, 2)
-        K = self.rotary(self.k_norm(K.transpose(1, 2))).transpose(1, 2)
-        
+        Q = self.rotary(self.q_norm(Q))
+        K = self.rotary(self.k_norm(K))
+
         # Repeat K/V for GQA if needed
         if self.n_kv_heads != self.n_heads:
-            K = torch.repeat_interleave(K, self.num_key_value_groups, dim=1)
-            V = torch.repeat_interleave(V, self.num_key_value_groups, dim=1)
+            K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
+            V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
+
+        Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
@@ -76,10 +87,6 @@ class MoETransformerBlock(nn.Module):
         d_model: int,
         n_heads: int,
         d_ff: int,
-        qk_rope_dim: int | None,
-        qk_nope_dim: int | None,
-        kv_lora_rank: int | None,
-        v_dim: int | None,
         max_seq_len: int,
         num_experts: int = 8,
         top_k: int = 2,
