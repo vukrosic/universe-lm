@@ -18,7 +18,7 @@ class BlueberryConfig:
     vocab_size: int = 49152  
     
     # Base Training Defaults
-    compile_model: bool = False
+    compile_model: bool = True
     batch_size: int = 4
     gradient_accumulation_steps: int = 1
     train_tokens: int = 20000000

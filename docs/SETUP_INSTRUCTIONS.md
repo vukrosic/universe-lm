@@ -56,10 +56,12 @@ print('✅ Full Data Ready!')
 
 Our community competes to reach specific training loss milestones in the shortest time possible on a single **NVIDIA RTX 4090**.
 
-### ⚡ The 4.5 Loss Speedrun
-*   **Goal:** Reach a training loss of **≤ 4.5**.
+### ⚡ Speedrun 1: The 4.5 Loss Challenge
+*   **Goal:** Reach a training loss of **≤ 4.5** as quickly as possible.
 *   **Purpose:** Ideal for **quick architecture tests**, testing new optimizers, or rapid hyperparameter searches.
-*   **Expected Time:** ~3 minutes.
+*   **Rules:** Must follow the [Official Speedrun Rules](LEADERBOARD.md#📜-official-rules) (151M params ± 5%, specific dataset).
+*   **Timing:** Uses an untimed **dummy-data warmup** to isolate compilation overhead from training speed.
+*   **Expected Time:** ~2.5 minutes active training (Record: 3m 2s includes compilation).
 *   **Command:**
     ```bash
     python train_llm.py \

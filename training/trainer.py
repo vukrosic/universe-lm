@@ -42,6 +42,7 @@ class EarlyStopping:
             return False
 
 
+
 def setup_muon_optimizer(model: nn.Module, config: Blueberry80GBConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
@@ -193,14 +194,14 @@ def train_model(
                         optimizer.step()
                         optimizer.zero_grad()
                     for scheduler in schedulers:
-                        scheduler.step(tokens_seen)
+                        scheduler.step()
                 else:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
                     for optimizer in optimizers:
                         optimizer.step()
                         optimizer.zero_grad()
                     for scheduler in schedulers:
-                        scheduler.step(tokens_seen)
+                        scheduler.step()
 
             # Target train loss check (every step for precision)
             current_loss = ce_loss.item()
@@ -402,6 +403,68 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
     plt.close()
     print(f"   📊 Plots saved to {plot_path}")
 
+def warmup_compiled_kernels(
+    model: nn.Module,
+    config: Blueberry80GBConfig,
+    train_loader: DataLoader,
+    device: torch.device,
+    num_steps: int = 3
+) -> None:
+    """
+    Warm up all compiled kernels (forward, backward, optimizer).
+    Caller is responsible for resetting state afterwards.
+    """
+    print(f"🔥 Warming up kernels ({num_steps} steps)...")
+    model.train()
+    
+    # Temporary optimizer to warm up optimizer kernels too
+    temp_optimizers = setup_muon_optimizer(model, config)
+    
+    warmup_iter = iter(train_loader)
+    
+    for _ in range(num_steps):
+        try:
+            batch = next(warmup_iter)
+        except StopIteration:
+            warmup_iter = iter(train_loader)
+            batch = next(warmup_iter)
+        
+        # Parse batch
+        if isinstance(batch, dict):
+            x, y = batch["input_ids"].to(device), batch["labels"].to(device)
+        else:
+            x, y = batch[0].to(device), batch[-1].to(device)
+        
+        # Forward + Backward
+        if config.use_amp:
+            with autocast('cuda', dtype=torch.bfloat16):
+                logits = model(x)
+                loss = F.cross_entropy(
+                    logits[:, :-1, :].reshape(-1, config.vocab_size),
+                    y[:, 1:].reshape(-1)
+                )
+            loss.backward()
+        else:
+            logits = model(x)
+            loss = F.cross_entropy(
+                logits[:, :-1, :].reshape(-1, config.vocab_size),
+                y[:, 1:].reshape(-1)
+            )
+            loss.backward()
+        
+        # Optimizer step (warms up optimizer kernels)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+        for opt in temp_optimizers:
+            opt.step()
+            opt.zero_grad()
+    
+    torch.cuda.synchronize()
+    
+    # Cleanup temp optimizers
+    del temp_optimizers
+    torch.cuda.empty_cache()
+    
+    print("✅ Kernels compiled and cached")
 
 def train_minimal_llm(
     config: Blueberry80GBConfig,
@@ -410,92 +473,121 @@ def train_minimal_llm(
     output_dir: Optional[str] = None,
     experiment_name: Optional[str] = None,
     load_weights_path: Optional[str] = None,
-    target_train_loss: Optional[float] = None
+    target_train_loss: Optional[float] = None,
 ):
-    """
-    Train the Minimal LLM with default Muon optimizer setup.
-    This is a convenience wrapper around the generic train_model function.
-    """
     print(f"\n🚀 Training dense model")
+    setup_start = time.time()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Initialize model
+    # ============================================
+    # 1. Initialize model with fixed seed
+    # ============================================
     set_seed(42)
     model = MinimalLLM(config)
+    model = model.to(device)
     
+    # Load pretrained weights if specified
     if load_weights_path:
         print(f"Loading pretrained weights from {load_weights_path}...")
-        checkpoint = torch.load(load_weights_path, map_location="cpu", weights_only=False)
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
-        else:
-            state_dict = checkpoint
-            
-        keys = model.load_state_dict(state_dict, strict=False)
-        print(f"Weights loaded: {keys}")
+        checkpoint = torch.load(load_weights_path, map_location=device, weights_only=False)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        model.load_state_dict(state_dict, strict=False)
 
-    # Count parameters
+    # ============================================
+    # 2. Save initial state BEFORE any forward pass
+    # ============================================
+    initial_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+    
     total_params = sum(p.numel() for p in model.parameters())
-
     print(f"  📊 Total parameters: {total_params:,}")
 
-    # Setup optimizers
-    optimizers = setup_muon_optimizer(model, config)
-
-    # Compile the model if requested (PyTorch 2.0+)
+    # ============================================
+    # 3. Compile model (if requested)
+    # ============================================
     if config.compile_model:
         print("🚀 Compiling model with torch.compile...")
-        # Reduce compilation overhead for MoE by not enforcing fullgraphs
-        # mode='max-autotune' gives best perf but takes longest to compile
-        # mode='reduce-overhead' is good for small batches
+        # Keep a reference to the original model for state restoration
+        orig_model = model
         try:
             model = torch.compile(model)
             print("✅ Model compiled successfully")
+            
+            # ============================================
+            # 4. Warm up kernels (dirties model state)
+            # ============================================
+            warmup_compiled_kernels(model, config, train_loader, device, num_steps=3)
+            
+            # ============================================
+            # 5. Reset model to initial state
+            # ============================================
+            # Restore state ensuring we use the original model keys to avoid calling load_state_dict on the wrapper
+            orig_model.load_state_dict(initial_model_state)
+            print("🔄 Model weights reset to initial state")
+            
         except Exception as e:
-            print(f"⚠️ Model compilation failed: {e}")
-            print("Running in eager mode instead.")
-
-    # Learning rate schedule
-    schedule_type = getattr(config, 'schedule_type', 'cosine')
-    schedulers = []
-    warmup_tokens = max(1, int(config.train_tokens * config.warmup_ratio))
+            print(f"⚠️ Compilation failed: {e}")
+            print("Continuing in eager mode.")
+            # Fallback to original model
+            model = orig_model
+            # Ensure state is clean
+            model.load_state_dict(initial_model_state)
     
+    # Free the backup
+    del initial_model_state
+    torch.cuda.empty_cache()
+
+    # ============================================
+    # 6. Create FRESH optimizers (no accumulated state)
+    # ============================================
+    optimizers = setup_muon_optimizer(model, config)
+
+    # ============================================
+    # 7. Create FRESH schedulers
+    # ============================================
+    # Tokens per optimization step
+    tokens_per_opt = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
+    total_steps = config.train_tokens // tokens_per_opt
+    warmup_steps = max(1, int(total_steps * config.warmup_ratio))
+    schedule_type = getattr(config, 'schedule_type', 'cosine')
+    
+    schedulers = []
     for optimizer in optimizers:
         if schedule_type == 'cosine':
-            def lr_lambda(current_tokens):
-                if current_tokens < warmup_tokens:
-                    return current_tokens / warmup_tokens
-                else:
-                    progress = (current_tokens - warmup_tokens) / max(1, config.train_tokens - warmup_tokens)
-                    return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
+            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
+                if current_step < warmup:
+                    return current_step / warmup
+                progress = (current_step - warmup) / max(1, total - warmup)
+                return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
         elif schedule_type == 'linear':
-            def lr_lambda(current_tokens):
-                if current_tokens < warmup_tokens:
-                    return current_tokens / warmup_tokens
-                else:
-                    progress = (current_tokens - warmup_tokens) / max(1, config.train_tokens - warmup_tokens)
-                    return max(0.1, 1.0 - progress)
-        elif schedule_type == 'constant':
-            def lr_lambda(current_tokens):
-                if current_tokens < warmup_tokens:
-                    return current_tokens / warmup_tokens
-                else:
-                    return 1.0
-        else:
-            raise ValueError(f"Unknown schedule_type: {schedule_type}")
+            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
+                if current_step < warmup:
+                    return current_step / warmup
+                progress = (current_step - warmup) / max(1, total - warmup)
+                return max(0.1, 1.0 - progress)
+        else:  # constant
+            def lr_lambda(current_step, warmup=warmup_steps):
+                return current_step / warmup if current_step < warmup else 1.0
+        
+        schedulers.append(torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda))
 
-        # Note: scheduler.step() in the loop should now pass tokens_seen if we want token-based decay
-        # But LambdaLR by default increments an internal 'last_epoch'. 
-        # We need to call scheduler.step(tokens_seen) or similar.
-        # Actually, let's keep it as step-based for the LambdaLR internal state but use tokens_seen as the input.
-        # We'll update the trainer call to scheduler.step(tokens_seen).
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        schedulers.append(scheduler)
+    # ============================================
+    # 8. Reset RNG for reproducible training
+    # ============================================
+    set_seed(42)
+    
+    setup_time = time.time() - setup_start
+    print(f"⚙️ Setup & Compilation complete in {setup_time:.2f}s")
+    print("-" * 70)
 
-    # Use the generic training function
+    # ============================================
+    # 9. Train from scratch (fresh iterator created internally)
+    # ============================================
+    train_start = time.time()
+    
     model, final_eval, metrics_history = train_model(
         model=model,
         config=config,
-        train_loader=train_loader,
+        train_loader=train_loader,  # Creates fresh iterator in train_model
         val_loader=val_loader,
         optimizers=optimizers,
         schedulers=schedulers,
@@ -507,5 +599,7 @@ def train_minimal_llm(
         target_train_loss=target_train_loss,
         log_every=getattr(config, 'log_every', 100),
     )
+    
+    total_training_time = time.time() - train_start
 
-    return model, final_eval, metrics_history
+    return model, final_eval, metrics_history, setup_time, total_training_time
