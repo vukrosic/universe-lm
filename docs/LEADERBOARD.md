@@ -2,7 +2,9 @@
 
 > Training is run on 1x4090 RTX.
 
-Model size must stay within ±5% of 151M parameters (approximately 143M–159M).
+- Model size must stay within ±5% of 151M parameters (approximately 143M–159M).
+- compile: False
+
 
 ## ⚡ Fastest To 6.7 Train Loss
 *Goal: Fastest Time to Reach Loss ≤ 6.7*
@@ -16,6 +18,8 @@ Model size must stay within ±5% of 151M parameters (approximately 143M–159M).
 ## 🎯 Best Loss @ 67M Tokens
 *Goal: Lowest Validation Loss after 67,000,000 Training Tokens*
 > Once you go big, data is the bottleneck.
+
+- compile: True
 
 | # | Date | Val Loss | Time | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
