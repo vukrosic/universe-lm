@@ -12,7 +12,7 @@ def run_training(run_id):
     experiment_name = f"repro_run_{run_id}"
     cmd = [
         "python", "train_llm.py",
-        "--target_train_loss", "7.3",
+        "--target_train_loss", "4.5",
         "--experiment_name", experiment_name,
         "--compile", "true",
         "--dataset_path", "processed_data/speedrun_40M"
