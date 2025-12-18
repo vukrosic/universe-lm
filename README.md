@@ -60,11 +60,11 @@ The dataset takes hours to generate, so we recommend loading the pre-shuffled ve
 git clone https://github.com/Open-Superintelligence-Lab/5-dollar-llm
 cd 5-dollar-llm
 
-# 2. Download Pre-Processed Data (Fast)
-python download_data.py
+# 2. Download Speedrun Data (Fast)
+python data/download_hf_data.py
 
-# 3. Start Training
-python train_llm.py --dataset_path processed_data/pretrain_mix_1000000000
+# 3. Start Speedrun (3-min test)
+python train_llm.py --target_train_loss 4.5
 ```
 
 
