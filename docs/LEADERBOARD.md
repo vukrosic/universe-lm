@@ -3,7 +3,6 @@
 > Training is run on 1x4090 RTX.
 
 - Model size must stay within ±5% of 151M parameters (approximately 143M–159M).
-- compile: False
 
 
 ## ⚡ Fastest To 4.5 Train Loss
@@ -14,15 +13,13 @@
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | 2025-12-18 | **3m 2s** | **6,086,656** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
 
-## 🎯 Best Loss @ 67M Tokens
-*Goal: Lowest Validation Loss after 67,000,000 Training Tokens*
-> Once you go big, data is the bottleneck.
+## ⚡ Fastest To 4 Train Loss
+*Goal: Fastest Time to Reach Loss ≤ 4*
 
-- compile: True
-
-| # | Date | Val Loss | Time | User | Notes |
+| # | Date | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **-** | 2025-12-17 | TBD | TBD | [Vuk Rosić](https://x.com/VukRosic99) | Baseline (In Progress) |
+
+
 
 ## 🏅 The 1B Marathon (World Record)
 *Goal: Best Model @ 1B Tokens (Time < 4h)*
