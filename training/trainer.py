@@ -14,7 +14,7 @@ from configs.llm_config import Blueberry80GBConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
 from training.evaluation import evaluate_model
-from utils.helpers import set_seed
+from utils.helpers import set_seed, format_time
 
 
 class EarlyStopping:
@@ -216,8 +216,18 @@ def train_model(
                     perplexity = math.exp(min(current_loss, 20))
                     current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
 
-                pbar.update(batch_tokens)
+                # Update progress bar
+                tokens_per_step = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
+                est_total_steps = config.train_tokens // tokens_per_step
+                
+                pbar.set_postfix({
+                    'step': f'{step}/{est_total_steps}',
+                    'loss': f'{current_loss:.4f}',
+                    'acc': f'{accuracy:.3f}',
+                    'lr': f'{current_lr:.5f}'
+                })
             
+            pbar.update(batch_tokens)
             tokens_seen += batch_tokens
 
             if stopped_early:
@@ -283,13 +293,13 @@ def train_model(
                 'val_perplexity': perplexity if 'perplexity' in locals() else 0.0,
             }
     
-    total_time = (time.time() - train_start_time) / 60
+    total_time_seconds = time.time() - train_start_time
     
     print(f"\n📊 Final Results:")
     print(f"   Val Loss: {final_eval['val_loss']:.4f}")
     print(f"   Val Accuracy: {final_eval['val_accuracy']:.4f}")
     print(f"   Val Perplexity: {final_eval['val_perplexity']:.2f}")
-    print(f"   Total Time: {total_time:.2f} min")
+    print(f"   Total Time: {format_time(total_time_seconds)}")
     if stopped_early:
         print(f"   ⚠️  Training stopped early at step {step}")
     
@@ -302,7 +312,7 @@ def train_model(
         metrics_file = output_path / "metrics.json"
         metrics_data = {
             'final_metrics': final_eval,
-            'total_time_minutes': total_time,
+            'total_time_minutes': total_time_seconds / 60,
             'stopped_early': stopped_early,
             'actual_steps': step,
             'history': metrics_history,

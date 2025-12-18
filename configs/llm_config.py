@@ -21,7 +21,7 @@ class BlueberryConfig:
     compile_model: bool = True
     batch_size: int = 4
     gradient_accumulation_steps: int = 1
-    train_tokens: int = 1_000_000_000
+    train_tokens: int = 385024
     
     # Learning Rate (Aggressive for pre-training)
     muon_lr: float = 0.015
@@ -36,12 +36,12 @@ class BlueberryConfig:
     
     # Regularization
     weight_decay: float = 0.2
-    dropout: float = 0.1
+    dropout: float = 0.0
     grad_clip: float = 1.0
     use_amp: bool = True
     
     # Logging
-    log_milestones: Tuple[int, ...] = (2000, 5000, 10000)
+    log_milestones: Tuple[int, ...] = (100, 500, 1000)
 
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads

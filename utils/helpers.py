@@ -17,3 +17,17 @@ def set_seed(seed: int = 42):
 def count_parameters(model):
     """Count the number of parameters in a model"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds into a human-readable string"""
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    elif seconds < 3600:
+        m = int(seconds // 60)
+        s = int(seconds % 60)
+        return f"{m}m {s}s"
+    else:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        return f"{h}h {m}m"

@@ -11,7 +11,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from configs.llm_config import Blueberry80GBConfig, Blueberry24GBConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_minimal_llm
-from utils.helpers import set_seed
+from utils.helpers import set_seed, format_time
 from utils.logger import setup_logging
 
 
@@ -171,7 +171,7 @@ def main():
     parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
     parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
     parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
-    parser.add_argument("--experiment_name", type=str, default="moe_training", help="Name of the experiment")
+    parser.add_argument("--experiment_name", type=str, default="speedrun_6.7", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.Blueberry24GBConfig)")
     parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")
@@ -182,10 +182,10 @@ def main():
     parser.add_argument("--batch_size", type=int, help="Override batch_size")
     parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     parser.add_argument("--target_train_loss", type=float, help="Stop training when training loss reaches this value")
-    parser.add_argument("--log_every", type=int, default=100, help="Logging frequency in steps")
+    parser.add_argument("--log_every", type=int, default=1, help="Logging frequency in steps")
     parser.add_argument("--warmup_ratio", type=float, help="Override warmup ratio")
     parser.add_argument("--muon_momentum", type=float, help="Override Muon momentum")
-    parser.add_argument("--schedule_type", type=str, default="cosine", choices=["cosine", "linear", "constant"], help="Learning rate schedule type")
+    parser.add_argument("--schedule_type", type=str, default="constant", choices=["cosine", "linear", "constant"], help="Learning rate schedule type")
     args = parser.parse_args()
 
     # Load Config
@@ -303,12 +303,12 @@ def main():
         load_weights_path=args.load_checkpoint,
         target_train_loss=args.target_train_loss
     )
-    elapsed = (time.time() - start) / 60
+    total_seconds = time.time() - start
     logger.info("Training complete")
 
     print("\nResults")
     print("-" * 70)
-    print(f"Training time: {elapsed:.2f} min")
+    print(f"Training time: {format_time(total_seconds)}")
     print(f"Val loss:       {metrics['val_loss']:.4f}")
     print(f"Val accuracy:   {metrics['val_accuracy']:.4f}")
     print(f"Val perplexity: {metrics['val_perplexity']:.2f}")
