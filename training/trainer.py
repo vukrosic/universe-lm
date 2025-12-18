@@ -42,40 +42,6 @@ class EarlyStopping:
             return False
 
 
-def warmup_model(model: nn.Module, config: Blueberry80GBConfig):
-    """
-    Perform an untimed warmup pass with dummy data to trigger torch.compile.
-    Matches the modded-nanogpt speedrun standard.
-    """
-    print("🔥 Starting untimed warmup with dummy data for torch.compile...")
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
-    model.train()
-    
-    # Generate dummy data
-    # (batch_size, seq_len)
-    x = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len), device=device)
-    y = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len), device=device)
-    
-    # Simple optimizers for warmup
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0)
-    
-    start_warmup = time.time()
-    
-    # Perform 2 passes to ensure kernels are well-traced and compiled
-    for i in range(2):
-        print(f"  Warmup step {i+1}/2...")
-        with autocast('cuda', dtype=torch.bfloat16) if config.use_amp else torch.no_grad():
-            logits = model(x)
-            loss = F.cross_entropy(logits.view(-1, config.vocab_size), y.view(-1))
-        loss.backward()
-        optimizer.zero_grad()
-    
-    torch.cuda.synchronize()
-    warmup_duration = time.time() - start_warmup
-    print(f"✅ Warmup complete in {warmup_duration:.2f}s. Kernels are now optimized.\n")
-    return warmup_duration
-
 
 def setup_muon_optimizer(model: nn.Module, config: Blueberry80GBConfig):
     """Setup Muon optimizer with hybrid approach"""
@@ -488,11 +454,7 @@ def train_minimal_llm(
             model = torch.compile(model)
             print("✅ Model compiled successfully")
             
-            # Perform warmup if requested
-            if warmup:
-                warmup_model(model, config)
-            
-            torch.cuda.synchronize()
+
         except Exception as e:
             print(f"⚠️ Model compilation failed: {e}")
             print("Running in eager mode instead.")
