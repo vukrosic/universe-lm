@@ -95,61 +95,6 @@ Check the [Tasks](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/iss
 ### 3. **Implement your changes**
 Write your code following the setup instructions above and our coding standards.
 
-## ⚡ Quick Start
-
-Once installed, you can train a model using our default configurations.
-
-### Train on Custom Hardware (Recommend 24GB+ VRAM)
-To train the main MoE model (configured for a single 24GB GPU like an RTX 3090/4090):
-
-```bash
-python train_llm.py
-```
-
-### Debugging (Any Hardware)
-To quickly check if your code runs without errors on any hardware (including CPU/GPU), use the debug script:
-
-```bash
-python debug_llm.py
-```
-*Runs a `DebugMoEConfig` with a tiny model for 100 steps.*
-
-## 📊 Baselines
-
-We maintain baseline performance metrics to track improvements. All experiments should aim to surpass these benchmarks.
-
-### 24GB GPU Baseline (GPU24GBMoEModelConfig)
-*Hardware: Single Nvidia RTX 4090 (24GB)*
-
-> You may train on other hardware.
-
-| Metric | Value |
-| :--- | :--- |
-| **Validation Loss** | 3.6684 |
-| **Validation Accuracy** | 35.64% |
-| **Perplexity** | 39.19 |
-
-![GPU 24GB Baseline Metrics](baselines/gpu_24gb/metrics_plot.png)
-
-*Full baseline results are stored in `baselines/gpu_24gb/`.*
-
-### Statistical Significance Analysis (450 Steps)
-To establish a reliable baseline for comparisons and measure system noise, we ran the `GPU24GBMoEModelConfig` for 450 steps across 4 independent runs using the same random seed (42).
-
-| Run | Seed | Val Loss | Val Accuracy | Val Perplexity |
-| :--- | :--- | :--- | :--- | :--- |
-| Run 1 | 42 | 4.1098 | 31.89% | 60.94 |
-| Run 2 | 42 | 4.1009 | 32.00% | 60.40 |
-| Run 3 | 42 | 4.1082 | 31.91% | 60.84 |
-| Run 4 | 42 | 4.1131 | 31.89% | 61.13 |
-
-**Aggregated Results (Mean ± Std Dev):**
-*   **Validation Loss**: 4.1080 ± 0.0045
-*   **Validation Accuracy**: 31.92% ± 0.05%
-*   **Validation Perplexity**: 60.83 ± 0.27
-
-*Future experiments running for 450 steps should be compared against these statistically derived bounds to determine significance.*
-
 ## 🧪 Running Experiments
 
 To run a new experiment without overwriting the baseline, simply provide a unique experiment name:
@@ -162,11 +107,7 @@ Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/`
 
 > **Performance Test (optional):** We will run the experiments anyways, but you may also run it yourself. Make sure to specify a new name so you don't overwrite the baseline.
 
-### 4. **Verification & Testing**
-   - **Debug Mode:** Run `python debug_llm.py` to quickly verify your code runs without errors.
-   - **Performance Test (optional):** Run your experiment with a unique name to test performance.
-
-### 5. **Submission**
+### 4. **Submission**
 Once finished, create a Pull Request into the `development` branch. Please notify us on [Discord](https://discord.gg/6AbXGpKTwN).
 
 > Please read `CONTRIBUTING.md` for detailed guidelines.
