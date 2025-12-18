@@ -183,9 +183,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     parser.add_argument("--target_train_loss", type=float, default=4.5, help="Stop training when training loss reaches this value")
     parser.add_argument("--log_every", type=int, default=1, help="Logging frequency in steps")
-    parser.add_argument("--warmup_ratio", type=float, help="Override warmup ratio")
-    parser.add_argument("--muon_momentum", type=float, help="Override Muon momentum")
-    parser.add_argument("--schedule_type", type=str, default="constant", choices=["cosine", "linear", "constant"], help="Learning rate schedule type")
+
     args = parser.parse_args()
 
     # Load Config
@@ -223,12 +221,7 @@ def main():
         config.gradient_accumulation_steps = args.gradient_accumulation_steps
     if args.log_every is not None:
         config.log_every = args.log_every
-    if args.warmup_ratio is not None:
-        config.warmup_ratio = args.warmup_ratio
-    if args.muon_momentum is not None:
-        config.muon_momentum = args.muon_momentum
-    if args.schedule_type is not None:
-        config.schedule_type = args.schedule_type
+
     
     experiment_name = args.experiment_name
     output_dir = os.path.join(args.output_dir, experiment_name)
