@@ -23,6 +23,8 @@
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | 2025-12-18 | **9m 7s** | **18,767,872** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
 
+## 🗂️ More categories coming soon
+- You may suggest: goal is to interpolate between fast experimentation and confirming it works on big models.
 
 ## 🏅 The 1B Marathon (World Record)
 *Goal: Best Model @ 1B Tokens (Time < 4h)*
@@ -33,7 +35,12 @@
 
 
 ## 🤝 Compute Sponsorship & Verification
-**Don't have a 4090? We've got you.**
+**You may rent 4090 affordably at**
+[Salad](https://salad.com/pricing) | [Novita](https://novita.ai/pricing?gpu=1) | [VastAI](https://vast.ai/pricing) - A lot of GPU providers also give 50% off on spot billing.
 
-1.  **Verification**: If you optimize the code but can't verify the exact time, submit a Pull Request. We will run your code on our standardized hardware to confirm the record!
+You may also use free L4 at [LightningAI](https://lightning.ai/) - just make sure to measure your baseline as well and then compare. Once you break the record, we will measure it on 4090.
+
+**Can't access a GPU? We've got you.**
+
+1.  **Verification**: If you optimize the code but can't verify the exact time, submit a Pull Request. We will run your code on our 4090 to confirm the record!
 2.  **Sponsorship**: If you have a great idea (e.g., a new architecture) but no GPU, open an Issue/Ticket. If the idea looks promising, we will run the experiment for you and credit you.
