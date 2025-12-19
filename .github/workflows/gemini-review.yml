@@ -1,0 +1,32 @@
+name: Gemini 3
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  gemini-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Official Google Gemini CLI Action
+      - name: Run Gemini CLI
+        uses: google-github-actions/run-gemini-cli@v0.2.0 # Check latest version on marketplace
+        with:
+          # This connects your free API key
+          gemini_api_key: ${{ secrets.GEMINI }}
+          
+          # The command to run. 
+          # "review" analyzes the PR diff.
+          gemini_command: "review" 
+          
+          # Optional: Make it stricter or give it a persona
+          # prompt: "You are a senior software engineer. Be critical about security."
