@@ -107,6 +107,6 @@ Results (checkpoints and logs) will be saved to `checkpoints/my_new_experiment/`
 > **Performance Test (optional):** We will run the experiments anyways, but you may also run it yourself. Make sure to specify a new name so you don't overwrite the baseline.
 
 ### 4. **Submission**
-Once finished, create a Pull Request into the `development` branch. Please notify us on [Discord](https://discord.gg/6AbXGpKTwN).
+Once finished, create a Pull Request into the `main` branch. Please notify us on [Discord](https://discord.gg/6AbXGpKTwN).
 
 > Please read `CONTRIBUTING.md` for detailed guidelines.
