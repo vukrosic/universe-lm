@@ -299,11 +299,6 @@ def train_model(
     
     total_time_seconds = time.time() - train_start_time
     
-    print(f"\n📊 Final Results:")
-    print(f"   Val Loss: {final_eval['val_loss']:.4f}")
-    print(f"   Val Accuracy: {final_eval['val_accuracy']:.4f}")
-    print(f"   Val Perplexity: {final_eval['val_perplexity']:.2f}")
-    print(f"   Total Time: {format_time(total_time_seconds)}")
     if stopped_early:
         print(f"   ⚠️  Training stopped early at step {step}")
     
@@ -344,7 +339,13 @@ def train_model(
         }, checkpoint_path)
         print(f"   💾 Model saved to {checkpoint_path}")
     
-    return model, final_eval, metrics_history, total_time_seconds
+    return {
+        'model': model,
+        'final_metrics': final_eval,
+        'metrics_history': metrics_history,
+        'training_time': total_time_seconds,
+        'steps': step
+    }
 
 
 def plot_training_metrics(metrics_history: Dict, output_path: Path):
@@ -584,15 +585,15 @@ def train_minimal_llm(
     # ============================================
     train_start = time.time()
     
-    model, final_eval, metrics_history, total_training_time = train_model(
+    results = train_model(
         model=model,
         config=config,
-        train_loader=train_loader,  # Creates fresh iterator in train_model
+        train_loader=train_loader,
         val_loader=val_loader,
         optimizers=optimizers,
         schedulers=schedulers,
         early_stopper=None,
-        output_dir=output_dir,
+        output_dir=None,
         experiment_name=experiment_name,
         plot_fn=None,
         extra_config=None,
@@ -600,5 +601,60 @@ def train_minimal_llm(
         log_every=getattr(config, 'log_every', 100),
     )
     
+    total_training_time = results['training_time']
+    total_wall_time = setup_time + total_training_time
+    final_eval = results['final_metrics']
+    metrics_history = results['metrics_history']
+    step = results['steps']
+
+    # ============================================
+    # 10. Unified Saving & Reporting
+    # ============================================
+    if output_dir:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Save comprehensive metrics
+        metrics_file = output_path / "metrics.json"
+        metrics_data = {
+            'final_metrics': final_eval,
+            'setup_time_seconds': setup_time,
+            'active_training_time_seconds': total_training_time,
+            'total_wall_time_seconds': total_wall_time,
+            'total_time_minutes': total_wall_time / 60,
+            'actual_steps': step,
+            'history': metrics_history,
+        }
+        with open(metrics_file, 'w') as f:
+            json.dump(metrics_data, f, indent=2)
+            
+        # Save model
+        checkpoint_path = output_path / "model.pt"
+        torch.save({
+            'model_state_dict': results['model'].state_dict(),
+            'config': config,
+            'metrics': final_eval,
+        }, checkpoint_path)
+        
+        # Plot
+        plot_training_metrics(metrics_history, output_path)
     
-    return model, final_eval, metrics_history, setup_time, total_training_time
+    # Final Output
+    print("\n" + "="*70)
+    print("� SPEEDRUN RESULTS")
+    print("="*70)
+    print(f"Warmup & Setup:                  {setup_time:.2f}s")
+    print(f"Training Time (⏱️ Speedrun):      {format_time(total_training_time)}")
+    print("-" * 70)
+    print(f"Final Val Loss:                  {final_eval['val_loss']:.4f}")
+    print(f"Final Val Accuracy:              {final_eval['val_accuracy']:.4f}")
+    print("="*70 + "\n")
+
+    return {
+        'model': results['model'],
+        'metrics': final_eval,
+        'history': metrics_history,
+        'setup_time': setup_time,
+        'training_time': total_training_time,
+        'steps': step
+    }

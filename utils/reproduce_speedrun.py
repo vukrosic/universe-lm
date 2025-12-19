@@ -19,35 +19,19 @@ def run_training(run_id):
         "--dataset_path", "processed_data/speedrun_40M"
     ]
     
-    start_time = time.time()
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    
-    last_loss = None
     for line in process.stdout:
         print(line, end="")
-        if "Loss:" in line:
-            try:
-                # Extract loss for logging purposes if needed
-                parts = line.split("Loss: ")
-                if len(parts) > 1:
-                    last_loss = float(parts[1].split("|")[0].strip())
-            except:
-                pass
-                
     process.wait()
-    end_time = time.time()
-    duration = end_time - start_time
     
     # Load metrics from json
     metrics_path = f"checkpoints/{experiment_name}/metrics.json"
     if os.path.exists(metrics_path):
         with open(metrics_path, "r") as f:
             data = json.load(f)
-            # The trainer saves actual_steps and total_time_minutes
-            # We can also calculate tokens-per-second etc.
             return {
                 "run_id": run_id,
-                "duration_s": data.get("total_time_seconds", 0) or data.get("total_time_minutes", 0) * 60,
+                "duration_s": data.get("active_training_time_seconds", 0),
                 "steps": data.get("actual_steps", 0),
                 "success": True
             }

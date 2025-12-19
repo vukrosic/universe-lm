@@ -300,11 +300,8 @@ def main():
     print(f"vocab size: {config.vocab_size}\n")
     logger.info(f"Model configuration: {vars(config)}")
 
-    print("Starting training...")
-    print("-" * 70)
-    
-    # Train the model (checkpoint loading handled by trainer if load_checkpoint is provided)
-    results = train_minimal_llm(
+    # Train the model
+    train_minimal_llm(
         config, 
         train_loader, 
         val_loader, 
@@ -312,32 +309,7 @@ def main():
         experiment_name=experiment_name,
         load_weights_path=args.load_checkpoint,
         target_train_loss=args.target_train_loss,
-        # warmup=use_warmup
     )
-    
-    model, metrics, _, setup_time, training_time = results
-    logger.info("Training complete")
-
-    print("\nResults")
-    print("-" * 70)
-    print(f"Setup & Compilation: {setup_time:.2f}s")
-    print(f"Active Training:     {format_time(training_time)}")
-    print(f"Total Wall Time:     {format_time(setup_time + training_time)}")
-    print(f"Val loss:       {metrics['val_loss']:.4f}")
-    print(f"Val accuracy:   {metrics['val_accuracy']:.4f}")
-    print(f"Val perplexity: {metrics['val_perplexity']:.2f}")
-    logger.info(f"Final metrics: {metrics}")
-
-    ckpt_path = os.path.join(output_dir, "final_model.pt")
-    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
-    torch.save(
-        {"model_state_dict": model.state_dict(),
-         "config": config,
-         "metrics": metrics},
-        ckpt_path,
-    )
-    print(f"Model checkpoint saved to {ckpt_path}")
-    logger.info(f"Model saved to {ckpt_path}")
 
 
 if __name__ == "__main__":
