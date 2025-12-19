@@ -1,7 +1,5 @@
 # 5-Dollar LLM (Blueberry 151M)
 
-> Recreating GPT-3
-
 ## 📺 YouTube Video
 
 [![Watch the video](https://img.youtube.com/vi/dayc3y34XXs/hqdefault.jpg)](https://youtu.be/dayc3y34XXs)
@@ -13,7 +11,7 @@
 ## 🗺️ Open Superintelligence Lab Roadmap
 
 **Our goals:**
-1. **GPT-1** Level by Dec 20 2025
+1. **GPT-1** Level by Dec 20 2025 ✓ [Watch](https://youtu.be/1nf6mVNN2lo)
 2. **GPT-2** Level by Jan 20 2026
 3. **GPT-3** Level by Feb 20 2026
 4. **Top 150** in LMArena (GPT-4o-mini level) by April 2026
@@ -25,11 +23,18 @@ We will partner for compute while keeping all research/engineering/code fully op
 
 ---
 
-## 🏎️ The Speedrun Challenge
+## 🧪 Research Tasks
 
-Can you train a model to **4.5 loss** in under 3 minutes?
+Current research projects and experiments:
 
-**Quick start:**
+- [TASK: Squared ReLU Research 🧪](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/blob/relu/DO_THIS_TASK.md)
+
+
+---
+
+> It is best to read the Quick Start directly in the tasks linked above.
+
+## 🏎️ Quick Start
 ```bash
 git clone https://github.com/Open-Superintelligence-Lab/5-dollar-llm
 cd 5-dollar-llm
@@ -44,8 +49,9 @@ python train_llm.py --target_train_loss 4.5
 
 ## 🤝 Partners & Support
 
+
 We will partner with compute providers while keeping all research/engineering/code fully open source.
 
 **Potential partners include:** Hugging Face, NVIDIA, Microsoft, Google, Amazon, Meta, IBM, Oracle, Alibaba, Tencent, Huawei, Baidu, CoreWeave, Lambda Labs, Hyperbolic, Stability AI, OpenAI, Anthropic, xAI, Cohere, Mistral AI, Graphcore, Tenstorrent, Intel, AMD, Dell Technologies, ai2, a16z, Sequoia Capital, and more.
 
-**If you or someone you know has extensive research experience and can offer advisory or leadership support, please contact me.**
+**If you or someone you know has extensive research experience and wants to contribute to this open source initiative, contact me.**
