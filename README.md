@@ -1,7 +1,5 @@
 # 5-Dollar LLM (Blueberry 151M)
 
-## 📺 YouTube Video
-
 [![Watch the video](https://img.youtube.com/vi/dayc3y34XXs/hqdefault.jpg)](https://youtu.be/dayc3y34XXs)
 
 🎥 **[Watch our introduction video](https://youtu.be/dayc3y34XXs)** to learn more about the project!
