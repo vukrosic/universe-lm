@@ -25,7 +25,9 @@ We will partner for compute while keeping all research/engineering/code fully op
 
 Current research projects and experiments:
 
-- [TASK: Squared ReLU Research 🧪](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/blob/relu/DO_THIS_TASK.md)
+- TASK: Squared ReLU Research 🧪 
+    - [TASK.md](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/blob/relu/DO_THIS_TASK.md)
+    - [Discuss](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/issues/49)
 
 
 ---
