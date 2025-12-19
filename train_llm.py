@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import Blueberry80GBConfig, Blueberry24GBConfig
+from configs.llm_config import BlueberryConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_minimal_llm
 from utils.helpers import set_seed, format_time
@@ -175,7 +175,7 @@ def main():
     parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
     parser.add_argument("--experiment_name", type=str, default="speedrun_4.5", help="Name of the experiment")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
-    parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.Blueberry24GBConfig)")
+    parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.BlueberryConfig)")
     parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")
     parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
     parser.add_argument("--dataset_path", type=str, help="Path to preprocessed dataset directory")
@@ -203,7 +203,7 @@ def main():
             raise e
     else:
         # Default to the optimized Pow2 config
-        config = Blueberry24GBConfig()
+        config = BlueberryConfig()
 
     # Override config with args
     if args.muon_lr is not None:

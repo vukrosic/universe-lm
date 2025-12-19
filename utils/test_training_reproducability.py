@@ -1,4 +1,6 @@
 # this script makes sure the speedrun training is reproducible
+# by running training NUM_RUNS times
+# training time should be similar for all runs
 
 import sys
 import os
@@ -12,12 +14,16 @@ import time
 import statistics
 from utils.helpers import format_time
 
+# Configuration
+TARGET_LOSS = 4.5
+NUM_RUNS = 3
+
 def run_training(run_id):
     print(f"\n🚀 Starting Run {run_id}...")
     experiment_name = f"repro_run_{run_id}"
     cmd = [
         "python", "train_llm.py",
-        "--target_train_loss", "6.7",
+        "--target_train_loss", str(TARGET_LOSS),
         "--experiment_name", experiment_name,
         "--compile", "true",
         "--dataset_path", "processed_data/speedrun_40M"
@@ -48,12 +54,12 @@ def run_training(run_id):
         return {"run_id": run_id, "success": False}
 
 def main():
-    num_runs = 3
     results = []
     
-    print(f"=== Reproducing Speedrun 1 ({num_runs} runs) ===")
+    print(f"=== Reproducing Speedrun (Target Loss: {TARGET_LOSS}) ===")
+    print(f"This script will train the model {NUM_RUNS} times to this loss so you can verify consistency.")
     
-    for i in range(1, num_runs + 1):
+    for i in range(1, NUM_RUNS + 1):
         res = run_training(i)
         if res["success"]:
             results.append(res)

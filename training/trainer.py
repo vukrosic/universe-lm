@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
-from configs.llm_config import Blueberry80GBConfig
+from configs.llm_config import BlueberryConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
 from training.evaluation import evaluate_model
@@ -43,7 +43,7 @@ class EarlyStopping:
 
 
 
-def setup_muon_optimizer(model: nn.Module, config: Blueberry80GBConfig):
+def setup_muon_optimizer(model: nn.Module, config: BlueberryConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
     adamw_params = []
@@ -72,7 +72,7 @@ def setup_muon_optimizer(model: nn.Module, config: Blueberry80GBConfig):
 
 def train_model(
     model: nn.Module,
-    config: Blueberry80GBConfig,
+    config: BlueberryConfig,
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizers: List[torch.optim.Optimizer],
@@ -412,7 +412,7 @@ def plot_training_metrics(metrics_history: Dict, output_path: Path):
 
 def warmup_compiled_kernels(
     model: nn.Module,
-    config: Blueberry80GBConfig,
+    config: BlueberryConfig,
     train_loader: DataLoader,
     device: torch.device,
     num_steps: int = 3
@@ -474,7 +474,7 @@ def warmup_compiled_kernels(
     print("✅ Kernels compiled and cached")
 
 def train_minimal_llm(
-    config: Blueberry80GBConfig,
+    config: BlueberryConfig,
     train_loader: DataLoader,
     val_loader: DataLoader,
     output_dir: Optional[str] = None,
