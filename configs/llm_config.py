@@ -52,10 +52,3 @@ class BlueberryConfig:
 class Blueberry24GBConfig(BlueberryConfig):
     # Optimized for RTX 4090 (24GB)
     pass
-
-
-@dataclass
-class Blueberry80GBConfig(BlueberryConfig):
-    # Optimized for H100 (80GB)
-    batch_size: int = 128
-    gradient_accumulation_steps: int = 2

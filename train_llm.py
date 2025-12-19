@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 # Fix tokenizer parallelism warning when using DataLoader workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from configs.llm_config import Blueberry80GBConfig, Blueberry24GBConfig
+from configs.llm_config import Blueberry24GBConfig, BlueberryConfig
 from configs.dataset_config import DataConfig
 from training.trainer import train_minimal_llm
 from utils.helpers import set_seed, format_time
