@@ -22,7 +22,19 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | **1** | 2025-12-18 | **1m 58s** | **5,472,256** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
 | **2** | 2025-12-20 | **1m 54s** | **8,110,080** | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 
-> **Noise**: New record should be at least 1 second fater or it could be randomness.
+> **Record Repeatability / Noise**:
+  - Run 1: 1m 54s, 494 steps
+  - Run 2: 1m 55s, 494 steps
+  - Run 3: 1m 54s, 494 steps
+  - Run 4: 1m 55s, 494 steps
+  - Run 5: 1m 54s, 494 steps
+  - Run 6: 1m 54s, 494 steps
+  - Run 7: 1m 54s, 494 steps
+  - Run 8: 1m 54s, 494 steps
+  - Run 9: 1m 54s, 494 steps
+  - Run 10: 1m 54s, 494 steps
+
+New record should be at least 1m 53s to be sure it is not randomness.
 
 
 

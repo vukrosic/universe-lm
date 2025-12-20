@@ -655,7 +655,7 @@ def train_minimal_llm(
     print("\n" + "="*70)
     print(" SPEEDRUN RESULTS")
     print("="*70)
-    print(f"Warmup & Setup:                  {setup_time:.2f}s")
+    print(f"Warmup & Setup:                  {format_time(setup_time)}")
     print(f"Training Time (⏱️ Speedrun):      {format_time(total_training_time)}")
     print(f"Total Tokens:                    {tokens_seen:,}")
     print("-" * 70)

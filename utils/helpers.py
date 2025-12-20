@@ -22,14 +22,18 @@ def count_parameters(model):
 
 
 def format_time(seconds: float) -> str:
-    """Format seconds into a human-readable string"""
+    """Format seconds into a human-readable string with milliseconds"""
     if seconds < 60:
-        return f"{seconds:.2f}s"
+        s = int(seconds)
+        ms = int((seconds - s) * 1000)
+        return f"{s}s {ms}ms"
     elif seconds < 3600:
         m = int(seconds // 60)
         s = int(seconds % 60)
-        return f"{m}m {s}s"
+        ms = int((seconds - int(seconds)) * 1000)
+        return f"{m}m {s}s {ms}ms"
     else:
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
-        return f"{h}h {m}m"
+        s = int(seconds % 60)
+        return f"{h}h {m}m {s}s"
