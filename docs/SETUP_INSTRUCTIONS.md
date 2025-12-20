@@ -19,7 +19,6 @@ cd 5-dollar-llm
 ### Install Dependencies
 ```bash
 pip install -r requirements.txt
-pip install huggingface_hub  # Required for data download
 ```
 
 ### Option A: Quick Start (40M Tokens) - Recommended for Speedruns
