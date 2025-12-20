@@ -350,7 +350,8 @@ def train_model(
         'final_metrics': final_eval,
         'metrics_history': metrics_history,
         'training_time': total_time_seconds,
-        'steps': step
+        'steps': step,
+        'tokens_seen': tokens_seen
     }
 
 
@@ -616,6 +617,7 @@ def train_minimal_llm(
     final_eval = results['final_metrics']
     metrics_history = results['metrics_history']
     step = results['steps']
+    tokens_seen = results['tokens_seen']
 
     # ============================================
     # 10. Unified Saving & Reporting
@@ -651,10 +653,11 @@ def train_minimal_llm(
     
     # Final Output
     print("\n" + "="*70)
-    print("� SPEEDRUN RESULTS")
+    print(" SPEEDRUN RESULTS")
     print("="*70)
     print(f"Warmup & Setup:                  {setup_time:.2f}s")
     print(f"Training Time (⏱️ Speedrun):      {format_time(total_training_time)}")
+    print(f"Total Tokens:                    {tokens_seen:,}")
     print("-" * 70)
     print(f"Final Val Loss:                  {final_eval['val_loss']:.4f}")
     print(f"Final Val Accuracy:              {final_eval['val_accuracy']:.4f}")
@@ -666,5 +669,6 @@ def train_minimal_llm(
         'history': metrics_history,
         'setup_time': setup_time,
         'training_time': total_training_time,
-        'steps': step
+        'steps': step,
+        'tokens_seen': tokens_seen
     }

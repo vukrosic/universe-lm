@@ -7,7 +7,7 @@ class BlueberryConfig:
     # Model architecture (151M Params - Blueberry-Nano)
     d_model: int = 512       
     n_heads: int = 8         
-    n_layers: int = 32       
+    n_layers: int = 24    
     d_ff: int = 2048         
     
     # GQA parameters
@@ -19,14 +19,14 @@ class BlueberryConfig:
     
     # Base Training Defaults
     compile_model: bool = True
-    batch_size: int = 4
+    batch_size: int = 8
     gradient_accumulation_steps: int = 1
     train_tokens: int = 20000000
     
     # Learning Rate (Aggressive for pre-training)
-    muon_lr: float = 0.015
+    muon_lr: float = 0.024
     muon_momentum: float = 0.95
-    adamw_lr: float = 0.001
+    adamw_lr: float = 0.006
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
 
