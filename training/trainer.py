@@ -513,9 +513,9 @@ def train_minimal_llm(
         model.load_state_dict(state_dict, strict=False)
 
     # ============================================
-    # 2. Save initial state BEFORE any forward pass
+    # 2. Save initial state BEFORE any forward pass (cloned to CPU)
     # ============================================
-    initial_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+    initial_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"  📊 Total parameters: {total_params:,}")
