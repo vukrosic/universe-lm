@@ -13,6 +13,8 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 3.  The official metric is **Active Training Time**. Setup and compilation overhead (`Setup & Compilation Time`) is excluded.
 4.  Keep the added code minimal, clean and readable.
 
+### ⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes.
+
 ## ⚡ Fastest To 4.5 Train Loss
 *Goal: Fastest Time to Reach Loss ≤ 4.5*
 > First benchmark is faster to experiment on. We can later find what transfers to the longer training.
