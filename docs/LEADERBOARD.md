@@ -16,9 +16,15 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 ## ⚡ 8M Tokens Speedrun
 *Goal: Fastest Time to train 8M tokens*
 
-| # | Date | Val Loss | Time | Tokens Used | User | Notes |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-21 | **4.7981** | **1m 51s** | **8,011,776** | [Vuk Rosić](https://x.com/VukRosic99) | Baseline run with new 8M tokens measure |
+| # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | 2025-12-21 | **5.1539** | **4.8146** | **1m 50s 923ms** | **8,011,776** | [Vuk Rosić](https://x.com/VukRosic99) | Baseline run with new 8M tokens measure |
+
+> **Record Repeatability / Noise**:
+  - Run 1 (Original): 1m 51s 726ms, 8,011,776 tokens, Train Loss: ~5.16, Val Loss: 4.7981
+  - Run 2: 1m 51s 377ms, 8,011,776 tokens, Train Loss: ~5.15, Val Loss: 4.8163
+  - Run 3: 1m 50s 923ms, 8,011,776 tokens, Train Loss: 5.1539, Val Loss: 4.8146
+
 
 ## ⚡ Fastest To 4.5 Train Loss
 *Goal: Fastest Time to Reach Loss ≤ 4.5*

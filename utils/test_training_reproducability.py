@@ -15,7 +15,7 @@ import statistics
 from utils.helpers import format_time
 
 # Configuration
-NUM_RUNS = 10
+NUM_RUNS = 3
 TARGET_TOKENS = 8000000
 
 def run_training(run_id):
@@ -43,12 +43,16 @@ def run_training(run_id):
     if os.path.exists(metrics_path):
         with open(metrics_path, "r") as f:
             data = json.load(f)
-            return {
+            res = {
                 "run_id": run_id,
                 "duration_s": data.get("active_training_time_seconds", 0),
                 "steps": data.get("actual_steps", 0),
+                "val_loss": data.get("final_metrics", {}).get("val_loss", 0),
+                "train_loss": data.get("final_metrics", {}).get("train_loss", 0),
                 "success": True
             }
+            print(f"✅ Run {run_id} complete: {format_time(res['duration_s'])} | {res['steps']} steps | Train Loss: {res['train_loss']:.4f} | Val Loss: {res['val_loss']:.4f}")
+            return res
     else:
         print(f"❌ Run {run_id} failed to produce metrics.json")
         return {"run_id": run_id, "success": False}
@@ -70,6 +74,8 @@ def main():
         
     durations = [r["duration_s"] for r in results]
     steps = [r["steps"] for r in results]
+    val_losses = [r["val_loss"] for r in results]
+    train_losses = [r["train_loss"] for r in results]
     
     print("\n" + "="*50)
     print("📈 STATISTICAL SUMMARY")
@@ -81,13 +87,17 @@ def main():
         std_dur = statistics.stdev(durations)
         print(f"Time:        Mean = {format_time(mean_dur)}, StdDev = {std_dur:.2f}s")
         print(f"Steps:       Mean = {statistics.mean(steps):.2f}, StdDev = {statistics.stdev(steps):.2f}")
+        print(f"Train Loss:  Mean = {statistics.mean(train_losses):.4f}, StdDev = {statistics.stdev(train_losses):.4f}")
+        print(f"Val Loss:    Mean = {statistics.mean(val_losses):.4f}, StdDev = {statistics.stdev(val_losses):.4f}")
     else:
         print(f"Time:        {format_time(durations[0])}")
         print(f"Steps:       {steps[0]}")
+        print(f"Train Loss:  {train_losses[0]:.4f}")
+        print(f"Val Loss:    {val_losses[0]:.4f}")
         
     print("\nDetailed Results:")
     for r in results:
-        print(f"  Run {r['run_id']}: {format_time(r['duration_s'])}, {r['steps']} steps")
+        print(f"  Run {r['run_id']}: {format_time(r['duration_s'])}, {r['steps']} steps, Train Loss: {r['train_loss']:.4f}, Val Loss: {r['val_loss']:.4f}")
 
 if __name__ == "__main__":
     main()

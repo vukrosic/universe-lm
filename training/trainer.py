@@ -290,12 +290,14 @@ def train_model(
                 'val_loss': metrics_history['val_losses'][best_idx],
                 'val_accuracy': metrics_history['val_accuracies'][best_idx],
                 'val_perplexity': metrics_history['val_perplexities'][best_idx],
+                'train_loss': current_loss_val if 'current_loss_val' in locals() else 0.0,
             }
         else:
             final_eval = {
-                'val_loss': current_loss if 'current_loss' in locals() else 0.0,
+                'val_loss': current_loss_val if 'current_loss_val' in locals() else 0.0,
                 'val_accuracy': accuracy if 'accuracy' in locals() else 0.0,
                 'val_perplexity': perplexity if 'perplexity' in locals() else 0.0,
+                'train_loss': current_loss_val if 'current_loss_val' in locals() else 0.0,
             }
     
     # Synchronize CUDA to ensure all operations are complete before ending timer
@@ -349,7 +351,8 @@ def train_model(
         'metrics_history': metrics_history,
         'training_time': total_time_seconds,
         'steps': step,
-        'tokens_seen': tokens_seen
+        'tokens_seen': tokens_seen,
+        'train_loss': current_loss_val if 'current_loss_val' in locals() else 0.0,
     }
 
 
