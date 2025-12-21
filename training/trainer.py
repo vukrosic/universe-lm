@@ -110,6 +110,8 @@ def train_model(
     if schedulers is None:
         schedulers = []
 
+    current_loss_val = 0.0
+
     # Training metrics tracking
     # Synchronize CUDA to ensure accurate timing (no queued operations)
     if torch.cuda.is_available():
@@ -236,6 +238,7 @@ def train_model(
             tokens_seen += batch_tokens
 
             if stopped_early:
+                current_loss_val = ce_loss.item()
                 break
 
             # Evaluation
@@ -260,11 +263,17 @@ def train_model(
                 # Early stopping check
                 if early_stopper is not None:
                     if early_stopper(eval_metrics['val_loss'], step):
+                        current_loss_val = ce_loss.item()
                         stopped_early = True
                         break
 
             step += 1
         
+        # If we finished the inner loop but didn't stop early, 
+        # ensure we have the most recent loss from the very last batch
+        if not stopped_early and 'ce_loss' in locals():
+            current_loss_val = ce_loss.item()
+
         if stopped_early:
             break
 
@@ -273,6 +282,7 @@ def train_model(
     # Final evaluation (if not stopped early)
     if not stopped_early or tokens_seen >= config.train_tokens:
         final_eval = evaluate_model(model, val_loader, config)
+        final_eval['train_loss'] = current_loss_val
         elapsed_time = (time.time() - train_start_time) / 60
         current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
         
@@ -660,6 +670,7 @@ def train_minimal_llm(
     print(f"Training Time (⏱️ Speedrun):      {format_time(total_training_time)}")
     print(f"Total Tokens:                    {tokens_seen:,}")
     print("-" * 70)
+    print(f"Final Train Loss:                {final_eval.get('train_loss', 0.0):.4f}")
     print(f"Final Val Loss:                  {final_eval['val_loss']:.4f}")
     print(f"Final Val Accuracy:              {final_eval['val_accuracy']:.4f}")
     print("="*70 + "\n")
