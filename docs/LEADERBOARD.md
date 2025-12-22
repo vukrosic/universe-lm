@@ -26,7 +26,7 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 -   Run 2: 1m 29s 613ms, 489 steps, Train Loss: 4.7501, Val Loss: 4.8580
 -   Run 3: 1m 29s 759ms, 489 steps, Train Loss: 4.7405, Val Loss: 4.8448
 
-⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes.
+⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes. We measure on Novita AI 4090 with Intel(R) Xeon(R) Platinum 8473C CPU. The CPU selection is random so it requires multiple tries.
 
 
 ## ⚡ 20M Tokens Speedrun
