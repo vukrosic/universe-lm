@@ -15,8 +15,8 @@ import statistics
 from utils.helpers import format_time
 
 # Configuration
-NUM_RUNS = 3
-TARGET_TOKENS = 8000000
+NUM_RUNS = 1
+TARGET_TOKENS = 20000000
 
 def run_training(run_id):
     print(f"\n🚀 Starting Run {run_id}...")
