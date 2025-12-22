@@ -7,7 +7,7 @@ class BlueberryConfig:
     # Model architecture (151M Params - Blueberry-Nano)
     d_model: int = 512       
     n_heads: int = 8         
-    n_layers: int = 24    
+    n_layers: int = 22
     d_ff: int = 2048         
     
     # GQA parameters

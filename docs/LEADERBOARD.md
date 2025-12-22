@@ -18,12 +18,13 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 
 | # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2025-12-21 | 4.7066 | 4.8091 | 1m 51s 158ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 1 | 2025-12-21 | 4.7487 | 4.8466 | 1m 44s 79ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 2 | 2025-12-22 | 4.7479 | 4.8467 | 1m 29s 209ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 
 > **Record Repeatability / Noise**:
-  - Run 1: 1m 50s 899ms, 489 steps, Train Loss: 4.7066, Val Loss: 4.8091
-  - Run 2: 1m 51s 352ms, 489 steps, Train Loss: 4.7083, Val Loss: 4.8123
-  - Run 3: 1m 51s 390ms, 489 steps, Train Loss: 4.7064, Val Loss: 4.8112
+-   Run 1: 1m 29s 209ms, 489 steps, Train Loss: 4.7479, Val Loss: 4.8467
+-   Run 2: 1m 29s 613ms, 489 steps, Train Loss: 4.7501, Val Loss: 4.8580
+-   Run 3: 1m 29s 759ms, 489 steps, Train Loss: 4.7405, Val Loss: 4.8448
 
 ⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes.
 
@@ -33,52 +34,17 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 
 | # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2025-12-22 | 4.1751 | 4.1864 | 4m 25s 184ms | 20,004,864 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 1 | 2025-12-22 | 4.2004 | 4.2021 | 4m 8s 168ms | 20,004,864 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 2 | 2025-12-22 | 4.2118 | 4.2087 | 3m 32s 156ms | 20,004,864 | User | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 
 ## ⚡ 100M Tokens Speedrun
 *Goal: Fastest Time to train 100M tokens*
 
 | # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2025-12-22 | 3.7033 | 3.7352 | 21m 51s 613ms | 100,007,936 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 1 | 2025-12-22 | 3.7212 | 3.7492 | 20m 27s 988ms | 100,007,936 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+| 2 | 2025-12-22 | 3.7370 | 3.7526 | 17m 27s 59ms | 100,007,936 | User | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 
-## ⚡ Fastest To 4.5 Train Loss
-*Goal: Fastest Time to Reach Loss ≤ 4.5*
-> First benchmark is faster to experiment on. We can later find what transfers to the longer training.
-
-| # | Date | Time | Tokens Used | User | Notes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-18 | **1m 58s** | **5,472,256** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
-| **2** | 2025-12-20 | **1m 54s** | **8,110,080** | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
-| **Extraordinary** | 2025-12-21 | **1m 51s** | **8,110,080** | [Vuk Rosić](https://x.com/VukRosic99) | We changed the way we measure, now it's max tokens |
-
-> **Record Repeatability / Noise**:
-  - Run 1: 1m 54s, 494 steps
-  - Run 2: 1m 55s, 494 steps
-  - Run 3: 1m 54s, 494 steps
-  - Run 4: 1m 55s, 494 steps
-  - Run 5: 1m 54s, 494 steps
-  - Run 6: 1m 54s, 494 steps
-  - Run 7: 1m 54s, 494 steps
-  - Run 8: 1m 54s, 494 steps
-  - Run 9: 1m 54s, 494 steps
-  - Run 10: 1m 54s, 494 steps
-
-New record should be at least 1m 53s to be sure it is not randomness.
-
-
-
-
-## ⚡ Fastest To 3.5 Train Loss
-*Goal: Fastest Time to Reach Loss ≤ 3.5*
-
-| # | Date | Time | Tokens Used | User | Notes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | 2025-12-18 | **6m 47s** | **17,539,072** | [Vuk Rosić](https://x.com/VukRosic99) | Optimized Config (LR 0.015, Warmup 0, Constant, GradAcc 1) + [Per-step check] |
-| **2** | 2025-12-20 | **4m 50s to 4m 51s** | **20,004,864** | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon_lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
-
-## 🗂️ More categories coming soon
-- You may suggest: goal is to interpolate between fast experimentation and confirming it works on big models.
 
 ## 🏅 The 1B Marathon (World Record)
 *Goal: Best Model @ 1B Tokens (Time < 4h)*
