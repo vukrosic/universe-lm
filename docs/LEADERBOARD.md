@@ -18,14 +18,22 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 
 | # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2025-12-21 | 4.7066 | 4.8091 | 1m 51s 158ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | - |
+| 1 | 2025-12-21 | 4.7066 | 4.8091 | 1m 51s 158ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 
 > **Record Repeatability / Noise**:
   - Run 1: 1m 50s 899ms, 489 steps, Train Loss: 4.7066, Val Loss: 4.8091
   - Run 2: 1m 51s 352ms, 489 steps, Train Loss: 4.7083, Val Loss: 4.8123
   - Run 3: 1m 51s 390ms, 489 steps, Train Loss: 4.7064, Val Loss: 4.8112
 
-### ⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes.
+⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes.
+
+
+## ⚡ 20M Tokens Speedrun
+*Goal: Fastest Time to train 20M tokens*
+
+| # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 2025-12-22 | 4.1751 | 4.1864 | 4m 25s 184ms | 20,004,864 | User | Default Config (24 layers, 8 batch size, 0.024 lr) |
 
 ## ⚡ Fastest To 4.5 Train Loss
 *Goal: Fastest Time to Reach Loss ≤ 4.5*
