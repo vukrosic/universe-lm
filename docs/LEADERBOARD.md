@@ -33,7 +33,14 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 
 | # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2025-12-22 | 4.1751 | 4.1864 | 4m 25s 184ms | 20,004,864 | User | Default Config (24 layers, 8 batch size, 0.024 lr) |
+| 1 | 2025-12-22 | 4.1751 | 4.1864 | 4m 25s 184ms | 20,004,864 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
+
+## ⚡ 100M Tokens Speedrun
+*Goal: Fastest Time to train 100M tokens*
+
+| # | Date | Train Loss | Val Loss | Time | Tokens Used | User | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 2025-12-22 | 3.7033 | 3.7352 | 21m 51s 613ms | 100,007,936 | User | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 24 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 
 ## ⚡ Fastest To 4.5 Train Loss
 *Goal: Fastest Time to Reach Loss ≤ 4.5*
