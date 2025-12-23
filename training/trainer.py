@@ -106,7 +106,7 @@ def train_model(
         model, final_metrics, metrics_history
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16)
     
     if schedulers is None:
         schedulers = []

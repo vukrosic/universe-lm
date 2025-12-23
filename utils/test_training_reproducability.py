@@ -16,7 +16,7 @@ from utils.helpers import format_time
 
 # Configuration
 NUM_RUNS = 1
-TARGET_TOKENS = 20000000
+TARGET_TOKENS = 100000000
 
 def run_training(run_id):
     print(f"\n🚀 Starting Run {run_id}...")
