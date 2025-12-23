@@ -1,4 +1,4 @@
-# 5-Dollar LLM (Blueberry 151M)
+# 5-Dollar LLM (Blueberry 88M)
 
 > Check out our speedrun [leaderboard](docs/LEADERBOARD.md)!
 

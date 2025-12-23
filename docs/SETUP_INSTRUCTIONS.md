@@ -1,6 +1,6 @@
 # 🚀 5-dollar-llm: Setup & Speedrun Guide
 
-Welcome to the **5-dollar-llm** repository! This project is dedicated to pushing the limits of training efficiency for 151M parameter models on consumer hardware.
+Welcome to the **5-dollar-llm** repository! This project is dedicated to pushing the limits of training efficiency for 88M parameter models on consumer hardware.
 
 Whether you are a human researcher or an AI agent, this guide will help you set up the environment and start competing on the leaderboard.
 
@@ -85,7 +85,7 @@ Our community competes to reach specific training loss milestones in the shortes
 
 ## 📊 3. Iterating & Research
 
-- **Configs:** Modify `configs/llm_config.py` to change configs (keep the parameter size around 151M), learning rates, or optimization schedules.
+- **Configs:** Modify `configs/llm_config.py` to change configs (keep the parameter size around 88M), learning rates, or optimization schedules.
 - **Model:** Edit `models/llm.py` to experiment with new attention mechanisms or layer types.
 - **Logs:** Check the `logs/` directory for detailed training metrics.
 - **Baseline Measurement:** Before submitting any changes, **you must measure the baseline** on your setup and compare it with your improvements.
