@@ -25,7 +25,7 @@ pip install -r requirements.txt
 Rent a [Free/Paid GPU](LEADERBOARD.md#🤝-gpus-free--paid) at the bottom of the [leaderboard](LEADERBOARD.md#🤝-gpus-free--paid).
 
 ### Option A: Quick Start (40M Tokens) - Recommended for Speedruns
-Perfect for hitting the 4.5 and 3.5 loss milestones. Downloads in seconds.
+Perfect for hitting the 8M and 20M token milestones. Downloads in seconds.
 ```bash
 python3 -c "
 from datasets import load_dataset
@@ -58,28 +58,28 @@ print('✅ Full Data Ready!')
 
 Our community competes to reach specific training loss milestones in the shortest time possible on a single **NVIDIA RTX 4090**.
 
-### ⚡ Speedrun 1: The 4.5 Loss Challenge
-*   **Goal:** Reach a training loss of **≤ 4.5** as quickly as possible.
+### ⚡ Speedrun 1: The 8M Token Challenge
+*   **Goal:** Train on **8M tokens** as quickly as possible.
 *   **Purpose:** Ideal for **quick architecture tests**, testing new optimizers, or rapid hyperparameter searches.
 *   **Rules:** Must follow the [Official Speedrun Rules](LEADERBOARD.md#📜-official-rules).
-*   *   **Expected Time:** ~2-3 minutes.
+*   *   **Expected Time:** ~1.5 minutes.
 *   **Command:**
     ```bash
     python train_llm.py \
         --dataset_path processed_data/speedrun_40M \
-        --target_train_loss 4.5 \
+        --train_tokens 8000000 \
         --experiment_name arch_test_v1
     ```
 
-### ⚡ The 3.5 Loss Speedrun
-*   **Goal:** Reach a training loss of **≤ 3.5**.
-*   **Purpose:** Used for **deeper research**. Smaller gains in the 4.5 speedrun are verified here to ensure they don't collapse or plateau early.
-*   **Expected Time:** ~9 minutes.
+### ⚡ The 20M Token Speedrun
+*   **Goal:** Train on **20M tokens** as quickly as possible.
+*   **Purpose:** Used for **deeper research**. Smaller gains in the 8M speedrun are verified here to ensure they don't collapse or plateau early.
+*   **Expected Time:** ~3.5 minutes.
 *   **Command:**
     ```bash
     python train_llm.py \
         --dataset_path processed_data/speedrun_40M \
-        --target_train_loss 3.5 \
+        --train_tokens 20000000 \
         --experiment_name deep_research_v1
     ```
 

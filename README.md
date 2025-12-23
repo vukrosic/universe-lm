@@ -1,9 +1,5 @@
 # 5-Dollar LLM (Blueberry 151M)
 
-[![Watch the video](https://img.youtube.com/vi/dayc3y34XXs/hqdefault.jpg)](https://youtu.be/dayc3y34XXs)
-
-🎥 **[Watch our introduction video](https://youtu.be/dayc3y34XXs)** to learn more about the project!
-
 > Check out our speedrun [leaderboard](docs/LEADERBOARD.md)!
 
 ## 🗺️ Open Superintelligence Lab Roadmap
@@ -21,15 +17,6 @@ We will partner for compute while keeping all research/engineering/code fully op
 
 ---
 
-## 🧪 Research Tasks
-
-Current research projects and experiments:
-
-- Squared ReLU Research 🧪 [TASK (relu branch)](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/blob/relu/DO_THIS_TASK.md) | [Discussion](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/issues/49)
-
-
----
-
 > It is best to read the Quick Start directly in the tasks linked above.
 
 ## 🏎️ Quick Start
@@ -38,7 +25,7 @@ git clone https://github.com/Open-Superintelligence-Lab/5-dollar-llm
 cd 5-dollar-llm
 pip install -r requirements.txt
 python data/download_hf_data.py   # Downloads 40M token subset
-python train_llm.py --target_train_loss 4.5
+python train_llm.py
 ```
 
 👉 **[Full Setup Guide](docs/SETUP_INSTRUCTIONS.md)** | **[Leaderboard](docs/LEADERBOARD.md)** | **[Contributing Guide](docs/CONTRIBUTING.md)**

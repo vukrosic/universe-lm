@@ -83,7 +83,6 @@ def train_model(
     experiment_name: Optional[str] = None,
     plot_fn: Optional[Callable] = None,
     extra_config: Optional[Dict[str, Any]] = None,
-    target_train_loss: Optional[float] = None,
     log_every: int = 100,
 ) -> Any:
     """
@@ -205,9 +204,6 @@ def train_model(
             # Track current loss as a scalar only every 100 steps to avoid sync bottleneck
             if step % 100 == 0 or step == 0:
                 current_loss_val = ce_loss.item()
-                if target_train_loss is not None and current_loss_val <= target_train_loss:
-                    print(f"\n🎯 Target train loss {target_train_loss} reached at step {step}!")
-                    stopped_early = True
                 
             # Logging
             if step % log_every == 0 or stopped_early:
@@ -493,7 +489,6 @@ def train_minimal_llm(
     output_dir: Optional[str] = None,
     experiment_name: Optional[str] = None,
     load_weights_path: Optional[str] = None,
-    target_train_loss: Optional[float] = None,
 ):
     print(f"\n🚀 Training dense model")
     setup_start = time.time()
@@ -620,7 +615,6 @@ def train_minimal_llm(
         experiment_name=experiment_name,
         plot_fn=None,
         extra_config=None,
-        target_train_loss=target_train_loss,
         log_every=getattr(config, 'log_every', 100),
     )
     
