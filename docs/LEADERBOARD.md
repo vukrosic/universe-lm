@@ -1,18 +1,8 @@
 # 🏆 Blueberry-Nano Speedrun Leaderboard
 
-> Training is run on 1x4090 RTX.
-
-Usually we will do research together to be able to beat records, but you may also do it alone.
-
 ## 📜 Official Rules
 
-To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, your run must follow these rules:
-
-1.  Surpass the record (training loss of **≤ 4.5**, training loss of **≤ 3.5**, or fastest training time on **8M tokens** / **1B tokens**).
-2.  Use the data mentioned in the [SETUP_INTRUCTIONS](docs/SETUP_INSTRUCTIONS.md)
-3.  The official metric is **Active Training Time**. Setup and compilation overhead (`Setup & Compilation Time`) is excluded.
-4.  Measure your baseline (current code on your hardware) and compare your improvements against that baseline. Explain it to the PR description concisely.
-5.  Keep the added code minimal, clean and readable.
+Please read [SETUP_INTRUCTIONS](docs/SETUP_INSTRUCTIONS.md) for detailed guide.
 
 ## ⚡ 8M Tokens Speedrun
 *Goal: Fastest Time to train 8M tokens*
@@ -23,6 +13,7 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | 2 | 2025-12-22 | 4.7479 | 4.8467 | 1m 29s 209ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 | 3 | 2025-12-22 | 4.7286 | 4.8363 | 1m 28s 664ms | 8,011,776 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/56) [ToheedAkhtar01](https://x.com/ToheedAkhtar01) | Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
 | 4 | 2025-12-23 | 4.7333 | 4.8366 | 1m 27s 856ms | 8,011,776 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/67/) | Fused AdamW |
+| 5 | 2025-12-23 | 4.7409 | 4.8403 | 1m 26s 178ms | 8,011,776 | [bigwolfeman](https://github.com/bigwolfeman) | Cast model into bf16 - model = model.to(device, dtype=torch.bfloat16), Note: Optimizers might require higher precision for longer runs |
 
 > **Record Repeatability / Noise**:
 - Run 1: 1m 27s 856ms, Train Loss: 4.7333, Val Loss: 4.8366
@@ -40,6 +31,7 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | 2 | 2025-12-22 | 4.2118 | 4.2087 | 3m 32s 156ms | 20,004,864 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 | 3 | 2025-12-22 | 4.1952 | 4.2056 | 3m 29s 308ms | 20,004,864 | [ToheedAkhtar01](https://x.com/ToheedAkhtar01) [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/56) | Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
 | 4 | 2025-12-23 | 4.2049 | 4.2075 | 3m 28s 591ms | 20,004,864 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/67/) | Fused AdamW |
+| 5 | 2025-12-23 | 4.1701 | 4.1791 | 3m 19s 165ms | 20,004,864 | [bigwolfeman](https://github.com/bigwolfeman) | Cast model into bf16 - model = model.to(device, dtype=torch.bfloat16), Note: Optimizers might require higher precision for longer runs |
 
 > **Record Repeatability / Noise**:
 - Run 1: 3m 28s 591ms, Train Loss: 4.2049, Val Loss: 4.2075
@@ -53,6 +45,7 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | 1 | 2025-12-22 | 3.7212 | 3.7492 | 20m 27s 988ms | 100,007,936 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 | 2 | 2025-12-22 | 3.7370 | 3.7526 | 17m 27s 59ms | 100,007,936 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 | 3 | 2025-12-22 | 3.7439 | 3.7609 | 17m 8s 637ms | 100,007,936 | [ToheedAkhtar01](https://x.com/ToheedAkhtar01) [GitHub Polar](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/56); [GitHub AdamW](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/67/) | Fused AdamW; Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
+| 4 | 2025-12-23 | 3.6700 | 3.7094 | 16m 17s 221ms | 100,007,936 | [bigwolfeman](https://github.com/bigwolfeman) | Cast model into bf16 - model = model.to(device, dtype=torch.bfloat16), Note: Optimizers might require higher precision for longer runs |
 
 ## 🏅 The 1B Marathon (World Record GPT-1)
 *Goal: Best Model @ 1B Tokens (GPT-1)*
