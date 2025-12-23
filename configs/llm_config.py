@@ -29,7 +29,6 @@ class BlueberryConfig:
     adamw_lr: float = 0.006
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
-    use_polar = True # if False will use Newton-Schulz in Muon
 
     # Evaluation
     eval_every: int = 2000

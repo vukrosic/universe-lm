@@ -22,13 +22,11 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | 1 | 2025-12-21 | 4.7487 | 4.8466 | 1m 44s 79ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 | 2 | 2025-12-22 | 4.7479 | 4.8467 | 1m 29s 209ms | 8,011,776 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 | 3 | 2025-12-22 | 4.7286 | 4.8363 | 1m 28s 664ms | 8,011,776 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/56) [ToheedAkhtar01](https://x.com/ToheedAkhtar01) | Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
+| 4 | 2025-12-23 | 4.7333 | 4.8366 | 1m 27s 856ms | 8,011,776 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/67/) | Fused AdamW |
 
 > **Record Repeatability / Noise**:
-- Run 1: 1m 28s 664ms, 489 steps, Train Loss: 4.7286, Val Loss: 4.8363
-- Run 2: 1m 28s 312ms, 489 steps, Train Loss: 4.7172, Val Loss: 4.8320
-- Run 3: 1m 28s 175ms, 489 steps, Train Loss: 4.7314, Val Loss: 4.8397
-- Run 4: 1m 28s 546ms, 489 steps, Train Loss: 4.7347, Val Loss: 4.8377
-- Run 5: 1m 28s 458ms, 489 steps, Train Loss: 4.7325, Val Loss: 4.8373
+- Run 1: 1m 27s 856ms, Train Loss: 4.7333, Val Loss: 4.8366
+- Run 2: 1m 28s 275ms, Train Loss: 4.7397, Val Loss: 4.8373
 
 ⚠️ If you are unable to reproduce our results on RTX 4090, you may have different CPU, PCIe Bandwidth, or Thermal Throttling. We always recommend measuring your baseline first then comparing against your changes. We measure on Novita AI 4090 with Intel(R) Xeon(R) Platinum 8473C CPU. The CPU selection is random so it requires multiple tries.
 

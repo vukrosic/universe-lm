@@ -38,33 +38,13 @@ def zeropower_polar_express(G:torch.Tensor, steps: int = 5,):
     
     return X # orthogonalized 
 
-@torch.compile
-def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
-    """Newton-Schulz iteration to compute the zeroth power / orthogonalization of G."""
-    assert G.ndim >= 2
-    a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.half()
 
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
-
-    for _ in range(steps):
-        A = X @ X.mT
-        B = b * A + c * A @ A
-        X = a * X + B @ X
-
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-
-    return X
 
 
 class Muon(torch.optim.Optimizer):
     """Muon - MomentUm Orthogonalized by Polar Express / Newton Schulz"""
-    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5, use_polar=False):
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps, use_polar=use_polar)
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -83,10 +63,6 @@ class Muon(torch.optim.Optimizer):
                 buf = state["momentum_buffer"]
                 buf.lerp_(g, 1 - group["momentum"])
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                if group["use_polar"]:
-                    g = zeropower_polar_express(g, steps=group["ns_steps"]) # steps are 5 for both ns and pe
-                    g = g.to(p.dtype)
-                    p.add_(g.view_as(p), alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
-                else: 
-                    g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"]) # steps are 5 for both ns and pe
-                    p.add_(g.view_as(p), alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
+                g = zeropower_polar_express(g, steps=group["ns_steps"]) # steps are 5 for both ns and pe
+                g = g.to(p.dtype)
+                p.add_(g.view_as(p), alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
