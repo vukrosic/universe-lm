@@ -64,7 +64,8 @@ def setup_muon_optimizer(model: nn.Module, config: BlueberryConfig):
     adamw_optimizer = torch.optim.AdamW(
         adamw_params,
         lr=config.adamw_lr,
-        weight_decay=config.weight_decay
+        weight_decay=config.weight_decay,
+        fused=torch.cuda.is_available()
     )
 
     return [muon_optimizer, adamw_optimizer]

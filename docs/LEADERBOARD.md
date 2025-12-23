@@ -41,6 +41,11 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | 1 | 2025-12-22 | 4.2004 | 4.2021 | 4m 8s 168ms | 20,004,864 | [Vuk Rosić](https://x.com/VukRosic99) | Hyperparam search: batch size doubled 4 to 8, n_layers 32 to 22 to fit into memory, muon lr 0.015 to 0.024 and adamw_lr from 0.001 to 0.006 |
 | 2 | 2025-12-22 | 4.2118 | 4.2087 | 3m 32s 156ms | 20,004,864 | [Vuk Rosić](https://x.com/VukRosic99) | Squared ReLU instead of SwiGLU, one less linear layer in feedforward |
 | 3 | 2025-12-22 | 4.1952 | 4.2056 | 3m 29s 308ms | 20,004,864 | [ToheedAkhtar01](https://x.com/ToheedAkhtar01) [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/56) | Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
+| 4 | 2025-12-23 | 4.2049 | 4.2075 | 3m 28s 591ms | 20,004,864 | [GitHub](https://github.com/Open-Superintelligence-Lab/5-dollar-llm/pull/67/) | Polar Muon - it replaces Muon’s Newton-Schulz iteration with a fixed-coefficient iterative scheme for faster, numerically stable orthogonalization. |
+
+> **Record Repeatability / Noise**:
+- Run 1: 3m 28s 591ms, Train Loss: 4.2049, Val Loss: 4.2075
+- Run 2: 3m 28s 871ms, Train Loss: 4.2049, Val Loss: 4.2075
 
 ## ⚡ 100M Tokens Speedrun
 *Goal: Fastest Time to train 100M tokens*
