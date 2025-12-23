@@ -63,15 +63,3 @@ To qualify for the **Speedrun** (4.5 loss / 3.5 loss / 1B tokens) leaderboard, y
 | # | Date | Val Loss | Time | User | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | - | - | - | - | - | - |
-
-
-## 🤝 GPUs: Free & Paid
-**You may rent 4090 affordably at**
-[Salad](https://salad.com/pricing) | [Novita](https://novita.ai/pricing?gpu=1) [(or use our affiliate to help us get more compute ❤️)](https://novita.ai/?ref=mjqyndm&utm_source=affiliate) | [VastAI](https://vast.ai/pricing) - A lot of GPU providers also give 50% off on spot billing.
-
-**Free GPU Alternatives:**
-- **Lightning AI**: You can use the free **L4 GPU**.
-- **Google Colab**: Use the free T4 or paid A100.
-- **Tip**: If the model doesn't fit in your GPU memory, you can **reduce the model size** (e.g., reduce `batch_size`, `n_layer`, or `n_embd` in `configs/llm_config.py`).
-
-Once you create improvement, we will measure it on 4090.
