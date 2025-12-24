@@ -17,6 +17,13 @@ from utils.helpers import set_seed, format_time
 from utils.logger import setup_logging
 
 
+# Worker init function to ensure each worker has a deterministic seed
+def worker_init_fn(worker_id):
+    worker_seed = 42 + worker_id
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
 def print_system_info():
     device = "CUDA" if torch.cuda.is_available() else "CPU"
     print(f"Device: {device}")
@@ -265,12 +272,6 @@ def main():
     train_ds, val_ds = prepare_datasets(data_cfg, tokenizer)
     
     logger.info(f"Train sequences: {len(train_ds):,}, Val sequences: {len(val_ds):,}")
-
-    # Worker init function to ensure each worker has a deterministic seed
-    def worker_init_fn(worker_id):
-        worker_seed = 42 + worker_id
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
 
     # Generator for reproducible shuffling
     g = torch.Generator()
