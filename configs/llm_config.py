@@ -14,7 +14,12 @@ class BlueberryConfig:
     n_kv_heads: int = 4      
     
     # Data params
-    max_seq_len: int = 2048  
+    # ⚠️ WARNING: If you change max_seq_len, you MUST re-run data preparation!
+    # The data preparation script chunks data at this exact length, and the RoPE
+    # cache is initialized with this value. Mismatches will cause runtime errors.
+    # Run: python data/prepare_mix_data.py --target_tokens 25_000_000
+    # you may change the unmber of tokens
+    max_seq_len: int = 2048  # check the warning above
     vocab_size: int = 49152  
     
     # Base Training Defaults

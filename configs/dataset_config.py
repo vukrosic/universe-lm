@@ -1,13 +1,49 @@
 from dataclasses import dataclass
 from typing import Optional, Callable, Union
 import logging
+import os
+import glob
 
 logger = logging.getLogger(__name__)
+
+def get_latest_dataset(base_dir: str = "./processed_data") -> str:
+    """
+    Auto-detect the most recently created dataset in processed_data/
+    Prioritizes datasets matching 'pretrain_mix_*' pattern.
+    Falls back to any directory, sorted by modification time.
+    """
+    if not os.path.exists(base_dir):
+        logger.warning(f"Directory {base_dir} does not exist, using default")
+        return "processed_data/speedrun_40M"
+    
+    # First, try to find pretrain_mix_* datasets
+    pretrain_patterns = glob.glob(os.path.join(base_dir, "pretrain_mix_*"))
+    pretrain_dirs = [p for p in pretrain_patterns if os.path.isdir(p)]
+    
+    if pretrain_dirs:
+        # Sort by modification time (newest first)
+        latest = max(pretrain_dirs, key=os.path.getmtime)
+        logger.info(f"Auto-detected latest dataset: {latest}")
+        return latest
+    
+    # Fallback: any directory in processed_data
+    all_dirs = [os.path.join(base_dir, d) for d in os.listdir(base_dir) 
+                if os.path.isdir(os.path.join(base_dir, d))]
+    
+    if all_dirs:
+        latest = max(all_dirs, key=os.path.getmtime)
+        logger.info(f"Auto-detected dataset: {latest}")
+        return latest
+    
+    # Last resort: use default
+    logger.warning(f"No datasets found in {base_dir}, using default")
+    return "processed_data/speedrun_40M"
 
 @dataclass
 class DataConfig:
     # Dataset source (supports HF dataset path format)
-    dataset_path: str = "processed_data/speedrun_40M"
+    # Use "auto" to automatically load the most recently prepared dataset
+    dataset_path: str = "auto"
     dataset_name: Optional[str] = "cosmopedia-v2"
     split: str = "train"
     
@@ -39,6 +75,10 @@ class DataConfig:
     # save_to_disk / load_from_disk: removed (unused/handled externally)
 
     def __post_init__(self) -> None:
+        # Auto-detect latest dataset if set to "auto"
+        if self.dataset_path == "auto":
+            self.dataset_path = get_latest_dataset()
+            
         # Validate dataset_path
         if not self.dataset_path or not isinstance(self.dataset_path, str):
             raise ValueError("dataset_path must be a non-empty string")
