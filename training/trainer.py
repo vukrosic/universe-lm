@@ -1,4 +1,5 @@
 import torch
+import os
 import torch.nn as nn
 import torch.nn.functional as F
 import math
@@ -596,12 +597,32 @@ def train_minimal_llm(
     # Generate and save validation loss plot
     try:
         from utils.plot_loss import plot_loss
+        
+        # Determine closest baseline file based on token count
+        known_baselines = {
+            8_000_000: "plots/8M.json",
+            20_000_000: "plots/20M.json",
+            100_000_000: "plots/100M.json"
+        }
+        
+        # Find closest baseline
+        closest_tokens = min(known_baselines.keys(), key=lambda x: abs(x - config.train_tokens))
+        baseline_file = known_baselines[closest_tokens]
+        
+        # Verify it exists
+        if not os.path.exists(baseline_file):
+            print(f"      (Baseline file {baseline_file} not found locally)")
+            baseline_file = None
+            
         plot_loss(
             str(metrics_file), 
             str(plot_file), 
-            title=f"Validation Loss - {config.train_tokens:,} Tokens"
+            title=f"Validation Loss - {config.train_tokens:,} Tokens",
+            baseline_file=baseline_file
         )
         print(f"   📈 Plot saved to {plot_file}")
+        if baseline_file:
+            print(f"      (Compared against baseline: {baseline_file})")
     except Exception as e:
         print(f"   ⚠️ Failed to generate plot: {e}")
     
