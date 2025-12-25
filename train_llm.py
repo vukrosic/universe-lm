@@ -59,7 +59,7 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
                         print(f"  Please re-run data preparation with current max_seq_len:")
                         print(f"    python data/prepare_mix_data.py --target_tokens 25_000_000")
                         print("="*70 + "\n")
-                        raise ValueError(f"max_seq_len mismatch: prepared={prep_max_seq}, config={data_cfg.seq_length}")
+                        raise ValueError(f"max_seq_len mismatch: prepared={prep_max_seq}, config={data_cfg.seq_length}. Run: python data/prepare_mix_data.py --target_tokens 25_000_000 or adjust the number of tokens")
                     else:
                         print(f"✓ Validated: Data prepared with max_seq_len={prep_max_seq}")
             except json.JSONDecodeError:
