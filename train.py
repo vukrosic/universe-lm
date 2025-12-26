@@ -8,10 +8,12 @@ from training.video_trainer import train_video_model
 def main():
     config = DiTConfig()
     # Faster training for testing
-    config.train_steps = 100
-    config.log_every = 10
-    config.save_every = 50 
-    config.batch_size = 1 # Reduce batch size to 1 to debug OOM
+    config.train_steps = 500
+    config.log_every = 10 
+    config.save_every = 500 
+    config.batch_size = 2 # Small batch size
+
+
     config.hidden_size = 384 # Reduce model size (DiT-S/2 equivalent-ish)
     config.depth = 12
     config.num_heads = 6

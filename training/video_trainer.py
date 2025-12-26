@@ -62,8 +62,16 @@ def train_video_model(model, train_loader, val_loader, config):
             pbar.update(1)
             
             if step % config.log_every == 0:
-                # Log to wandb or print
-                pass
+                print(f"Step {step}, Loss: {loss_val:.4f}")
+                
+            if step % (config.log_every * 10) == 0 and step > 0:
+                print(f"Sampling at step {step}...")
+                from sampler import sample_euler
+                from utils.video_utils import save_video_grid
+                samples = sample_euler(model, config, device, num_samples=4)
+                os.makedirs("samples", exist_ok=True)
+                save_video_grid(samples, f"samples/step_{step}.gif")
+                print(f"Saved samples/step_{step}.gif")
                 
             if step % config.save_every == 0 and step > 0:
                 os.makedirs("checkpoints", exist_ok=True)
