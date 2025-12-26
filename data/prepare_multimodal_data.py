@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import torch
 import json
 import numpy as np
@@ -7,6 +8,9 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from torchvision import transforms
 from PIL import Image
+
+# Add parent directory to path to import models and configs
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from models.vqvae import VQVAE
 from configs.multimodal_config import MultimodalConfig
 
@@ -30,6 +34,9 @@ def prepare_multimodal_data(args):
     print(f"Loading dataset {args.dataset_name}")
     dataset = load_dataset(args.dataset_name, split="train")
     
+    # CIFAR-10 labels
+    labels_map = ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"]
+    
     img_transform = transforms.Compose([
         transforms.Resize((config.image_size, config.image_size)),
         transforms.ToTensor(),
@@ -44,11 +51,12 @@ def prepare_multimodal_data(args):
             break
             
         # Text tokens
-        caption = sample["text"]
+        label_idx = sample["label"]
+        caption = f"A photo of a {labels_map[label_idx]}"
         text_ids = tokenizer.encode(caption, add_special_tokens=True)
         
         # Image tokens
-        image = sample["image"]
+        image = sample["img"]
         if image.mode != "RGB":
             image = image.convert("RGB")
         img_tensor = img_transform(image).unsqueeze(0).to(device)
@@ -62,13 +70,9 @@ def prepare_multimodal_data(args):
         
         # Interleave
         # [BOS] text [SEG_START] image_tokens [SEG_END] [EOS]
-        # BOM is usually included in text_ids if add_special_tokens=True
         full_sequence = text_ids + [config.seg_start_id] + image_tokens + [config.seg_end_id]
         
-        # We need to make sure it fits in max_seq_len
         if len(full_sequence) <= config.max_seq_len:
-            # For simplicity, we just take the sequence as is. 
-            # In a real training, we'd pad or pack.
             output_data.append({"input_ids": full_sequence, "labels": full_sequence})
         
         if (i+1) % 100 == 0:
@@ -87,9 +91,9 @@ def prepare_multimodal_data(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--vqvae_path", type=str, default="checkpoints/vqvae_epoch_10.pt")
-    parser.add_argument("--dataset_name", type=str, default="lambdalabs/pokemon-blip-captions")
+    parser.add_argument("--dataset_name", type=str, default="cifar10")
     parser.add_argument("--tokenizer_name", type=str, default="HuggingFaceTB/SmolLM2-135M")
     parser.add_argument("--output_dir", type=str, default="./processed_data")
-    parser.add_argument("--max_samples", type=int, default=1000)
+    parser.add_argument("--max_samples", type=int, default=50000)
     args = parser.parse_args()
     prepare_multimodal_data(args)

@@ -38,30 +38,37 @@ def train():
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_fn)
     
     # 3. Optimizer
-    # MinimalLLM has tied weights, so we handle that in optimizer if needed.
-    # Muon is highly efficient for these small LLMs.
-    optimizer = Muon(model.parameters(), lr=0.02, momentum=0.95)
+    # MinimalLLM has tied weights. setup_muon_optimizer handles parameter separation.
+    from training.trainer import setup_muon_optimizer
+    optimizers = setup_muon_optimizer(model, config)
     
     model.train()
+    scaler = torch.cuda.amp.GradScaler()
     
     print("Starting training...")
-    for epoch in range(5): # Small number of epochs for demonstration
+    for epoch in range(20): # 10x total training effort (50k samples * 20 epochs)
         pbar = tqdm(dataloader)
         for i, batch in enumerate(pbar):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            logits = model(input_ids)
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                logits = model(input_ids)
+                
+                # Shift logits and labels for next-token prediction
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                
+                loss = F.cross_entropy(shift_logits.view(-1, config.vocab_size), shift_labels.view(-1))
             
-            # Shift logits and labels for next-token prediction
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            
-            loss = F.cross_entropy(shift_logits.view(-1, config.vocab_size), shift_labels.view(-1))
-            
+            # Since we use Muon which is a custom optimizer, let's see if we need scaler for it.
+            # Usually custom optimizers like Muon don't use scaler directly in the same way.
+            # But standard backward works fine.
             loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
+            
+            for optimizer in optimizers:
+                optimizer.step()
+                optimizer.zero_grad()
             
             pbar.set_description(f"Epoch {epoch+1} Loss: {loss.item():.4f}")
             

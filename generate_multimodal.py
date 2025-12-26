@@ -35,13 +35,21 @@ def generate(prompt, model_path, vqvae_path):
     print(f"Generating image for prompt: {prompt}")
     generated_tokens = []
     
+    temperature = 1.0
+    top_k = 50
+    
     with torch.no_grad():
         for _ in range(config.num_image_tokens):
             logits = model(input_ids)
-            last_logits = logits[:, -1, :]
+            last_logits = logits[:, -1, :] / temperature
             
-            # Simple greedy sampling for now
-            next_token = torch.argmax(last_logits, dim=-1, keepdim=True)
+            # Top-k sampling
+            if top_k > 0:
+                v, _ = torch.topk(last_logits, min(top_k, last_logits.size(-1)))
+                last_logits[last_logits < v[:, [-1]]] = -float('Inf')
+            
+            probs = F.softmax(last_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
             
             input_ids = torch.cat([input_ids, next_token], dim=1)
             generated_tokens.append(next_token.item())
@@ -77,15 +85,15 @@ def generate(prompt, model_path, vqvae_path):
     decoded_img = (decoded_img * 255).astype("uint8")
     
     img = Image.fromarray(decoded_img)
-    img.save("generated_pokemon.png")
-    print("✅ Image saved to generated_pokemon.png")
+    img.save("generated_image.png")
+    print("✅ Image saved to generated_image.png")
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", type=str, default="A friendly green dragon")
+    parser.add_argument("--prompt", type=str, default="A photo of a cat")
     parser.add_argument("--model_path", type=str, default="checkpoints/multimodal_llm_epoch_5.pt")
-    parser.add_argument("--vqvae_path", type=str, default="checkpoints/vqvae_epoch_10.pt")
+    parser.add_argument("--vqvae_path", type=str, default="checkpoints/vqvae_epoch_5.pt")
     args = parser.parse_args()
     
     generate(args.prompt, args.model_path, args.vqvae_path)

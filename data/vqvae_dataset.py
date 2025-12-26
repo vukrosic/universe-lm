@@ -17,12 +17,12 @@ class ImageDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        image = self.dataset[idx]["image"]
+        image = self.dataset[idx]["img"]
         if image.mode != "RGB":
             image = image.convert("RGB")
         return self.transform(image)
 
-def get_vqvae_dataloader(dataset_name="lambdalabs/pokemon-blip-captions", batch_size=32, image_size=128):
+def get_vqvae_dataloader(dataset_name="cifar10", batch_size=32, image_size=128):
     dataset = ImageDataset(dataset_name, split="train", image_size=image_size)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     return dataloader

@@ -24,8 +24,8 @@ Train the `MinimalLLM` (Llama-style architecture) on the interleaved data.
 
 ### 4. Inference
 Generate a new image from a text prompt.
-- **Script:** `generate_multimodal.py --prompt "A fire-breathing dragon"`
-- **Output:** `generated_pokemon.png`
+- **Script:** `generate_multimodal.py --prompt "A photo of a cat"`
+- **Output:** `generated_image.png`
 
 ## How to Run
 
@@ -40,5 +40,5 @@ python data/prepare_multimodal_data.py
 python train_multimodal_llm.py
 
 # 4. Generate an image
-python generate_multimodal.py --prompt "A cute water pokemon"
+python generate_multimodal.py --prompt "A photo of a frog"
 ```

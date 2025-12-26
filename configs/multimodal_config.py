@@ -35,3 +35,7 @@ class MultimodalConfig(BlueberryConfig):
     n_layers: int = 8 # Shallow for faster learning from scratch
     d_ff: int = 1024
     max_seq_len: int = 2024
+    
+    # Training overrides
+    batch_size: int = 16 # Doubled to increase memory usage
+    muon_lr: float = 0.02 # Baseline LR for Muon
