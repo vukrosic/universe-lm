@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import time
 import os
-import wandb
+# import wandb
 
 def train_video_model(model, train_loader, val_loader, config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,6 +47,8 @@ def train_video_model(model, train_loader, val_loader, config):
             # 5. Predict
             with torch.cuda.amp.autocast():
                 v_pred = model(x_t, t, y)
+                if v_pred.shape[1] != v_target.shape[1] and v_pred.shape[1] == v_target.shape[1] * 2:
+                    v_pred, _ = torch.split(v_pred, v_target.shape[1], dim=1)
                 loss = F.mse_loss(v_pred, v_target)
             
             # 6. Optimize

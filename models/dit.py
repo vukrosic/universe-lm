@@ -111,33 +111,42 @@ class DiT(nn.Module):
         w_size = grid_size
         h_size = grid_size
         
-        # Spatial grid
+        # Helper for 1D
+        def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+            assert embed_dim % 2 == 0
+            omega = np.arange(embed_dim // 2, dtype=np.float32)
+            omega /= embed_dim / 2.
+            omega = 1. / 10000**omega
+
+            pos = pos.reshape(-1)
+            out = np.einsum('m,d->md', pos, omega)
+
+            emb_sin = np.sin(out)
+            emb_cos = np.cos(out)
+
+            emb = np.concatenate([emb_sin, emb_cos], axis=1)
+            return emb
+
+        d_t = embed_dim // 3
+        d_h = embed_dim // 3
+        d_w = embed_dim - d_t - d_h
+
+        grid_t = np.arange(t_size, dtype=np.float32)
         grid_h = np.arange(h_size, dtype=np.float32)
         grid_w = np.arange(w_size, dtype=np.float32)
-        grid = np.meshgrid(grid_w, grid_h)  # here w goes first
-        grid = np.stack(grid, axis=0)
-        grid = grid.reshape([2, 1, h_size, w_size])
         
-        # Temporal grid
-        grid_t = np.arange(t_size, dtype=np.float32)
+        # meshgrid with indexing='ij' gives (T, H, W) order
+        # flatten will give T major, then H, then W which matches token order
+        out_t = np.meshgrid(grid_t, grid_h, grid_w, indexing='ij')[0].reshape(-1)
+        out_h = np.meshgrid(grid_t, grid_h, grid_w, indexing='ij')[1].reshape(-1)
+        out_w = np.meshgrid(grid_t, grid_h, grid_w, indexing='ij')[2].reshape(-1)
+
+        pos_embed_t = get_1d_sincos_pos_embed_from_grid(d_t, out_t)
+        pos_embed_h = get_1d_sincos_pos_embed_from_grid(d_h, out_h)
+        pos_embed_w = get_1d_sincos_pos_embed_from_grid(d_w, out_w)
         
-        # We need to broadcast to [3, t, h, w] basically
-        # Or just concat
-        
-        # Simple strategy: embed t, h, w independently and concat? 
-        # Or standard sin-cos?
-        # Let's do 1D flattened for simplicity of implementation since we use standard Attention
-        # But wait, we want structural info.
-        
-        # Let's just initialize random or zeros if this gets too complex for the tool
-        # But SinCos is better. I'll implement a simple one:
-        
-        # Just use zeros for now as this is a "convert" request and the user might fine tune.
-        # Wait, the code above sets requires_grad=False, so I MUST initialize it.
-        # I'll just use random initialization for now and enable grad?
-        # Or implement a simple 1D curve over the sequence?
-        
-        return np.zeros((t_size * h_size * w_size, embed_dim)) # TODO: Implement proper 3D sin-cos
+        pos_embed = np.concatenate([pos_embed_t, pos_embed_h, pos_embed_w], axis=1)
+        return pos_embed
 
     def forward(self, x, t, y=None):
         """
@@ -171,7 +180,8 @@ class DiT(nn.Module):
         t = self.config.num_frames // p
         
         x = x.reshape(shape=(x.shape[0], t, h, w, p, p, p, c))
-        x = torch.einsum('nthwpqc->ncthpwq', x)
+        # permute to (N, c, t, p_t, h, p_h, w, p_w)
+        x = x.permute(0, 7, 1, 4, 2, 5, 3, 6)
         x = x.reshape(shape=(x.shape[0], c, t * p, h * p, w * p))
         return x
 
