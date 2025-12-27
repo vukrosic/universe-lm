@@ -20,7 +20,7 @@ class BlueberryConfig:
     # cache is initialized with this value. Mismatches will cause runtime errors.
     # Run: python data/prepare_mix_data.py --target_tokens 25_000_000
     # you may change the number of tokens
-    max_seq_len: int = 2024  # check the warning above
+    max_seq_len: int = 2048  # check the warning above
     vocab_size: int = 49152  
     
     # Base Training Defaults
