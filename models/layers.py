@@ -30,7 +30,7 @@ class MultiHeadAttention(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
-        self.n_heads = n_head
+        self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_heads
         self.num_key_value_groups = self.n_heads // self.n_kv_heads
         self.d_k = d_model // n_heads
