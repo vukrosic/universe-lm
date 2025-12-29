@@ -214,6 +214,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     parser.add_argument("--log_every", type=int, default=100, help="Logging frequency in steps")
     parser.add_argument("--warmup", type=str, default="true", help="Whether to perform untimed compilation warmup (true/false)")
+    parser.add_argument("--tokenizer_name", type=str, default=None, help="Override tokenizer (e.g., meta-llama/Llama-3.2-1B)")
 
     args = parser.parse_args()
 
@@ -309,11 +310,15 @@ def main():
         seq_length=config.max_seq_len,
         num_samples=num_docs,
         cache_dir="./hf_cache",
+        tokenizer_name=args.tokenizer_name if args.tokenizer_name else "HuggingFaceTB/SmolLM2-135M",
     )
     
     # Show which dataset was resolved (especially useful for auto-detection)
     if not args.dataset_path:
         print(f"📂 Auto-detected dataset: {data_cfg.dataset_path}")
+    
+    # Show tokenizer info
+    print(f"🔤 Tokenizer: {data_cfg.tokenizer_name}")
 
     from data.loader import setup_tokenizer
     
