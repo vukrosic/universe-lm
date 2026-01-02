@@ -3,8 +3,6 @@ transformers
 torchtune
 torchao
 matplotlib
-protobuf
-sentencepiece
 # lm-eval
 
 # Single T4 GPU training

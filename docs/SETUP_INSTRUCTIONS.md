@@ -38,27 +38,30 @@ cd 5-dollar-llm
 pip install -r requirements.txt
 ```
 
-### Prepare Training Data
-
-We use the **Mistral-7B-v0.3 tokenizer** (vocab_size=32,768) for efficient training.
-
-**Option A: Quick Start (10M Tokens)** - For 8M benchmark
+### Option A: Quick Start (40M Tokens) - Most of the time you will just need to download this dataset
 ```bash
-python data/prepare_mix_data.py --target_tokens 10000000
+python3 -c "
+from datasets import load_dataset
+import os
+print('Downloading 40M Token Subset...')
+ds = load_dataset('vukrosic/blueberry-1B-pretrain', split='train[:20000]')
+os.makedirs('processed_data/speedrun_40M', exist_ok=True)
+ds.save_to_disk('processed_data/speedrun_40M')
+print('✅ Speedrun Data Ready!')
+"
 ```
 
-**Option B: For 20M benchmark**
+### Option B: If you train on 100M or 1B tokens, first read below
 ```bash
-python data/prepare_mix_data.py --target_tokens 25000000
-```
-
-**Option C: For 100M or 1B benchmarks**
-```bash
-# 100M benchmark
-python data/prepare_mix_data.py --target_tokens 110000000
-
-# 1B benchmark
-python data/prepare_mix_data.py --target_tokens 1100000000
+python3 -c "
+from datasets import load_dataset
+import os
+print('Downloading 1B Pretraining Data...')
+ds = load_dataset('vukrosic/blueberry-1B-pretrain')
+os.makedirs('processed_data/pretrain_1B', exist_ok=True)
+ds.save_to_disk('processed_data/pretrain_1B')
+print('✅ Full Data Ready!')
+"
 ```
 
 

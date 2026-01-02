@@ -48,7 +48,7 @@ class DataConfig:
     split: str = "train"
     
     # Tokenizer
-    tokenizer_name: str = "mistralai/Mistral-7B-v0.3"
+    tokenizer_name: str = "HuggingFaceTB/SmolLM2-135M"
     use_fast: bool = True
     trust_remote_code: bool = False
     

@@ -21,7 +21,7 @@ class BlueberryConfig:
     # Run: python data/prepare_mix_data.py --target_tokens 25_000_000
     # you may change the number of tokens
     max_seq_len: int = 2048  # check the warning above
-    vocab_size: int = 32768  # Mistral-7B-v0.3 tokenizer  
+    vocab_size: int = 49152  
     
     # Base Training Defaults
     compile_model: bool = True

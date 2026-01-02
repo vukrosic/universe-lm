@@ -97,7 +97,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target_tokens", type=int, default=22_000_000, help="Number of tokens to prepare according to the benchmark you will use: 8M, 20M, 100M, 1B. Prepare a bit more tokens.")
     parser.add_argument("--output_dir", type=str, default="./processed_data", help="Output directory")
-    parser.add_argument("--tokenizer_name", type=str, default="mistralai/Mistral-7B-v0.3", help="Tokenizer")
+    parser.add_argument("--tokenizer_name", type=str, default="HuggingFaceTB/SmolLM2-135M", help="Tokenizer")
     parser.add_argument("--max_seq_len", type=int, default=None, help="Max sequence length (defaults to config value)")
     
     args = parser.parse_args()
