@@ -18,6 +18,7 @@ Help us build top 10 LLM in the world while keeping it fully open source, which 
 ---
 
 Can you make our LLM train faster and better?
+
 We keep the contributions scintifically rigurous. See **[Contributing Guidelines](docs/CONTRIBUTING.md)** to get started.
 
 👉 **[Full Setup Guide](docs/SETUP_INSTRUCTIONS.md)** | **[Leaderboard](docs/LEADERBOARD.md)**
