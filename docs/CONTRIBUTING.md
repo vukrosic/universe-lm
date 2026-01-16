@@ -15,7 +15,7 @@ Previously we were adding more features / code / architectures but records weren
 2. 🍴 **Fork the repo**
 3. 💻 **Clone it and implement the experiment**, follow README
 4. 📊 **Benchmark your changes** against a the baseline that you also measured beforehand. If hardware is limited, use free GPUs (Lightning AI, Colab) and reduce model size (`n_layer`, `n_embd`) for testing.
-5. � **Submit a PR** with your findings and comparison data.
+5. 📥 **Submit a PR** with your findings and comparison data.
 
 ---
 
