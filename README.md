@@ -29,7 +29,7 @@ We keep the contributions scintifically rigurous. See **[Contributing Guidelines
 
 For the code to be accepted it must be **measured** and **break the record**. 🚀
 
-Previously we were adding more features / code / architectures but records weren't getting broken and there was no progress. 📉
+If we just add more features / code / architectures but records aren't getting broken, there is no progress. 📉
 
 > [!IMPORTANT]
 > Consider **more code = bad** (complexity, bloat, maintenance, bugs when upgrading), unless there is a new record in the training speed / loss, which justifies adding code. ✨
