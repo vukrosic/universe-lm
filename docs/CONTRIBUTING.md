@@ -1,6 +1,10 @@
-For a change to be accepted it must be measured and break the record. We must not add anything else. Consider more code = bad (complexity, bloat, maintenance, bugs when upgrading), unless there is a new record in the training speed / loss, which justifies adding code.
+For the code to be accepted it must be measured and break the record. 
 
 Previously we were adding more features / code / architectures but records weren't getting broken and there was no progress.
+
+Consider more code = bad (complexity, bloat, maintenance, bugs when upgrading), unless there is a new record in the training speed / loss, which justifies adding code.
+
+
 
 How to contribute:
 
