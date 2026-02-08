@@ -7,7 +7,7 @@ Help us build top 10 LLM in the world while keeping it fully open source, which 
 ## 🗺️ Open Superintelligence Lab Roadmap
 
 **Our goals:**
-1. **GPT-1** Level by Dec 20 2025 ✓ [Watch](https://youtu.be/1nf6mVNN2lo)
+1. **GPT-1** Level Dec 20 2025 ✓ [Watch](https://youtu.be/1nf6mVNN2lo)
 2. **GPT-2** Level - next
 
 ---
