@@ -8,12 +8,7 @@ Help us build top 10 LLM in the world while keeping it fully open source, which 
 
 **Our goals:**
 1. **GPT-1** Level by Dec 20 2025 ✓ [Watch](https://youtu.be/1nf6mVNN2lo)
-2. **GPT-2** Level by Jan 20 2026 Delayed
-3. **GPT-3** Level by Apr 20 2026
-4. **Top 150** in LMArena (GPT-4o-mini level) by June 2026
-5. **Top 50** by Apr 2027
-6. **Top 10** by Dec 2027
-7. We could aim for **Top 1** by 2028, TBD
+2. **GPT-2** Level - next
 
 ---
 
