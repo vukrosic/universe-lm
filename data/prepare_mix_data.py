@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from configs.llm_config import BlueberryConfig
+from configs.llm_config import LLMConfig
 
 def process_stream(name, dataset, tokenizer, target_tokens, f_handle, chunk_size):
     print(f"  Processing {name} for {target_tokens:,} tokens...")
@@ -43,7 +43,7 @@ def process_stream(name, dataset, tokenizer, target_tokens, f_handle, chunk_size
 
 def prepare_pretraining_data(args):
     # Get max_seq_len from config (can be overridden by args)
-    config = BlueberryConfig()
+    config = LLMConfig()
     chunk_size = args.max_seq_len if args.max_seq_len else config.max_seq_len
     
     print(f"🚀 Preparing pre-training data (Target: {args.target_tokens:,} tokens) [Sequential + Shuffle]...")
