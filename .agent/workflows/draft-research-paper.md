@@ -35,11 +35,16 @@ Follow these steps to turn a research idea into a structured paper from scratch:
     - Use the `paper-revisor` skill to integrate BOTH the paper review and the abstract review.
     - Ensure the abstract is now 100% crystal clear and jargon-explained.
 
-8. **File Creation**:
+8. **Explanation Expansion**:
+    - Use the `explanation-expander` skill to significantly expand the paper's length.
+    - Deep-dive into jargon, add extended analogies, and explain the "soul" of every mathematical equation.
+    - Ensure the paper feels "thick" with helpful, accessible information.
+
+9. **File Creation**:
     - Save the final improved paper to the `docs/papers/` directory.
     - Name the file based on the research idea (e.g., `curvature_aware_muon.md`).
 
-9. **Verification & Approval**:
+10. **Verification & Approval**:
     - Confirm the file has been created.
     - Provide a summary of the final improvements.
     - **MANDATORY**: Explicitly ask the user for approval of the paper draft.
