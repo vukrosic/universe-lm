@@ -1,6 +1,6 @@
 ---
 name: idea-revisor
-description: Iterates on research ideas based on reviewer critique. Addresses weaknesses honestly, simplifies overcomplicated proposals, and ensures testability.
+description: Iterates on research ideas based on reviewer critique. Addresses weaknesses honestly, simplifies overcomplicated proposals, and ensures testability at 1M tokens.
 ---
 
 # Idea Revisor Skill
@@ -19,19 +19,20 @@ Classify each critique as:
 If the reviewer says the idea is overcomplicated:
 - Strip it down to the minimal mechanism
 - Remove invented terminology
-- Use standard names for standard concepts (e.g., "gradient norm threshold" not "Spectral Energy Gating")
+- Use standard names for standard concepts
 
 ### 3. Add What's Missing
-- **Trivial baselines**: If the reviewer asked "what about just always using N=4?", add that as a mandatory ablation.
+- **Trivial baselines**: If the reviewer asked for one, add it as a mandatory ablation.
 - **Failure predictions**: State what results would disprove the idea.
 - **Overhead analysis**: Add wall-clock cost estimates.
+- **Implementation flag**: Specify the exact CLI flag name (e.g., `--use_spectral_gate`).
 
 ### 4. Strengthen the Math
 - If the math was called weak, add formal definitions, not more analogies.
-- If terminology was called misleading, fix it. Don't defend bad names.
+- If terminology was called misleading, fix it.
 
 ### 5. Constrain the Scope
-- All experiments must be feasible at ≤1B tokens.
+- All experiments must be feasible at **1M tokens**.
 - Remove any claims about "scaling to 1T tokens" or "production readiness."
 
 ## Output
@@ -48,8 +49,16 @@ If the reviewer says the idea is overcomplicated:
 ## Revised Method
 <Simplified description with correct terminology>
 
+## Implementation
+- Flag: `--<flag_name>`
+- Files to modify: <list>
+- Lines of code: <estimated>
+
 ## Experiment Plan
-<With ablations and trivial baselines>
+- Scale: 1M tokens
+- Seeds: 42, 137, 256 (minimum)
+- Baseline: 5-seed variance from `docs/research/baseline_variance_1M.md`
+- Success: Cohen's d ≥ 0.5
 
 ## Failure Criteria
 <What results would kill this idea>

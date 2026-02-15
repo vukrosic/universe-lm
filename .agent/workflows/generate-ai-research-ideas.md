@@ -8,23 +8,23 @@ Follow these steps to generate and refine a high-quality, testable AI research i
 
 1.  **Idea Generation**:
     - Use the `ai-research-innovator` skill to analyze the current codebase.
-    - Generate 3-5 original ideas across different architectural aspects.
-    - Each idea must include: math, pro/con analysis, failure predictions, and a minimum viable experiment at ≤8M tokens.
+    - Generate 3 original ideas across different architectural aspects.
+    - Each idea must include: math, pro/con analysis, failure predictions, and a minimum viable experiment at **1M tokens**.
 
 2.  **Autonomous Selection & Review**:
     - Select the most promising idea (highest novelty × feasibility).
-    - Use `idea-reviewer` to brutally critique it: novelty, falsifiability, trivial baselines, scale appropriateness, math rigor.
+    - Use `idea-reviewer` skill to brutally critique it: novelty, falsifiability, trivial baselines, scale appropriateness, math rigor.
 
 3.  **Autonomous Refinement**:
-    - Use `idea-revisor` to address ALL reviewer feedback.
+    - Use `idea-revisor` skill to address ALL reviewer feedback.
     - Simplify overcomplicated proposals.
     - Add trivial baseline comparisons.
-    - Constrain scope to ≤1B tokens.
+    - Constrain scope to **1M tokens**.
 
 4.  **Journal Entry**:
-    - Use `research-journal` to log the idea with status "Ready to Test".
+    - Log the idea to `docs/research/idea_log.md` with status "Ready to Test" using the `research-journal` format.
 
 5.  **Final Output**:
     - Present the finalized V2 proposal.
-    - Include the experiment plan with ablations and success criteria.
+    - Include the experiment plan with success criteria.
     - Do not wait for user input between steps.

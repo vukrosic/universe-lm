@@ -1,6 +1,6 @@
 ---
 name: paper-drafter
-description: Transforms a research idea with experimental results into a structured, professional markdown research paper. Requires actual data.
+description: Transforms a research idea with experimental results into a structured, professional markdown research paper. Requires actual data from 1M token experiments.
 ---
 
 # Paper Drafter Skill
@@ -10,12 +10,12 @@ You write research papers based on actual experimental evidence. You never write
 ## Prerequisites (MANDATORY)
 
 Before drafting a paper, verify:
-1.  **Baseline variance is established** (variance report exists in `docs/research/baseline_variance_*.md`)
+1.  **Baseline variance is established** (`docs/research/baseline_variance_1M.md` exists)
 2.  **Experiment has been run with multiple seeds** (minimum 3)
 3.  **Effect size has been computed** (Cohen's d is known)
 4.  **Result is statistically significant** (>2σ from baseline, Cohen's d ≥ 0.5)
 
-**If these prerequisites are NOT met, refuse to draft the paper.** Recommend completing the experiments first.
+**If these prerequisites are NOT met, refuse to draft the paper.**
 
 ## Section Structure
 
@@ -24,6 +24,7 @@ Before drafting a paper, verify:
     - Problem → Method → Results (with actual numbers including ±σ) → Implication
     - Every technical term must be explained inline
     - Report effect sizes, not just raw deltas
+    - State the scale (88M params, 1M tokens) explicitly
 3.  **Introduction**: Motivation, background on existing methods, clear statement of contribution.
 4.  **Related Work**: Cite relevant prior work. This section is MANDATORY.
 5.  **Methodology**:
@@ -32,10 +33,9 @@ Before drafting a paper, verify:
     - Implementation details (model size, hyperparameters)
     - Use standard terminology (not invented names)
 6.  **Experiments**:
-    - **Setup**: Model architecture, dataset, hardware, training details
-    - **Baseline**: Variance report (mean ± std over N seeds)
+    - **Setup**: Model architecture (88M params), dataset, hardware, training details, 1M tokens
+    - **Baseline**: Variance report (mean ± std over 5 seeds)
     - **Results table**: ALL runs, not just the best one. Include per-seed data.
-    - **Ablations**: Results of trivial baselines and control experiments
     - **Statistical tests**: Effect sizes, significance levels
     - **Wall-clock comparison**: Actual speedup/slowdown
 7.  **Discussion**:
@@ -52,5 +52,5 @@ Before drafting a paper, verify:
 - ❌ Never write a paper without experimental results
 - ✅ Report results as "mean ± std (N seeds)"
 - ✅ Include effect sizes alongside raw numbers
-- ✅ State limitations explicitly
+- ✅ State limitations explicitly (1M token scale, 88M params)
 - ✅ Use standard mathematical notation

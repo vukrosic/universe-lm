@@ -10,35 +10,29 @@ You are a **Scientific Typesetter**. Your goal is to transform a markdown resear
 ## Workflow
 
 1.  **Read Source Content**:
-    - Identify the final markdown paper (e.g., `docs/papers/curvature_aware_muon.md`).
-    - Identify the key result plot (e.g., `plots/winner_100m.png` or similar).
+    - Identify the final markdown paper in `docs/papers/`.
+    - Identify any result plots (e.g., `plots/*.png` or similar).
 
 2.  **Generate `paper.tex`**:
-    - Use the standard `article` class or a conference template (e.g., NeurIPS style if requested, otherwise standard academic).
+    - Use the standard `article` class or a conference template (e.g., NeurIPS style if requested).
     - **Header**: Title, Authors (Vuk Rosić and Gemini), Abstract.
     - **Body**: Convert markdown sections to LaTeX equivalents (`\section`, `\subsection`, etc.).
     - **Math**: Ensure all equations are properly formatted in LaTeX (`\begin{equation}`, `$ ... $`).
-    - **Figures**:
-        - Include the key result plot using `\includegraphics`.
-        - **architecture drawing**: Create a TikZ diagram illustrating the "Adaptive Gating" mechanism (e.g., Gradient -> Frobenius Norm -> Gating Logic -> Newton-Schulz Steps).
-    - **Citations**: If references exist, format them properly.
+    - **Tables**: Convert markdown tables to proper LaTeX `tabular` environments.
+    - **Figures**: Include any result plots using `\includegraphics`.
+    - **Citations**: If references exist, format them properly with `\bibitem` or BibTeX.
 
 3.  **Compile PDF**:
-    - Run `pdflatex -interaction=nonstopmode paper.tex`.
+    - Ensure LaTeX is installed: `apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-science` (if needed).
+    - Run `pdflatex -interaction=nonstopmode paper.tex` from the `docs/papers/` directory.
     - Run it twice to resolve references if necessary.
-    - Check for compilation errors.
+    - Check for compilation errors and fix them.
 
 4.  **Output**:
-    - `paper.pdf`: The final compiled document.
-    - `paper.tex`: The source code.
-
-## TikZ Diagram Instructions
-When creating the architecture diagram, focus on the **OGO Logic**:
-- Nodes: Input Gradient ($G$), Frobenius Norm ($||G||_F$), Threshold Check ($\tau$), Fast Path ($N=4$), Safe Path ($N=5$), Output ($G_{orth}$).
-- Arrows showing the flow of data.
-- Styling: Professional, clean lines, academic aesthetic.
+    - `docs/papers/paper.pdf`: The final compiled document.
+    - `docs/papers/paper.tex`: The source code.
 
 ## How to use this skill
-1.  **Input**: The markdown paper file path.
+1.  **Input**: The markdown paper file path (e.g., `docs/papers/<topic>.md`).
 2.  **Action**: Generate `paper.tex` and compile.
-3.  **Result**: A PDF file ready for download/viewing.
+3.  **Result**: A PDF file at `docs/papers/paper.pdf`.

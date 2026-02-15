@@ -1,6 +1,6 @@
 ---
 name: experiment-runner
-description: Executes baseline and experimental training runs with mandatory multi-seed variance measurement and statistical significance testing.
+description: Executes baseline and experimental training runs with mandatory multi-seed variance measurement and statistical significance testing. All runs at 1M tokens.
 ---
 
 # Experiment Runner Skill
@@ -11,35 +11,42 @@ You are a research engineer responsible for rigorous execution. Every claimed re
 
 **Before any experiment can be declared "better" or "worse", you MUST know the natural run-to-run variance of the baseline.** A delta smaller than 1 standard deviation is noise, not signal.
 
+## Standard Scale
+
+**All experiments are run at 1M tokens (1,000,000).** This is the standard benchmark scale for this project.
+
 ## Execution Protocol
 
-### Phase 1: Baseline Variance Measurement (MANDATORY for new benchmarks)
+### Phase 1: Baseline Variance Measurement (MANDATORY for first time)
 
-Before running ANY experiment at a new token scale, establish baseline statistics:
+Before running ANY experiment, establish baseline statistics:
 
-1.  **Run the baseline 5 times** with different random seeds (42, 137, 256, 512, 1024):
+1.  **Check if baseline variance exists**: Look for `docs/research/baseline_variance_1M.md`. If it exists with 5-seed data, skip to Phase 2.
+2.  **Run the baseline 5 times** with different random seeds (42, 137, 256, 512, 1024):
     ```bash
-    python train_llm.py --train_tokens <N> --use_cao false --seed 42
-    python train_llm.py --train_tokens <N> --use_cao false --seed 137
-    python train_llm.py --train_tokens <N> --use_cao false --seed 256
-    python train_llm.py --train_tokens <N> --use_cao false --seed 512
-    python train_llm.py --train_tokens <N> --use_cao false --seed 1024
+    python train_llm.py --train_tokens 1000000 --seed 42 --output_dir checkpoints/baseline_1M_seed42
+    python train_llm.py --train_tokens 1000000 --seed 137 --output_dir checkpoints/baseline_1M_seed137
+    python train_llm.py --train_tokens 1000000 --seed 256 --output_dir checkpoints/baseline_1M_seed256
+    python train_llm.py --train_tokens 1000000 --seed 512 --output_dir checkpoints/baseline_1M_seed512
+    python train_llm.py --train_tokens 1000000 --seed 1024 --output_dir checkpoints/baseline_1M_seed1024
     ```
-2.  **Record for each run**: `val_loss`, `val_accuracy`, `wall_time`
-3.  **Compute**: mean (μ), standard deviation (σ), min, max for each metric.
-4.  **Save** the variance report to `docs/research/baseline_variance_<N>tokens.md`
-5.  **The significance threshold** is: An experiment must beat the baseline mean by at least **2σ** to be declared a winner. Between 1σ and 2σ is "suggestive but inconclusive." Below 1σ is noise.
-
-**If baseline variance has already been measured at this scale, skip to Phase 2.** Check `docs/research/baseline_variance_*.md` first.
+    **Run these sequentially (one at a time).**
+3.  **Record for each run**: `val_loss`, `wall_time`
+4.  **Compute**: mean (μ), standard deviation (σ), min, max for each metric.
+5.  **Save** the variance report to `docs/research/baseline_variance_1M.md`
+6.  **Significance threshold**: An experiment must beat the baseline mean by at least **2σ** to be declared a winner. Between 1σ and 2σ is "suggestive but inconclusive." Below 1σ is noise.
+7.  **Clean up**: `rm -rf checkpoints/baseline_1M_seed*`
 
 ### Phase 2: Experiment Execution
 
 1.  **Run the experiment 3 times minimum** with seeds (42, 137, 256):
     ```bash
-    python train_llm.py --train_tokens <N> --use_cao true --cao_epsilon <E> --seed 42
-    python train_llm.py --train_tokens <N> --use_cao true --cao_epsilon <E> --seed 137
-    python train_llm.py --train_tokens <N> --use_cao true --cao_epsilon <E> --seed 256
+    python train_llm.py --train_tokens 1000000 --seed 42 --<experiment_flag> --output_dir checkpoints/exp_1M_seed42
+    python train_llm.py --train_tokens 1000000 --seed 137 --<experiment_flag> --output_dir checkpoints/exp_1M_seed137
+    python train_llm.py --train_tokens 1000000 --seed 256 --<experiment_flag> --output_dir checkpoints/exp_1M_seed256
     ```
+    **Run these sequentially (one at a time).** Replace `--<experiment_flag>` with actual flags.
+
 2.  If the experiment mean falls within 2σ of the baseline, run 2 more seeds (512, 1024) to increase confidence.
 
 ### Phase 3: Statistical Comparison
@@ -55,11 +62,11 @@ Before running ANY experiment at a new token scale, establish baseline statistic
     - `0.2 ≤ |d| < 0.5`: **Small** — suggestive, needs more data
     - `0.5 ≤ |d| < 0.8`: **Medium** — likely real
     - `|d| ≥ 0.8`: **Large** — strong effect
-4.  **Wall-clock comparison**: Report actual speedup/slowdown as a percentage. If the method is slower, this MUST be prominently stated.
+4.  **Wall-clock comparison**: Report actual speedup/slowdown as a percentage.
 
 ### Phase 4: Result Reporting
 
-Save results to `docs/research/experiment_<name>_<N>tokens.md` with this format:
+Save results to `docs/research/experiment_<name>_1M.md` with this format:
 
 ```markdown
 # Experiment: <Name>
@@ -74,14 +81,12 @@ Save results to `docs/research/experiment_<name>_<N>tokens.md` with this format:
 ## Verdict: [WINNER / NEUTRAL / LOSER]
 ```
 
-## Scale Limits
+Clean up checkpoints after recording results: `rm -rf checkpoints/exp_1M_seed* checkpoints/control_1M_seed*`
 
-- **Maximum benchmark scale: 1B tokens.** This is the experimental design phase. Do not propose or execute runs beyond 1B tokens.
-- **Standard benchmarks**: 8M (quick iteration), 100M (validation), 1B (final confirmation).
-- 20M is acceptable as an intermediate check but not required.
+## How to Extract Results
 
-## How to Locate Results
-
-1.  **Metrics JSON**: `plots/metrics_*.json` — contains per-step loss/accuracy curves.
-2.  **Training logs**: `logs/training_*.log`
-3.  **Variance reports**: `docs/research/baseline_variance_*.md`
+After each training run, look for the final validation loss in the terminal output. The training script prints lines like:
+```
+Step XXX | val_loss: X.XXXX | ...
+```
+Record the **last** val_loss value from each run.
