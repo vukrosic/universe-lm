@@ -38,17 +38,19 @@ Follow these steps to turn a research idea into a structured paper from scratch:
     - Use the `paper-revisor` skill to integrate BOTH the paper review and the abstract review.
     - Ensure the abstract is now 100% crystal clear and jargon-explained.
 
-8. **Explanation Expansion**:
-    - Use the `explanation-expander` skill to significantly expand the paper's length.
-    - Deep-dive into jargon, add extended analogies, and explain the "soul" of every mathematical equation.
-    - Ensure the paper feels "thick" with helpful, accessible information.
-
-9. **File Creation**:
+8. **File Creation**:
     - Save the final improved paper to the `docs/papers/` directory.
     - Name the file based on the research idea (e.g., `curvature_aware_muon.md`).
 
-10. **Automated Transition**:
+9. **Automated Transition**:
     - Confirm the file has been created.
     - Provide a summary of the final improvements.
-    - Immediately proceed to the `@/implement-and-test` workflow to realize the research idea.
+    - Proceed to the final cleanup stage.
+
+10. **Final Repository Cleanup**:
+    - Use the `repo-cleaner` skill to identify all plots, logs, and proposals related to failed or intermediate experiments.
+    - Archive these artifacts into `archive/` folders.
+    - Ensure the root directory is clean, leaving only the "Winner" configuration and the final research paper visible.
+    - Update `README.md` with the new findings.
+    - **Outcome**: The repository is now ready for public release or further scaling.
 
