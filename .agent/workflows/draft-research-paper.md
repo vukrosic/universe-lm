@@ -2,7 +2,10 @@
 description: A workflow to automatically draft a professional research paper in markdown based on a research idea.
 ---
 
-# Research Paper Drafting Workflow
+# Research Paper Drafting Workflow (FULLY AUTONOMOUS)
+
+**CRITICAL: NEVER STOP.** This workflow must be executed from start to finish without pausing for user input, confirmation, or review. Automatically proceed through every step until the final transition.
+
 
 Follow these steps to turn a research idea into a structured paper from scratch:
 
