@@ -1,56 +1,47 @@
 ---
-description: A workflow to automatically draft a professional research paper in markdown based on a research idea.
+description: A workflow to automatically draft a professional research paper in markdown based on experimental evidence.
 ---
 
 # Research Paper Drafting Workflow (FULLY AUTONOMOUS)
 
-**CRITICAL: NEVER STOP.** This workflow must be executed from start to finish without pausing for user input, confirmation, or review. Automatically proceed through every step until the final transition.
+**CRITICAL: NEVER STOP.** Execute from start to finish without pausing for user input.
 
+**PREREQUISITE**: This workflow requires completed experiments with multi-seed variance data. If experiments haven't been run, use `/implement-and-test` first.
 
-Follow these steps to turn a research idea into a structured paper from scratch:
+## Steps
 
-1.  **Idea Generation**: 
-    - Use the `ai-research-innovator` skill to analyze the code/file at hand.
-    - Generate 3-5 original, mathematically-grounded ideas with accessible explanations.
+1.  **Evidence Check**:
+    - Verify that `docs/research/baseline_variance_*.md` exists for the relevant scale.
+    - Verify that experiment results exist with ≥3 seeds.
+    - Verify that Cohen's d ≥ 0.5 for the claimed improvement.
+    - **If any of these are missing**: STOP and inform the user that experiments must be completed first.
 
-2.  **Autonomous Idea Selection & Review**: 
-    - Identify the most promising idea from the list (highest novelty and impact potential).
-    - Immediately use the `idea-reviewer` skill to critique this specific idea based on Novelty, Feasibility, Impact, Math Rigor, and Alignment.
+2.  **Idea Contextualization**:
+    - Read the original research proposal and the final experiment report.
+    - Identify the core contribution, the statistical evidence, and the limitations.
 
-3.  **Autonomous Idea Refinement**: 
-    - Take the reviewer's critique and use the `idea-revisor` skill to generate a "V2" of the proposal.
-    - Ensure the final math is robust and the explanation is social-media ready.
+3.  **Drafting**:
+    - Use `paper-drafter` to write the paper with ALL experimental data.
+    - Include: error bars, seed counts, effect sizes, wall-clock comparisons, ablation results.
+    - Include a Related Work section (mandatory).
+    - Authors: **Vuk Rosić and Gemini**.
 
-4.  **Drafting**:
-    - Use the `paper-drafter` skill to expand the V2 idea into a comprehensive markdown paper.
-    - Target sections: Abstract, Introduction, Methodology (with full math), and Proposed Experiments.
-    - Ensure authors are listed as **Vuk Rosić and Gemini**.
+4.  **Paper Review**:
+    - Use `paper-reviewer` to critique the draft with focus on statistical rigor.
 
-5. **Autonomous Paper Review**:
-    - Use the `paper-reviewer` skill to critique the overall draft.
-    - Specifically check for undergraduate accessibility and mathematical depth.
+5.  **Abstract Review**:
+    - Use `abstract-reviewer` to check for overclaiming and jargon.
 
-6. **Abstract Deep-Dive**:
-    - Use the `abstract-reviewer` skill to find anything "weird", "unclear", or "iffy" in the abstract.
-    - Focus heavily on jargon explanation and intuitive flow.
+6.  **Revision**:
+    - Use `paper-revisor` to address ALL feedback from both reviewers.
+    - Ensure claims match evidence (no overclaiming).
 
-7. **Autonomous Revision**:
-    - Use the `paper-revisor` skill to integrate BOTH the paper review and the abstract review.
-    - Ensure the abstract is now 100% crystal clear and jargon-explained.
+7.  **File Creation**:
+    - Save the final paper to `docs/papers/<topic>.md`.
 
-8. **File Creation**:
-    - Save the final improved paper to the `docs/papers/` directory.
-    - Name the file based on the research idea (e.g., `curvature_aware_muon.md`).
+8.  **LaTeX Generation** (Optional):
+    - Use `latex-paper-generator` to create `docs/papers/paper.tex` and compile to PDF.
 
-9. **Automated Transition**:
-    - Confirm the file has been created.
-    - Provide a summary of the final improvements.
-    - Proceed to the final cleanup stage.
-
-10. **Final Repository Cleanup**:
-    - Use the `repo-cleaner` skill to identify all plots, logs, and proposals related to failed or intermediate experiments.
-    - Archive these artifacts into `archive/` folders.
-    - Ensure the root directory is clean, leaving only the "Winner" configuration and the final research paper visible.
-    - Update `README.md` with the new findings.
-    - **Outcome**: The repository is now ready for public release or further scaling.
-
+9.  **Cleanup**:
+    - Use `repo-cleaner` to archive intermediate artifacts.
+    - Update `README.md`.

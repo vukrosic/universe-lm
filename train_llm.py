@@ -18,8 +18,11 @@ from utils.logger import setup_logging
 
 
 # Worker init function to ensure each worker has a deterministic seed
+# Global seed used by worker_init_fn (set in main)
+_GLOBAL_SEED = 42
+
 def worker_init_fn(worker_id):
-    worker_seed = 42 + worker_id
+    worker_seed = _GLOBAL_SEED + worker_id
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
@@ -194,11 +197,11 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
 
 
 def main():
+    global _GLOBAL_SEED
     logger = setup_logging(log_dir="./logs")
     logger.info("Starting training")
 
     print_system_info()
-    set_seed(42)
     parser = argparse.ArgumentParser(description="Train MoE Model")
     parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
     parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
@@ -214,8 +217,14 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, help="Override gradient_accumulation_steps")
     parser.add_argument("--log_every", type=int, default=100, help="Logging frequency in steps")
     parser.add_argument("--warmup", type=str, default="true", help="Whether to perform untimed compilation warmup (true/false)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
 
     args = parser.parse_args()
+
+    # Set global seed for reproducibility
+    _GLOBAL_SEED = args.seed
+    set_seed(args.seed)
+    print(f"Random seed: {args.seed}")
 
     # Load Config
     if args.config_class:
@@ -328,7 +337,7 @@ def main():
 
     # Generator for reproducible shuffling
     g = torch.Generator()
-    g.manual_seed(42)
+    g.manual_seed(args.seed)
 
     loader_args = dict(
         batch_size=config.batch_size,

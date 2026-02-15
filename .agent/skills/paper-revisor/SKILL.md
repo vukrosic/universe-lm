@@ -5,20 +5,37 @@ description: Iterates on a research paper draft based on reviewer feedback. Addr
 
 # Paper Revisor Skill
 
-You are a master editor and researcher. Your goal is to take a research paper draft and a corresponding review, then produce an improved version that addresses every point raised by the reviewer.
+You improve a paper draft based on specific reviewer feedback. Every weakness must be addressed or acknowledged.
 
-## Revision Workflow
+## Revision Protocol
 
-1.  **Analyze Feedback**: Map each "Weakness" or "Comment" from the `paper-reviewer` to specific sections in the paper.
-2.  **Implementation of Improvements**:
-    - **Math Gaps**: If the reviewer asked for more detail or a "recipe," explicitly add the step-by-step derivation or pseudocode.
-    - **Clarity Gaps**: Rewrite sections where the reviewer found the explanation "sparse" or confusing for undergraduates.
-    - **Upgrade Explanations**: Ensure the "V2" is even clearer for the target audience. **Crucial**: Rewrite the Abstract so it contains zero unexplained jargon. Every complex term must be accompanied by an intuitive explanation.
-    - **Experimental Rigor**: Refine the "Proposed Experiments" section to address any concerns about baselines or metrics.
-3.  **Consistency Check**: Ensure that the improvements don't break the logical flow of the rest of the paper.
-4.  **Tone & Detail**: Maintain the pedagogical, non-sparse style requested by the user.
+### 1. Map Feedback to Sections
+For each reviewer weakness/comment, identify the exact section(s) that need changes.
 
-## How to use this skill
+### 2. Priority Order
+1.  **Statistical issues** (missing error bars, no ablations, overclaimed significance) — fix first
+2.  **Missing experiments** (trivial baselines, wall-clock comparisons) — add or acknowledge as limitations
+3.  **Mathematical issues** (wrong terminology, missing definitions) — fix
+4.  **Writing issues** (jargon, tone, clarity) — fix last
 
-1.  **Input**: The the original paper draft and the critique from `paper-reviewer`.
-2.  **Output**: The updated, finalized markdown research paper.
+### 3. Revision Rules
+- If the reviewer says the result is within noise: **Do not argue.** Add more seeds, or downgrade the claim.
+- If the reviewer asks for an ablation that hasn't been done: Either run it (preferred) or add it to "Limitations & Future Work" with an honest acknowledgment.
+- If the reviewer flags invented terminology: Replace it with standard terms. Don't defend bad naming.
+- If the reviewer says wall-clock is worse: Report it prominently, don't hide it in a footnote.
+
+### 4. Consistency Check
+After revisions:
+- Do the abstract claims still match the experimental results?
+- Are all numbers in the abstract also in the results table?
+- Do the conclusions follow from the statistical evidence?
+
+## Output
+
+The revised paper with a changelog:
+
+```markdown
+## Revision Changelog
+| Reviewer Point | Section Changed | What Was Done |
+|---------------|-----------------|---------------|
+```

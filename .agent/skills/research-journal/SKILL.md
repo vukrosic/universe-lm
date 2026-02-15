@@ -1,32 +1,43 @@
 ---
 name: research-journal
-description: Manages the documentation and lifecycle of research ideas. Processes ideas into a persistent log and categorizes them by status (Backlog, Ongoing Review, Validated, Archived).
+description: Tracks the lifecycle of research ideas with honest status tracking. No idea is lost. No failure is hidden.
 ---
 
 # Research Journal Skill
 
-Your job is to be the "librarian" of the research process. You ensure that no idea is lost and that every critique is documented.
+You are the librarian of the research process. You track every idea, every failure, and every result with honesty.
 
-## Journal Organization
+## Journal Location
 
-Maintain a file at `docs/research/idea_log.md`. The folder and file should be created if they don't exist.
+Maintain the file at `docs/research/idea_log.md`.
 
-### Status Categories:
-1. **The Idea Spark (Backlog)**: Raw ideas from the `ai-research-innovator` that haven't been reviewed yet.
-2. **Peer Review (Under Evaluation)**: Ideas currently being critiqued by the `idea-reviewer`.
-3. **The Forge (Revision)**: Ideas being iterated on by the `idea-revisor`.
-4. **The Vault (Accepted)**: High-quality, mathematically sound ideas ready for implementation.
-5. **The Archive (Discarded)**: Ideas that were proven redundant or unfeasible, with a short "Lessons Learned" note.
+## Status Categories
 
-## How to use this skill
+1.  **Backlog**: Raw ideas not yet reviewed.
+2.  **Under Review**: Being critiqued by idea-reviewer.
+3.  **In Revision**: Being improved by idea-revisor.
+4.  **Ready to Test**: Approved idea with experiment plan.
+5.  **Testing**: Currently running experiments.
+6.  **Validated**: Experiment showed statistically significant improvement (>2σ, Cohen's d ≥ 0.5).
+7.  **Inconclusive**: Experiment results within noise. May be revisited with more seeds.
+8.  **Failed**: Experiment showed no effect or negative effect. Record lessons learned.
+9.  **Archived**: Superseded by newer work or permanently shelved.
 
-1. **Log Entry**: Whenever a new idea or feedback is generated, immediately record it in the `idea_log.md`. Do NOT wait for permission or offer to do so.
-2. **Metadata**: Each entry should include:
-   - **ID**: (e.g., `RID-01`)
-   - **Timestamp**: Current date.
-   - **Status**: Current lifecycle stage.
-   - **Core Concept**: 1-sentence summary.
-3. **Maintenance**: Regularly clean up the log and move items between categories based on the automated research progress.
+## Entry Format
 
-## Goal
-To create a "Paper Trail" of intelligence that shows the evolution of thought from a raw snippet of code to a publishable mathematical idea.
+```markdown
+### RID-XX: <Short Name>
+- **Date**: YYYY-MM-DD
+- **Status**: <category>
+- **Hypothesis**: <one sentence>
+- **Result**: <if tested: "μ_exp=X vs μ_baseline=X, d=X.XX, N=X seeds">
+- **Verdict**: <if tested: SIGNIFICANT/NOISE/NEGATIVE>
+- **Lessons**: <what we learned>
+```
+
+## Rules
+
+- Every status change must be logged with a date.
+- Failed experiments are as valuable as successful ones. Never delete them.
+- "Inconclusive" is a valid and honest status. Use it.
+- Never mark something "Validated" based on a single run.

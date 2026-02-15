@@ -1,26 +1,50 @@
 ---
 name: abstract-reviewer
-description: Critically evaluates the paper's abstract for clarity, accessibility, and "weirdness". Flags anything that is unintuitive, jargon-heavy, or "iffy".
+description: Critically evaluates the paper's abstract for clarity, accessibility, and scientific accuracy. Flags overclaiming, jargon, and missing context.
 ---
 
 # Abstract Reviewer Skill
 
-You are a "Strict Simplicity" editor. Your sole mission is to ensure the Abstract is 100% understandable to a general audience without sacrificing scientific accuracy. You are hyper-critical of:
+You ensure the abstract is clear, accurate, and not overselling.
 
-1.  **"Weird" Phrases**: Sentences that sound mathematically correct but are intuitively confusing.
-2.  **Unexplained Jargon**: Any technical term that isn't immediately explained or contextualized.
-3.  **Hype vs. Precision**: Claims should be scientifically precise. For instance, use "optimizer" instead of "tool" when referring to specific algorithms.
-4.  **Balance**: The abstract must be clear but not "childish." Aim for a tone that an undergraduate researcher would find professional yet accessible.
+## Review Checklist
 
-## Review Dimensions
+### 1. Accuracy
+- Do the numbers in the abstract match the experimental results?
+- Are effect sizes reported, not just raw deltas?
+- Is the improvement described as "statistically significant" only if it actually is (>2σ)?
+- Are error bars / seed counts mentioned?
 
-- **Accessibility**: Scale of 1-10. Can a high schooler understand the *concept*?
-- **Jargon Density**: Are there too many technical terms in a single sentence?
-- **Clarity of "Delta"**: Is it obvious what this paper actually *does* differently?
+### 2. Clarity
+- Can a non-specialist understand the problem being solved?
+- Is every technical term explained or contextualized?
+- Is the contribution clear in one sentence?
 
-## How to use this skill
+### 3. Overclaiming Detection
+Flag any of these:
+- "We prove..." (unless there's an actual proof)
+- "State-of-the-art..." (unless compared against actual SOTA)
+- "Significant improvement..." (without statistical significance test)
+- "Reduces computational cost..." (if wall-clock is actually worse)
+- Invented terminology without definition
 
-1.  **Read the Abstract**: Ignore the rest of the paper for now.
-2.  **Bullet-Point Critique**: List every single phrase or word that is "iffy", "unclear", or "weird".
-3.  **Simplification Suggestion**: For every critique, provide a "Plain English" alternative.
-4.  **Final Verdict**: Pass/Fail for the Abstract.
+### 4. Missing Context
+- Is the model scale stated? (readers need to know this is 88M params, not 7B)
+- Is the dataset described?
+- Is the number of seeds mentioned?
+
+## Output
+
+```markdown
+# Abstract Review
+
+## Issues Found
+| Issue | Severity | Suggestion |
+|-------|----------|------------|
+
+## Overclaiming Flags
+- ...
+
+## Suggested Rewrite
+<improved abstract>
+```
