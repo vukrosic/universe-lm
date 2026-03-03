@@ -4,6 +4,20 @@ A high-performance codebase for LLM research, pretraining, and optimization: tes
 
 ---
 
+## ✨ Key Features
+
+- Modular transformer with GQA, RoPE, and RMSNorm
+- Muon optimizer alongside AdamW
+- Training script, flexible configuration
+
+## 🏗️ Project Structure
+
+- `models/`: Transformer layers and components (RoPE, RMSNorm, Multi-Head Attention).
+- `optimizers/`: Muon optimizer (outperforms AdamW and all others).
+- `training/`: Core trainer logic and utilities.
+- `configs/`: Hyperparameter and dataset configurations.
+- `utils/`: Logging, plotting, and helper functions.
+
 ## 🚀 Getting Started
 
 #### Install Dependencies
@@ -52,5 +66,26 @@ print('✅ Speedrun Data Ready!')
 "
 ```
 
+## 🧠 LLM Architecture
+
+Default is an **88M parameter** transformer LLM, you can modify configs.
+
+- **Layers**: 22 Transformer blocks.
+- **Hidden Dimension (`d_model`)**: 512.
+- **Feed-Forward Dimension (`d_ff`)**: 2048.
+- **Attention System**:
+  - 8 Query heads, 4 Key-Value heads (**Grouped Query Attention**).
+  - Rotary Positional Embeddings (**RoPE**).
+  - Fused QKVO projection for optimized compute.
+  - QK-Normalization for training stability.
+- **Normalization**: Pre-norm **RMSNorm**.
+- **Activation**: **Squared ReLU** (Primer-style).
+- **Vocab Size**: 49,152.
+- **Sequence Length**: 2048 tokens.
+
+### Optimization Highlights
+- **Weight Tying**: Shared weights between token embeddings and the LM head.
+- **Muon Support**: Architecture optimized for the Muon optimizer's orthogonal updates.
+- **Efficiency**: Designed for `torch.compile` compatibility and mixed-precision (BF16) training.
 
 
