@@ -1,6 +1,6 @@
 # LLM Research Kit
 
-A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or data strategies.
+A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or training.
 
 - Modular transformer with GQA, RoPE, and RMSNorm
 - Muon optimizer alongside AdamW
