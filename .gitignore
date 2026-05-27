@@ -218,6 +218,8 @@ __marimo__/
 *.pt
 
 # Cache
+plots/**/*.png
+plots/baseline_compare/
 data_cache/
 # Processed data cache
 processed_data/
