@@ -11,7 +11,14 @@ coeffs_list = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323)
 ]
 
-@torch.compile()
+def _maybe_compile(fn):
+    # torch.compile/Inductor crashes on MPS for this kernel; CUDA is fine.
+    if torch.cuda.is_available():
+        return torch.compile(fn)
+    return fn
+
+
+@_maybe_compile
 def zeropower_polar_express(G:torch.Tensor, steps: int = 5,):
     """Polar express as replacement for Newton-Schulz iteration"""
     assert G.ndim >= 2

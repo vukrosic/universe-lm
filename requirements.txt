@@ -3,11 +3,5 @@ transformers
 torchtune
 torchao
 matplotlib
-# lm-eval
-
-# Single T4 GPU training
-# tensorstore
-# zarr
-
-# Note: Some experiments have additional requirements
-# See individual experiment directories for requirements.txt
+lm-eval>=0.4.0
+huggingface_hub>=0.20.0
