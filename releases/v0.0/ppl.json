@@ -1,0 +1,6 @@
+{
+  "dataset": "wikitext/wikitext-2-raw-v1",
+  "split": "test",
+  "stride": 512,
+  "perplexity": 8994.815426207144
+}
