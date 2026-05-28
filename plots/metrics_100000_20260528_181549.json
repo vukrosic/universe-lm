@@ -1,0 +1,41 @@
+{
+  "final_metrics": {
+    "val_loss": 7.738470077514648,
+    "val_accuracy": 0.07865168539325842,
+    "val_perplexity": 2294.9585871445547,
+    "train_loss": 7.675714015960693
+  },
+  "setup_time_seconds": 0.39954710006713867,
+  "active_training_time_seconds": 153.7882182598114,
+  "total_wall_time_seconds": 154.18776535987854,
+  "total_time_minutes": 2.569796089331309,
+  "actual_steps": 13,
+  "tokens_seen": 106496,
+  "train_tokens": 100000,
+  "history": {
+    "steps": [
+      0,
+      13
+    ],
+    "val_losses": [
+      10.79579039982387,
+      7.738470077514648
+    ],
+    "val_accuracies": [
+      0.01667946123246563,
+      0.07865168539325842
+    ],
+    "val_perplexities": [
+      48814.87689673569,
+      2294.9585871445547
+    ],
+    "elapsed_times": [
+      0.32544851700464883,
+      2.5631205360094707
+    ],
+    "learning_rates": [
+      0.024,
+      0.024
+    ]
+  }
+}

@@ -43,6 +43,52 @@ Releases live in [releases/](releases/) and on the HuggingFace
 Look for issues labeled `good-first-issue`. README fixes, docstrings, small
 refactors, eval script improvements are all fair game.
 
+## Branches
+
+We use **one branch per change**. Don't experiment on `main`.
+
+### Naming
+
+| Prefix | When to use | Example |
+|--------|-------------|---------|
+| `experiment/<slug>` | A single architectural or training change | `experiment/qk-norm` |
+| `sweep/<slug>` | Run many variants, produce a CSV, die | `sweep/width-depth-70m` |
+| `fix/<slug>` | Bug fix | `fix/generate-crash` |
+| `docs/<slug>` | Docs-only | `docs/release-pipeline` |
+| `release/v0.X` | Frozen at release time | `release/v0.3` |
+
+### Lifecycle
+
+| Branch | After it lands | Why |
+|--------|----------------|-----|
+| Merged to `main` | **Delete locally + remote** | History is in `main`, branch clutters the list |
+| Abandoned (didn't work) | **Keep on remote, delete locally** | Negative results are useful — link from a "graveyard" doc |
+| `sweep/*` after CSV written | **Delete both** | Results live in `experiments/results/` |
+| `release/v0.X` | **Keep forever** | Reproducibility tag |
+
+Code lives in `main`. Results live in `main`. Branches are scratch.
+
+### Working on multiple experiments in parallel (git worktrees)
+
+For AI agents or humans juggling several experiments, use worktrees instead of
+cloning the repo multiple times:
+
+```bash
+git worktree add ../universe-worktrees/qk-norm experiment/qk-norm
+git worktree add ../universe-worktrees/mup    experiment/mup
+# ...work in each folder independently...
+git worktree remove ../universe-worktrees/qk-norm
+```
+
+Each worktree has its own working tree and branch but shares one `.git`
+directory. **GPU is the real bottleneck, not git** — agents can edit code in
+parallel, but only one training run at a time on a single GPU. Queue runs.
+
+### Releases come from `main`
+
+When cutting a release: branch `release/v0.X` from `main` at the chosen commit,
+train, tag, push. The `release/*` branch never gets new commits after the tag.
+
 ## Pull request checklist
 
 - [ ] Linked to an issue
