@@ -1,0 +1,10 @@
+# Example sweep: baseline vs QK-norm at 5M params × 100M tokens
+base_preset: "5m"
+train_tokens: 100_000_000
+seed: 42
+variants:
+  - name: baseline
+    overrides: {}
+  - name: qk_norm
+    overrides:
+      use_qk_norm: true

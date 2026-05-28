@@ -1,0 +1,7 @@
+# Smoke test: 1 variant × 1M tokens to verify harness end-to-end
+base_preset: "5m"
+train_tokens: 1_000_000
+seed: 42
+variants:
+  - name: smoke_baseline
+    overrides: {}

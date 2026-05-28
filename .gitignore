@@ -247,3 +247,9 @@ gha-creds-*.json
 
 # Parameter golf reference repo (used for taking code)
 parameter-golf/
+
+# Sweep harness output (created by experiments/sweep.py)
+runs/
+
+# Budget tracking (local only)
+BUDGET.md
