@@ -1,0 +1,79 @@
+W0528 18:31:36.869000 31479 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+2026-05-28 18:31:38 | INFO     | root | Logging to file: logs/training_20260528_183138.log
+2026-05-28 18:31:38 | INFO     | root | Starting training
+Device: MPS: Apple Metal GPU
+PyTorch: 2.8.0
+
+🌱 Set all seeds to 42 (benchmark mode, data seeding only)
+Random seed: 42
+Loading config preset: 5m
+Dynamic Data Calculation:
+  Batch: 4, Seq: 2048, Accumulation: 1
+  Target tokens: 150,000
+  Est. docs needed (factor 2.0): 300
+Loading dataset with Hugging Face Datasets API...
+2026-05-28 18:31:39 | INFO     | data.loader | Loading tokenizer: HuggingFaceTB/SmolLM2-135M
+2026-05-28 18:31:40 | INFO     | data.loader | Set pad_token to eos_token: <|endoftext|>
+Cache configuration mismatch. Rebuilding...
+Cleaning old cache at ./processed_data...
+Loading raw dataset and splitting documents...
+Split into 270 train docs and 30 val docs
+Tokenizing train set...
+2026-05-28 18:31:57 | INFO     | data.loader | Tokenizing dataset...
+Tokenizing:   0%|          | 0/270 [00:00<?, ? examples/s]Tokenizing: 100%|██████████| 270/270 [00:00<00:00, 409.82 examples/s]Tokenizing: 100%|██████████| 270/270 [00:00<00:00, 407.58 examples/s]
+2026-05-28 18:31:57 | INFO     | data.loader | Grouping texts into blocks of size 2048
+Grouping texts:   0%|          | 0/270 [00:00<?, ? examples/s]Grouping texts: 100%|██████████| 270/270 [00:00<00:00, 2244.94 examples/s]Grouping texts: 100%|██████████| 270/270 [00:00<00:00, 2228.15 examples/s]
+Map:   0%|          | 0/96 [00:00<?, ? examples/s]Map: 100%|██████████| 96/96 [00:00<00:00, 1399.35 examples/s]
+Saving the dataset (0/1 shards):   0%|          | 0/96 [00:00<?, ? examples/s]Saving the dataset (1/1 shards): 100%|██████████| 96/96 [00:00<00:00, 22118.94 examples/s]Saving the dataset (1/1 shards): 100%|██████████| 96/96 [00:00<00:00, 21075.80 examples/s]
+Tokenizing validation set...
+2026-05-28 18:31:57 | INFO     | data.loader | Tokenizing dataset...
+Tokenizing:   0%|          | 0/30 [00:00<?, ? examples/s]Tokenizing: 100%|██████████| 30/30 [00:00<00:00, 322.35 examples/s]
+2026-05-28 18:31:58 | INFO     | data.loader | Grouping texts into blocks of size 2048
+Grouping texts:   0%|          | 0/30 [00:00<?, ? examples/s]Grouping texts: 100%|██████████| 30/30 [00:00<00:00, 2067.55 examples/s]
+Map:   0%|          | 0/10 [00:00<?, ? examples/s]Map: 100%|██████████| 10/10 [00:00<00:00, 1091.70 examples/s]
+Saving the dataset (0/1 shards):   0%|          | 0/10 [00:00<?, ? examples/s]Saving the dataset (1/1 shards): 100%|██████████| 10/10 [00:00<00:00, 4021.38 examples/s]Saving the dataset (1/1 shards): 100%|██████████| 10/10 [00:00<00:00, 3883.97 examples/s]
+Saved dataset cache info.
+2026-05-28 18:31:58 | INFO     | root | Train sequences: 96, Val sequences: 10
+
+Model configuration
+----------------------------------------------------------------------
+d_model: 128, layers: 2, heads: 2
+ff dim: 512
+device: mps -> MPS: Apple Metal GPU
+train tokens: 150,000
+batch size: 4
+vocab size: 49152
+
+2026-05-28 18:31:58 | INFO     | root | Model configuration: {'d_model': 128, 'n_heads': 2, 'n_layers': 2, 'd_ff': 512, 'n_kv_heads': 1, 'max_seq_len': 2048, 'vocab_size': 49152, 'device': 'mps', 'compile_model': False, 'batch_size': 4, 'gradient_accumulation_steps': 1, 'train_tokens': 150000, 'muon_lr': 0.024, 'muon_momentum': 0.95, 'adamw_lr': 0.006, 'warmup_ratio': 0.0, 'schedule_type': 'constant', 'eval_every': None, 'eval_steps': 100, 'eval_milestones': (0, 25, 50, 75, 100, 150, 200, 300, 400), 'weight_decay': 0.2, 'dropout': 0.0, 'grad_clip': 1.0, 'use_amp': True, 'log_milestones': (100, 500, 1000), 'activation_variant': 'squared_relu', 'activation_slope': 0.5, 'd_k': 64, 'log_every': 25}
+
+🚀 Training dense model
+🌱 Set all seeds to 42 (benchmark mode, data seeding only)
+  📊 Total parameters: 6,652,800
+  Muon parameters: 360,448
+  AdamW parameters: 6,292,352
+🌱 Set all seeds to 42 (benchmark mode, data seeding only)
+⚙️ Setup & Compilation complete in 0.79s
+----------------------------------------------------------------------
+Training:   0%|          | 0/150000 [00:00<?, ?tokens/s]W0528 18:32:01.728000 33051 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+W0528 18:32:05.173000 33347 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+Training:   0%|          | 0/150000 [00:15<?, ?tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:   5%|▌         | 8192/150000 [00:15<04:26, 532.70tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400] [Step 0] Loss: 10.7926 | Acc: 0.014 | LR: 0.024000
+W0528 18:32:17.877000 34017 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+W0528 18:32:21.358000 34328 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+Training:   5%|▌         | 8192/150000 [00:26<04:26, 532.70tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  11%|█         | 16384/150000 [00:31<04:14, 525.95tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  16%|█▋        | 24576/150000 [00:33<02:29, 840.90tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  22%|██▏       | 32768/150000 [00:36<01:40, 1165.02tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  27%|██▋       | 40960/150000 [00:39<01:10, 1541.42tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  33%|███▎      | 49152/150000 [00:41<00:52, 1922.38tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  38%|███▊      | 57344/150000 [00:42<00:37, 2484.69tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  44%|████▎     | 65536/150000 [00:43<00:25, 3367.91tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  49%|████▉     | 73728/150000 [00:44<00:20, 3719.37tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  55%|█████▍    | 81920/150000 [00:45<00:13, 4925.17tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  60%|██████    | 90112/150000 [00:46<00:10, 5724.41tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  66%|██████▌   | 98304/150000 [00:46<00:07, 6785.57tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  71%|███████   | 106496/150000 [00:48<00:07, 5919.71tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  76%|███████▋  | 114688/150000 [00:48<00:04, 7884.32tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  82%|████████▏ | 122880/150000 [00:50<00:04, 6657.60tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  87%|████████▋ | 131072/150000 [00:51<00:02, 6719.83tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  93%|█████████▎| 139264/150000 [00:53<00:01, 6474.72tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training:  98%|█████████▊| 147456/150000 [00:53<00:00, 8193.12tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]Training: 155648tokens [00:55, 6155.35tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]                        Training: 155648tokens [00:55, 2791.66tokens/s, step=0/18, loss=10.7926, acc=0.014, lr=0.02400]
+
+Step 0: Val Loss: 10.7920, Val Acc: 0.0164, Val PPL: 48630.65, LR: 0.02400
+   📊 Metrics saved to plots/metrics_150000_20260528_183338.json
+   📈 Plot saved to plots/val_loss_150000_20260528_183338.png
+
+======================================================================
+ TRAINING RESULTS
+======================================================================
+Warmup & Setup:                  0s 791ms
+Active Training Time:            1m 39s 183ms
+Total Tokens:                    155,648
+----------------------------------------------------------------------
+Final Train Loss:                7.3127
+Final Val Loss:                  7.1005
+Final Val Accuracy:              0.1193
+======================================================================
+

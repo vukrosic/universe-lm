@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussion / question
+    url: https://github.com/vukrosic/universe-lm/discussions
+    about: Open a discussion for design questions or general chat.
