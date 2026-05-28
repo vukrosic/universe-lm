@@ -12,6 +12,8 @@ A high-performance codebase for LLM research, pretraining, and optimization: tes
 - `configs/`: Hyperparameter and dataset configurations.
 - `utils/`: Logging, plotting, and helper functions.
 
+> **Releases:** trained model checkpoints are released as [Universe](https://github.com/vukrosic/universe-lm) — see `releases/` for the public versions. Pipeline: `bash release.sh smoke vX.Y` then `bash release.sh publish vX.Y <hf-repo>`.
+
 ## 🚀 Getting Started
 
 #### Install Dependencies

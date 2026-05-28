@@ -89,6 +89,23 @@ class FastResearchConfig(LLMConfig):
 
 
 @dataclass
+class UniverseSmokeConfig(LLMConfig):
+    """v0.0 smoke release: ~15M params, short MacBook-friendly run."""
+
+    d_model: int = 256
+    n_heads: int = 4
+    n_layers: int = 4
+    d_ff: int = 1024
+    n_kv_heads: int = 2
+    max_seq_len: int = 1024
+    train_tokens: int = 50_000_000
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+    batch_size: int = 4
+    compile_model: bool = False
+
+
+@dataclass
 class FiveMillionConfig(LLMConfig):
     """Tiny pipeline preset: 6,652,800 parameters."""
 
