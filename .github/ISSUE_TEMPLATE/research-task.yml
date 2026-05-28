@@ -1,0 +1,44 @@
+name: Research task
+description: Propose or claim a research experiment (architecture, optimizer, data, eval).
+title: "[research] "
+labels: ["research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for opening a research task! Before submitting, check open issues to avoid duplicates.
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: What technique are you trying, and what do you expect to happen?
+      placeholder: "e.g. Adding learnable per-head QK-gain should lower wikitext PPL by >5% at 70M scale."
+    validations:
+      required: true
+  - type: textarea
+    id: prior-work
+    attributes:
+      label: Prior work / references
+      description: Papers, PRs, or records that motivate this. Link Parameter Golf records if relevant.
+      placeholder: "Parameter Golf PR #1413, https://arxiv.org/abs/..."
+  - type: textarea
+    id: plan
+    attributes:
+      label: Experimental plan
+      description: What's the smallest meaningful run? Which config, dataset, tokens, seeds?
+      placeholder: "70M config, smollm-corpus, 100M tokens, 3 seeds. Toggle via --qk_gain flag."
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criterion
+      description: What number, and on what eval, decides this worked?
+      placeholder: "Wikitext-2 PPL drops by >5%, mean across 3 seeds. Reproducible from config."
+    validations:
+      required: true
+  - type: input
+    id: estimated-time
+    attributes:
+      label: Estimated compute / time
+      placeholder: "~6 hr on a single 4090"
