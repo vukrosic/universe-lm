@@ -244,3 +244,6 @@ logs_debug/
 
 # GitHub App credentials
 gha-creds-*.json
+
+# Parameter golf reference repo (used for taking code)
+parameter-golf/

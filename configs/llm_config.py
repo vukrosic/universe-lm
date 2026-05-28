@@ -98,7 +98,7 @@ class FiveMillionConfig(LLMConfig):
     d_ff: int = 512
     n_kv_heads: int = 1
     max_seq_len: int = 2048
-    train_tokens: int = 8_000_000
+    train_tokens: int = 134_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
 
@@ -113,7 +113,7 @@ class TwentyFiveMillionConfig(LLMConfig):
     d_ff: int = 1536
     n_kv_heads: int = 4
     max_seq_len: int = 2048
-    train_tokens: int = 25_000_000
+    train_tokens: int = 507_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
 
@@ -128,7 +128,7 @@ class FiftyMillionConfig(LLMConfig):
     d_ff: int = 2048
     n_kv_heads: int = 4
     max_seq_len: int = 2048
-    train_tokens: int = 50_000_000
+    train_tokens: int = 965_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
 
@@ -143,6 +143,6 @@ class HundredMillionConfig(LLMConfig):
     d_ff: int = 2048
     n_kv_heads: int = 4
     max_seq_len: int = 2048
-    train_tokens: int = 100_000_000
+    train_tokens: int = 2_000_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
