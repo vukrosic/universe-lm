@@ -12,16 +12,12 @@ A high-performance codebase for LLM research, pretraining, and optimization: tes
 - `configs/`: Hyperparameter and dataset configurations.
 - `utils/`: Logging, plotting, and helper functions.
 
-## 🏁 Speedruns
+## 🏁 The Speedrun
 
-Race to the **lowest val loss at a fixed token budget.** Clone, train, report — beat the record.
+One race: **lowest val loss training a 135M model on 2.7B tokens** (chinchilla-optimal). Clone, train, report — beat the record. ~1.5–2.5 h, ~$3–6/entry. Pinned: `seed=42`, bf16.
 
-| Rung | Size | Tokens | ~Time (1 GPU) | ~$/entry |
-|---|---|---|---|---|
-| Small | 25M | 0.5B | ~4 min | ~$1 |
-| Flagship | 135M | 3B | ~35 min | ~$5–10 |
+See the [**leaderboard**](LEADERBOARD.md) and [how to enter](CONTRIBUTING.md).
 
-Pinned for every entry: `seed=42`, bf16. See the [**leaderboard**](LEADERBOARD.md), the [rules](docs/PLAN.md), and [how to enter](CONTRIBUTING.md).
 
 ## 🚀 Getting Started
 

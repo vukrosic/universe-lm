@@ -4,17 +4,15 @@ Race to the **lowest val loss at a fixed token budget.** Rules: [docs/PLAN.md](d
 
 **Pinned for every entry:** `seed=42` · bf16 · A new entry takes the record only if it beats the standing best by **≥0.01** val loss. `time` is metadata, not ranked.
 
-## 25M — 0.5B tokens
+> **Older GPUs without native bf16 (e.g. Colab T4):** not banned — submit anyway, flagged as such. bf16 may run emulated with slightly different numerics; we'll decide how to rank these the first time one is submitted.
+
+## 135M — 2.7B tokens
 
 | # | Val loss | Who | Batch | Time | GPU | Evidence |
 |---|---|---|---|---|---|---|
 | — | _baseline TBD_ | — | — | — | — | — |
 
-## 135M — 3B tokens
 
-| # | Val loss | Who | Batch | Time | GPU | Evidence |
-|---|---|---|---|---|---|---|
-| — | _baseline TBD_ | — | — | — | — | — |
 
 ---
 
