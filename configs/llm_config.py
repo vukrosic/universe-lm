@@ -163,3 +163,63 @@ class HundredMillionConfig(LLMConfig):
     train_tokens: int = 2_000_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
+
+
+# ============================================================================
+# Release ladder (135M -> 1B). Same architecture at every size: dense decoder,
+# RoPE + GQA + RMSNorm + squared-ReLU + Muon. Scaling these is a hyperparameter
+# + engineering problem, NOT an architecture change. Shape follows fixed ratios
+# (head_dim 64, d_ff = 4x d_model, GQA ~4:1) so larger sizes are "just numbers".
+# Verified param counts use tied embeddings (vocab 49,152).
+# ============================================================================
+
+
+@dataclass
+class OneHundredThirtyFiveMillionConfig(LLMConfig):
+    """Release-target preset: ~134.5M params (SmolLM2-135M class).
+
+    Sized to train compute-optimal (~2.7B tokens) on a single rented GPU and
+    benchmark head-to-head vs SmolLM2-135M / Gemma-3-270M.
+    """
+
+    d_model: int = 576
+    n_heads: int = 9          # head_dim 64
+    n_layers: int = 30
+    d_ff: int = 2304          # 4x d_model
+    n_kv_heads: int = 3       # 3:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 2_700_000_000  # ~20x params (Chinchilla-optimal)
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+
+
+@dataclass
+class FiveHundredMillionConfig(LLMConfig):
+    """Scaling ladder preset: ~0.5B params. Needs distributed training to reach
+    compute-optimal (~10B tokens) -- here for the config ladder, not yet trained."""
+
+    d_model: int = 1280
+    n_heads: int = 20         # head_dim 64
+    n_layers: int = 26
+    d_ff: int = 5120          # 4x d_model
+    n_kv_heads: int = 5       # 4:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 10_000_000_000  # ~20x params
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+
+
+@dataclass
+class OneBillionConfig(LLMConfig):
+    """Scaling ladder preset: ~1B params. Requires multi-GPU FSDP + FlashAttention
+    to be practical (~20B tokens compute-optimal). Config-only for now."""
+
+    d_model: int = 1536
+    n_heads: int = 24         # head_dim 64
+    n_layers: int = 36
+    d_ff: int = 6144          # 4x d_model
+    n_kv_heads: int = 6       # 4:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 20_000_000_000  # ~20x params
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
