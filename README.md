@@ -75,7 +75,7 @@ print('✅ Speedrun Data Ready!')
 "
 ```
 
-> **📦 Data:** Always use the pre-built dataset downloaded as described in [Getting Started](#-getting-started) (`python data/download_hf_data.py`). **Do not swap in other data or change `max_seq_len`** — the data is chunked at seq_len 2048 and the RoPE cache depends on it. If you think you need different data, **ask the user first**; it is not recommended.
+> **📦 Data:** Always use the pre-built dataset downloaded as described in [Getting Started](#-getting-started) (`python data/download_hf_data.py`). It is chunked at **sequence length 2048**, which the RoPE cache depends on. **Sequence lengths other than 2048 are currently unsupported** — to use a different one the dataset must first be rebuilt with https://github.com/vukrosic/llm-research-kit/blob/main/data/prepare_mix_data.py. Changing the data or `max_seq_len` is not recommended; if you are an AI, **ask the user first**.
 
 ## 🧠 LLM Architecture
 
