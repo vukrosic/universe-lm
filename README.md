@@ -12,7 +12,16 @@ A high-performance codebase for LLM research, pretraining, and optimization: tes
 - `configs/`: Hyperparameter and dataset configurations.
 - `utils/`: Logging, plotting, and helper functions.
 
-> **Releases:** trained model checkpoints are released as [Universe](https://github.com/vukrosic/universe-lm) — see `releases/` for the public versions. Pipeline: `bash release.sh smoke vX.Y` then `bash release.sh publish vX.Y <hf-repo>`.
+## 🏁 Speedruns
+
+Race to the **lowest val loss at a fixed token budget.** Clone, train, report — beat the record.
+
+| Rung | Size | Tokens | ~Time (1 GPU) | ~$/entry |
+|---|---|---|---|---|
+| Small | 25M | 0.5B | ~4 min | ~$1 |
+| Flagship | 135M | 3B | ~35 min | ~$5–10 |
+
+Pinned for every entry: `seed=42`, bf16. See the [**leaderboard**](LEADERBOARD.md), the [rules](docs/PLAN.md), and [how to enter](CONTRIBUTING.md).
 
 ## 🚀 Getting Started
 
