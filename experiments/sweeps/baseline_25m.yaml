@@ -1,0 +1,9 @@
+# 25M baseline #0 — the frozen reference every experiment A/Bs against.
+# Plug-and-play: do not edit. Just run
+#   python experiments/sweep.py --config experiments/sweeps/baseline_25m.yaml
+base_preset: "25m"
+train_tokens: 507_000_000
+seed: 42
+variants:
+  - name: baseline
+    overrides: {}
