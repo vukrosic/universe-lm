@@ -69,8 +69,6 @@ class ResearchConfig(LLMConfig):
     n_kv_heads: int = 4
     max_seq_len: int = 1024
     train_tokens: int = 25_000_000
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -84,8 +82,6 @@ class FastResearchConfig(LLMConfig):
     n_kv_heads: int = 2
     max_seq_len: int = 512
     train_tokens: int = 1_000_000
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -107,8 +103,6 @@ class TwoStepDebugConfig(LLMConfig):
     train_tokens: int = 4096  # 2 steps at batch_size=1
     batch_size: int = 1
     compile_model: bool = False
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -122,8 +116,6 @@ class UniverseSmokeConfig(LLMConfig):
     n_kv_heads: int = 2
     max_seq_len: int = 1024
     train_tokens: int = 50_000_000
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
     batch_size: int = 4
     compile_model: bool = False
 
@@ -139,8 +131,6 @@ class FiveMillionConfig(LLMConfig):
     n_kv_heads: int = 1
     max_seq_len: int = 2048
     train_tokens: int = 134_000_000  # 20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -154,8 +144,6 @@ class TwentyFiveMillionConfig(LLMConfig):
     n_kv_heads: int = 4
     max_seq_len: int = 2048
     train_tokens: int = 507_000_000  # 20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -169,8 +157,6 @@ class FiftyMillionConfig(LLMConfig):
     n_kv_heads: int = 4
     max_seq_len: int = 2048
     train_tokens: int = 965_000_000  # 20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -184,8 +170,6 @@ class HundredMillionConfig(LLMConfig):
     n_kv_heads: int = 4
     max_seq_len: int = 2048
     train_tokens: int = 2_000_000_000  # 20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 # ============================================================================
@@ -212,8 +196,6 @@ class OneHundredThirtyFiveMillionConfig(LLMConfig):
     n_kv_heads: int = 3       # 3:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 2_700_000_000  # ~20x params (Chinchilla-optimal)
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -228,8 +210,6 @@ class FiveHundredMillionConfig(LLMConfig):
     n_kv_heads: int = 5       # 4:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 10_000_000_000  # ~20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5
 
 
 @dataclass
@@ -244,5 +224,3 @@ class OneBillionConfig(LLMConfig):
     n_kv_heads: int = 6       # 4:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 20_000_000_000  # ~20x params
-    activation_variant: str = "squared_relu"
-    activation_slope: float = 0.5

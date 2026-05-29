@@ -65,8 +65,14 @@ def resolve_config(base_preset: str, train_tokens: int | None, seed: int, varian
         if hasattr(config, key):
             setattr(config, key, val)
         else:
-            # Allow new flags (e.g. use_qk_norm) to be passed even if not in base config
-            pass
+            # Fail loudly: an unknown override is almost always a typo or a flag
+            # the model doesn't actually read. Silently ignoring it would produce
+            # a result that looks like an experiment but ran the baseline.
+            raise ValueError(
+                f"Unknown override '{key}' for variant '{variant_name}'. "
+                f"It is not a field on the config, so it would be silently ignored. "
+                f"Add it to the config (and make the model read it) or remove it."
+            )
     return config
 
 
