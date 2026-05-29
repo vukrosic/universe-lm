@@ -4,6 +4,10 @@ Copy this into a new GitHub issue for every 25M research experiment. Fill the `<
 
 Title format: `[research] <Name> — <one-line what it is>`
 
+**If the issue is AI-generated** (e.g. derived from the parameter-golf record), put this banner at the very top:
+
+> ⚠️ **AI-generated from the parameter-golf record.** This is a starting point, not a spec. The human's job is to think it through first.
+
 ---
 
 **Status: implemented on branch `<exp/branch-name>`. This issue = run the 25M A/B and report the number.**
