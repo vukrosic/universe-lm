@@ -58,9 +58,16 @@ class MultiHeadAttention(nn.Module):
         
         self.q_norm = nn.RMSNorm(self.d_k)
         self.k_norm = nn.RMSNorm(self.d_k)
-        
+
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
+
+        # QK-Gain: learnable per-head scalar on attention logits before softmax
+        self.register_parameter("qk_gain", nn.Parameter(torch.ones(n_heads)))
+
+    def init_qk_gain(self, init_value: float = 1.0):
+        with torch.no_grad():
+            self.qk_gain.fill_(init_value)
 
     def forward(self, x):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -89,7 +96,11 @@ class MultiHeadAttention(nn.Module):
         
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
-        
+
+        # Apply QK-Gain before softmax
+        scale = self.qk_gain.view(1, 1, self.n_heads, 1)
+        Q = Q * scale
+
         # Compute attention
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
@@ -116,6 +127,8 @@ class TransformerBlock(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        qk_gain_init: float = 1.0,
+        qk_gain_per_layer: bool = False,
     ):
         super().__init__()
 
@@ -126,6 +139,21 @@ class TransformerBlock(nn.Module):
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+
+        # Per-layer QK-Gain (overrides per-head if present)
+        self.qk_gain_per_layer = qk_gain_per_layer
+        if qk_gain_per_layer:
+            self.register_parameter("qk_gain", nn.Parameter(torch.ones(n_heads)))
+            self.attention.qk_gain.requires_grad_(False)  # disable per-head gain
+        else:
+            self.qk_gain = None
+
+    def init_qk_gain(self, init_value: float = 1.0, layer_idx: int | None = None):
+        if self.qk_gain_per_layer and self.qk_gain is not None:
+            with torch.no_grad():
+                if layer_idx is not None:
+                    self.qk_gain.data.fill_(init_value)
+        self.attention.init_qk_gain(init_value)
 
     def forward(self, x):
         # Self-attention
