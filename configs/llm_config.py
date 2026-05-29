@@ -163,3 +163,89 @@ class HundredMillionConfig(LLMConfig):
     train_tokens: int = 2_000_000_000  # 20x params
     activation_variant: str = "squared_relu"
     activation_slope: float = 0.5
+
+
+# ============================================================================
+# Release ladder (135M -> 1B). Same architecture at every size: dense decoder,
+# RoPE + GQA + RMSNorm + squared-ReLU + Muon. Scaling these is a hyperparameter
+# + engineering problem, NOT an architecture change. Shape follows fixed ratios
+# (head_dim 64, d_ff = 4x d_model, GQA ~4:1) so larger sizes are "just numbers".
+# Verified param counts use tied embeddings (vocab 49,152).
+# ============================================================================
+
+
+@dataclass
+class OneThirtyFiveMillionConfig(LLMConfig):
+    """Release-target preset: ~134.5M params (SmolLM2-135M class).
+
+    Sized to train compute-optimal (~2.7B tokens) on a single rented GPU and
+    benchmark head-to-head vs SmolLM2-135M / Gemma-3-270M.
+    """
+
+    d_model: int = 576
+    n_heads: int = 9          # head_dim 64
+    n_layers: int = 30
+    d_ff: int = 2304          # 4x d_model
+    n_kv_heads: int = 3       # 3:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 2_700_000_000  # ~20x params (Chinchilla-optimal)
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+
+
+@dataclass
+class FiveHundredMillionConfig(LLMConfig):
+    """Scaling ladder preset: ~0.5B params. Needs distributed training to reach
+    compute-optimal (~10B tokens) -- here for the config ladder, not yet trained."""
+
+    d_model: int = 1280
+    n_heads: int = 20         # head_dim 64
+    n_layers: int = 26
+    d_ff: int = 5120          # 4x d_model
+    n_kv_heads: int = 5       # 4:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 10_000_000_000  # ~20x params
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+
+
+@dataclass
+class OneBillionConfig(LLMConfig):
+    """Scaling ladder preset: ~1B params. Requires multi-GPU FSDP + FlashAttention
+    to be practical (~20B tokens compute-optimal). Config-only for now."""
+
+    d_model: int = 1536
+    n_heads: int = 24         # head_dim 64
+    n_layers: int = 36
+    d_ff: int = 6144          # 4x d_model
+    n_kv_heads: int = 6       # 4:1 GQA
+    max_seq_len: int = 2048
+    train_tokens: int = 20_000_000_000  # ~20x params
+    activation_variant: str = "squared_relu"
+    activation_slope: float = 0.5
+
+
+def make_config(d_model: int, n_layers: int, *, head_dim: int = 64,
+                gqa_ratio: int = 4, ff_mult: float = 4.0,
+                max_seq_len: int = 2048, vocab_size: int = 49152,
+                **overrides) -> LLMConfig:
+    """Generate a config from a few shape knobs, deriving the rest from ratios.
+
+    The future-proofing primitive: new sizes (0.5B, 1B, ...) are just different
+    (d_model, n_layers) here -- heads/KV/FFN follow fixed ratios, so the named
+    presets above are simply pinned points on this curve. Any LLMConfig field
+    can be set via **overrides (e.g. train_tokens=..., muon_lr=...).
+    """
+    assert d_model % head_dim == 0, "d_model must be divisible by head_dim"
+    n_heads = d_model // head_dim
+    n_kv_heads = max(1, n_heads // gqa_ratio)
+    while n_heads % n_kv_heads != 0:   # GQA requires n_kv_heads | n_heads
+        n_kv_heads -= 1
+    cfg = LLMConfig(
+        d_model=d_model, n_heads=n_heads, n_layers=n_layers,
+        d_ff=int(ff_mult * d_model), n_kv_heads=n_kv_heads,
+        max_seq_len=max_seq_len, vocab_size=vocab_size,
+    )
+    for k, v in overrides.items():
+        setattr(cfg, k, v)
+    return cfg
