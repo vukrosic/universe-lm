@@ -27,7 +27,7 @@ Largest to smallest so the cached dataset stays warm:
 ## Commands
 
 ```bash
-ssh -p 39751 root@171.101.230.15
+ssh -p 35010 root@136.34.244.176
 tmux attach -t llm50mseq
 source /venv/main/bin/activate
 python train_llm.py --config 50m --device auto --dataset_path processed_data/pretrain_1B --compile true --output_dir runs/full-baseline/50m-seq

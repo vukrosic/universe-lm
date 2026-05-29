@@ -27,6 +27,7 @@ class MultiHeadAttention(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        use_qk_gain: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -58,7 +59,13 @@ class MultiHeadAttention(nn.Module):
         
         self.q_norm = nn.RMSNorm(self.d_k)
         self.k_norm = nn.RMSNorm(self.d_k)
-        
+
+        # Learnable per-head gain on attention logits, folded into Q before SDPA.
+        # logits = gain * (Q @ K^T) / sqrt(d_k) == (gain * Q) @ K^T / sqrt(d_k).
+        self.use_qk_gain = use_qk_gain
+        if use_qk_gain:
+            self.qk_gain = nn.Parameter(torch.ones(n_heads))
+
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
 
@@ -89,7 +96,11 @@ class MultiHeadAttention(nn.Module):
         
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
-        
+
+        # Per-head gain on logits, folded into Q (Q now [B, n_heads, T, d_k])
+        if self.use_qk_gain:
+            Q = Q * self.qk_gain.to(Q.dtype).view(1, -1, 1, 1)
+
         # Compute attention
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
@@ -116,10 +127,13 @@ class TransformerBlock(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        use_qk_gain: bool = False,
     ):
         super().__init__()
 
-        self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout, n_kv_heads)
+        self.attention = MultiHeadAttention(
+            d_model, n_heads, max_seq_len, dropout, n_kv_heads, use_qk_gain=use_qk_gain
+        )
         self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
 
         # Normalization layers

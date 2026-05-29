@@ -3,7 +3,7 @@
 This repository can be used on the remote Vast AI box at:
 
 ```bash
-ssh -L 8080:localhost:8080 -p 39751 root@171.101.230.15
+ssh -p 35010 root@136.34.244.176 -L 8080:localhost:8080
 ```
 
 The `-L 8080:localhost:8080` forward keeps any service you start on the remote

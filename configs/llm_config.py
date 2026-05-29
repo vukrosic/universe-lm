@@ -44,6 +44,9 @@ class LLMConfig:
     eval_steps: int = 100
     eval_milestones: Optional[Tuple[int, ...]] = None
     
+    # Architecture toggles
+    use_qk_gain: bool = False  # learnable per-head scalar gain on attention logits
+
     # Regularization
     weight_decay: float = 0.2
     dropout: float = 0.0

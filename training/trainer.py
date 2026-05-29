@@ -532,7 +532,9 @@ def train_minimal_llm(
     # ============================================
     # 8. Reset RNG for reproducible training
     # ============================================
-    set_seed(42)
+    # Use the run's configured seed (not a hardcoded value) so multi-seed
+    # sweeps produce genuine variance for mean+std reporting.
+    set_seed(getattr(config, "seed", 42))
     
     setup_time = time.time() - setup_start
     print(f"⚙️ Setup & Compilation complete in {setup_time:.2f}s")

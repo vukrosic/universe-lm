@@ -1,0 +1,14 @@
+# Muon LR-transfer study (width = 5M).
+# Question: does the optimal muon_lr at 5M match the optimum at 25M?
+# If yes (within +/-20%), LR transfers under Muon's built-in shape scaling
+# and we never need to re-sweep LR at 70M. If no, motivate muP (issue #8).
+# Run this 5M sweep first (~$0.50), eyeball the curve, then run the 25M sweep.
+base_preset: "5m"
+train_tokens: 50_000_000
+seed: 42
+variants:
+  - { name: lr_005, overrides: { muon_lr: 0.005 } }
+  - { name: lr_010, overrides: { muon_lr: 0.010 } }
+  - { name: lr_020, overrides: { muon_lr: 0.020 } }   # current default
+  - { name: lr_040, overrides: { muon_lr: 0.040 } }
+  - { name: lr_080, overrides: { muon_lr: 0.080 } }

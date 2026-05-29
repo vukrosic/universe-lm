@@ -1,0 +1,17 @@
+# QK-gain study (width = 5M).
+# Question: does a learnable per-head scalar gain on attention logits help a
+# small LM under Muon? Gain is folded into Q before SDPA (no speed cost).
+# 2x2: {baseline, qk_gain} x {muon_lr 0.02, 0.04}. Win = qk_gain beats the
+# best baseline by >=1% val loss at matched LR.
+base_preset: "5m"
+train_tokens: 50_000_000
+seed: 42
+# Running locally on MacBook MPS over the 1B pre-tokenized set
+# (processed_data/pretrain_mix_1000000000). compile_model off: torch.compile is
+# flaky on MPS and Muon's kernel isn't compiled off-CUDA anyway. batch_size 8
+# (config default) is fine in MPS unified memory. Held constant across variants.
+variants:
+  - { name: baseline_lr020, overrides: { use_qk_gain: false, muon_lr: 0.020, compile_model: false } }
+  - { name: baseline_lr040, overrides: { use_qk_gain: false, muon_lr: 0.040, compile_model: false } }
+  - { name: qk_gain_lr020,  overrides: { use_qk_gain: true,  muon_lr: 0.020, compile_model: false } }
+  - { name: qk_gain_lr040,  overrides: { use_qk_gain: true,  muon_lr: 0.040, compile_model: false } }

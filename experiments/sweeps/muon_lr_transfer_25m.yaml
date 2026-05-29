@@ -1,0 +1,12 @@
+# Muon LR-transfer study (width = 25M). Pair of muon_lr_transfer_5m.yaml.
+# Compare argmin(muon_lr) here vs the 5M sweep. Transfer holds if the two
+# optima are within +/-20% of each other.
+base_preset: "25m"
+train_tokens: 50_000_000
+seed: 42
+variants:
+  - { name: lr_005, overrides: { muon_lr: 0.005 } }
+  - { name: lr_010, overrides: { muon_lr: 0.010 } }
+  - { name: lr_020, overrides: { muon_lr: 0.020 } }   # current default
+  - { name: lr_040, overrides: { muon_lr: 0.040 } }
+  - { name: lr_080, overrides: { muon_lr: 0.080 } }
