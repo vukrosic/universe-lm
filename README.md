@@ -14,6 +14,21 @@ A high-performance codebase for LLM research, pretraining, and optimization: tes
 
 > **Releases:** trained model checkpoints are released as [Universe](https://github.com/vukrosic/universe-lm) — see `releases/` for the public versions. Pipeline: `bash release.sh smoke vX.Y` then `bash release.sh publish vX.Y <hf-repo>`.
 
+## 🔬 Open Experiments — pick one up
+
+Have a GPU and a few hours? Run an open experiment and report the numbers. Each ships as a branch + a one-command sweep — no code archaeology required.
+
+- **QK-gain** ([PR #16](https://github.com/vukrosic/universe-lm/pull/16)): a learnable per-head scalar on the attention logits (zero added FLOPs). Toy-scale screening showed ~0% delta — **the open question is whether it helps at 5M–135M.** Pick it up:
+  ```bash
+  git fetch origin && git checkout experiment/qk-gain
+  python experiments/sweep.py --config experiments/sweeps/qk_gain.yaml
+  ```
+
+Want to screen an architecture idea at a chosen scale with one command? See the generic runner in [PR #15](https://github.com/vukrosic/universe-lm/pull/15):
+```bash
+python scripts/run_experiment.py --experiment gqa --scale gpu5m   # toy | small | gpu5m | gpu135m
+```
+
 ## 🚀 Getting Started
 
 #### Install Dependencies
