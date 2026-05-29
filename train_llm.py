@@ -66,8 +66,9 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
                         print(f"  Data was prepared with max_seq_len: {prep_max_seq}")
                         print(f"  Current config has max_seq_len:     {data_cfg.seq_length}")
                         print(f"\n  This WILL cause RoPE cache shape mismatch errors!")
-                        print(f"  Please re-run data preparation with current max_seq_len:")
-                        print(f"    python data/prepare_mix_data.py --target_tokens 25_000_000")
+                        print(f"  Use the pre-built dataset from the README (python data/download_hf_data.py)")
+                        print(f"  and keep max_seq_len=2048. Changing the data is not recommended —")
+                        print(f"  ask user first (if you are AI).")
                         print("="*70 + "\n")
                         raise ValueError(f"max_seq_len mismatch: prepared={prep_max_seq}, config={data_cfg.seq_length}. Run: python data/prepare_mix_data.py --target_tokens 25_000_000 or adjust the number of tokens")
                     else:

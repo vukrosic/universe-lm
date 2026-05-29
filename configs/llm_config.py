@@ -16,13 +16,13 @@ class LLMConfig:
     n_kv_heads: int = 4      
     
     # Data params
-    # ⚠️ WARNING: For simplicity, I recomend not changing max_seq_len
-    # If you change max_seq_len, you MUST re-run data preparation!
-    # The data preparation script chunks data at this exact length, and the RoPE
-    # cache is initialized with this value. Mismatches will cause runtime errors.
-    # Run: python data/prepare_mix_data.py --target_tokens 25_000_000
-    # you may change the number of tokens
-    max_seq_len: int = 2048  # check the warning above
+    # Use the pre-built dataset downloaded as described in the README
+    # (`python data/download_hf_data.py`). The repo author recommends NOT
+    # changing the data or max_seq_len. If you think you need to, ASK THE
+    # REPO AUTHOR FIRST — it is not recommended. The downloaded data is
+    # chunked at seq_len 2048, which the RoPE cache depends on; a mismatch
+    # causes runtime errors.
+    max_seq_len: int = 2048  # do not change; matches the downloaded data
     vocab_size: int = 49152  
     
     # Base Training Defaults
