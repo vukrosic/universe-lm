@@ -2,7 +2,7 @@
 
 Copy this into a new GitHub issue for every 25M research experiment. Fill the `<...>` slots, delete the italic guidance notes. One mechanism per issue. Keep it to a number — no pre-writeups (see [RESEARCH_IDEAS.md](RESEARCH_IDEAS.md) for the test-first posture).
 
-Title format: `[research] <Name> — <one-line what it is> (run 25M A/B)`
+Title format: `[research] <Name> — <one-line what it is>`
 
 ---
 
@@ -38,17 +38,19 @@ git checkout <exp/branch-name>
 ```bash
 python experiments/sweep.py --config experiments/sweeps/<sweep_file>.yaml
 ```
-Variants: `baseline` (`{}`) vs `<variant>` (`<override>`). Seed 42, 507M tokens, ~25M params, bf16 — all fixed in the committed config. No edits.
+Single variant `<variant>` (`<override>`). Seed 42, 507M tokens, ~25M params, bf16 — all fixed in the committed config. No edits.
+
+*No baseline arm: compare against the **stored baseline #0** number (from [#18](https://github.com/vukrosic/universe-lm/issues/18)). val_loss has small bf16/CUDA noise, absorbed by the 0.01 promotion margin — same model as the leaderboard, which beats a stored record by a margin rather than re-running it. (Multi-arm sweeps with 3+ variants are fine when you're comparing variants to each other.)*
 
 *Run in `tmux` so the job survives disconnect. You can hand this whole issue to your AI; it should run it unattended.*
 
 ## Report in this issue
-- `baseline` vs `<variant>` final val_loss (from `experiments/results/<sweep_file>.csv`).
+- `<variant>` final val_loss (from `experiments/results/<sweep_file>.csv`), and the stored baseline #0 number you're comparing against.
 - <any mechanism-specific sanity signal — e.g. "did the learned gains move off init 1.0?">
 - One line: **your GPU, wall-time, git commit hash.** (Wall-time is metadata only.)
 
 ## Decision rule
-- `baseline - <variant> ≥ 0.01` val_loss → write `<sweep_file>_135m.yaml`, say that it should be promoted to the 135M run in the issue comments.
+- `baseline_0 - <variant> ≥ 0.01` val_loss → write `<sweep_file>_135m.yaml`, say that it should be promoted to the 135M run in the issue comments.
 - Otherwise → null result. Record it in [RESEARCH_IDEAS.md](RESEARCH_IDEAS.md) and move on.
 
 ## Out of scope
