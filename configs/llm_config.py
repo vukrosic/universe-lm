@@ -53,6 +53,10 @@ class LLMConfig:
     # Logging
     log_milestones: Tuple[int, ...] = (100, 500, 1000)
 
+    # QK-Gain (learnable per-head scalar on attention logits)
+    qk_gain_init: float = 1.0
+    qk_gain_per_layer: bool = False  # if True, shape (n_layers, n_heads); else (n_heads,)
+
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"

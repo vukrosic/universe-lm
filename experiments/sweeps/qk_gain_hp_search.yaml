@@ -1,0 +1,21 @@
+# QK-Gain hyperparam search: 7 configs, 5M tokens each, single seed
+# Tests: gain_init ∈ {0.5, 1.0, 4.0, 5.25} × lr_mult ∈ {1.0, 0.5}
+# Per-head shape only (per-layer tested separately if warranted)
+base_preset: "5m"
+train_tokens: 5_000_000
+seed: 42
+variants:
+  - name: gain1.0
+    overrides: {qk_gain_init: 1.0, qk_gain_per_layer: false}
+  - name: gain4.0
+    overrides: {qk_gain_init: 4.0, qk_gain_per_layer: false}
+  - name: gain5.25
+    overrides: {qk_gain_init: 5.25, qk_gain_per_layer: false}
+  - name: gain0.5
+    overrides: {qk_gain_init: 0.5, qk_gain_per_layer: false}
+  - name: gain4.0_perlayer
+    overrides: {qk_gain_init: 4.0, qk_gain_per_layer: true}
+  - name: gain5.25_perlayer
+    overrides: {qk_gain_init: 5.25, qk_gain_per_layer: true}
+  - name: gain0.5_perlayer
+    overrides: {qk_gain_init: 0.5, qk_gain_per_layer: true}
