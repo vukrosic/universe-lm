@@ -175,7 +175,7 @@ class HundredMillionConfig(LLMConfig):
 
 
 @dataclass
-class OneThirtyFiveMillionConfig(LLMConfig):
+class OneHundredThirtyFiveMillionConfig(LLMConfig):
     """Release-target preset: ~134.5M params (SmolLM2-135M class).
 
     Sized to train compute-optimal (~2.7B tokens) on a single rented GPU and

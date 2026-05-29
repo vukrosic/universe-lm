@@ -25,7 +25,7 @@ from configs.llm_config import (
     TwentyFiveMillionConfig,
     FiftyMillionConfig,
     HundredMillionConfig,
-    OneThirtyFiveMillionConfig,
+    OneHundredThirtyFiveMillionConfig,
     FiveHundredMillionConfig,
     OneBillionConfig,
 )
@@ -43,7 +43,7 @@ PRESET_MAP = {
     "25m": TwentyFiveMillionConfig,
     "50m": FiftyMillionConfig,
     "100m": HundredMillionConfig,
-    "135m": OneThirtyFiveMillionConfig,
+    "135m": OneHundredThirtyFiveMillionConfig,
     "500m": FiveHundredMillionConfig,
     "1b": OneBillionConfig,
 }
