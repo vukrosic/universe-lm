@@ -42,6 +42,11 @@ class MinimalLLM(nn.Module):
 
         self.apply(self._init_weights)
 
+        # Init QK-Gain on all attention layers
+        for block in self.transformer_blocks:
+            if hasattr(block.attention, 'qk_gain'):
+                block.attention.init_qk_gain(getattr(self.config, 'qk_gain_init', 0.5))
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
