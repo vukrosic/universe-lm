@@ -97,6 +97,26 @@ class Mini10M20MConfig(LLMConfig):
 
 
 @dataclass
+class Lock10M200MConfig(LLMConfig):
+    """LOCKED tier — ~10M params · 200M tokens (20x Chinchilla) · ~48,800 steps.
+
+    Same shape as Mini10M20MConfig, but trained to the Chinchilla-matched 20x
+    regime so the QK-gain optimum is transfer-valid toward 135M. Screen tiers
+    (nano/micro/mini) only find the basin; this is where the optimum is locked.
+    """
+    d_model: int = 144
+    n_heads: int = 6
+    n_layers: int = 3
+    d_ff: int = 576
+    n_kv_heads: int = 2
+    max_seq_len: int = 2048
+    batch_size: int = 2
+    train_tokens: int = 200_000_000
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
+
+
+@dataclass
 class Micro7M1MConfig(LLMConfig):
     """~6.7M params · 1M tokens · ~244 steps.
     """
