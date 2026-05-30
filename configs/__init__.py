@@ -1,17 +1,17 @@
 from .llm_config import (
     LLMConfig,
-    ToyConfig,
-    TwentyFiveMillionConfig,
-    FiftyMillionConfig,
-    HundredMillionConfig,
+    Screen3M32KConfig,
+    Screen10M20MConfig,
+    Full10M200MConfig,
+    Full135M2700MConfig,
 )
 from .dataset_config import DataConfig
 
 __all__ = [
     "LLMConfig",
-    "ToyConfig",
-    "TwentyFiveMillionConfig",
-    "FiftyMillionConfig",
-    "HundredMillionConfig",
+    "Screen3M32KConfig",
+    "Screen10M20MConfig",
+    "Full10M200MConfig",
+    "Full135M2700MConfig",
     "DataConfig",
 ]

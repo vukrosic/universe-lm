@@ -1,4 +1,6 @@
-# LLM Research Kit
+# Open Superintelligence Lab
+
+**Goal #1: research in open, train and release a fully open-source 135M model that beats [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M).** Anyone can contribute — run an experiment, donate compute, or design a mechanism.
 
 A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or training.
 

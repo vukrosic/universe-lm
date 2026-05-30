@@ -1,35 +1,43 @@
 # Speedrun Leaderboard
 
-Race to the **lowest val loss at a fixed token budget.** Rules: [docs/PLAN.md](docs/PLAN.md). How to enter: [CONTRIBUTING.md](CONTRIBUTING.md).
+Race to the **lowest val loss on the `10m` model** (Full10M200M — ~10M params, 200M tokens).
+Pinned: `seed=42` · bf16. Beat the standing record by **≥0.01** to take it.
 
-**Pinned for every entry:** `seed=42` · bf16 · A new entry takes the record only if it beats the standing best by **≥0.01** val loss. `time` is metadata, not ranked.
+**Acceptance rule:** `10m` is the target — only a win here is a real record. Smaller configs
+(`screen3m`, `screen10m`) are just for quick experimentation: use them to find promising
+mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters go in the
+**Run**/**Summary** text — no per-mechanism columns ([Parameter Golf](https://github.com/openai/parameter-golf) style).
 
-> **Older GPUs without native bf16 (e.g. Colab T4):** not banned — submit anyway, flagged as such. bf16 may run emulated with slightly different numerics; we'll decide how to rank these the first time one is submitted.
+## `10m` — Full10M200M · 10M · 200M tokens  ·  **the target**
 
-## Toy — 32,768 tokens (workflow only, NOT science)
-
-The `toy` preset (3.24M params, 94% embedding) exists to debug the
-train→eval→log→compare→promote loop in seconds, not to measure mechanisms.
-Screens can flip sign at this size — never promote a toy result to 135M.
-
-**Measured noise floor: ±~0.007 val loss** (two seed-42 runs: 9.3837, 9.3769,
-bf16/CUDA nondeterminism). An experiment must beat baseline by **more than the
-noise floor** to mean anything — here that's effectively the full 0.01 margin.
-
-| # | Val loss | Who | Batch | Time | GPU | Evidence |
+| # | Val loss | Run | Author | Summary | Date | Evidence |
 |---|---|---|---|---|---|---|
-| 0 | 9.3769 | baseline | 2 | 14s | RTX 5060 | `--config toy --seed 42`, [metrics](runs/toy/toy_8step_seed42.json) |
+| 0 | _TBD_ | baseline | — | Plain dense decoder (RoPE + GQA + RMSNorm + squared-ReLU + Muon), no added mechanism. Establish by running `--config 10m --seed 42` on this commit. | — | _pending first plain run_ |
 
-## 135M — 2.7B tokens
+## Screens — quick experimentation (not records)
 
-| # | Val loss | Who | Batch | Time | GPU | Evidence |
-|---|---|---|---|---|---|---|
-| — | _baseline TBD_ | — | — | — | — | — |
+For finding promising mechanisms and reproducing baselines fast. Not ranked — only a `10m`
+win counts. Full QK-gain sweeps: [qk_leaderboard.md](qk_leaderboard.md).
 
+**`screen3m`** — 3.2M · 32k tokens · `--config screen3m --seed 42`
 
+| Val loss | Run | Time |
+|---|---|---|
+| 9.2894 | QK-gain init=2.2 | 9s |
+| 9.3769 | baseline | 13s |
+
+**`screen10m`** — 10M · 20M tokens · `--config screen10m --seed 42`
+
+| Val loss | Run | Time |
+|---|---|---|
+| 4.9816 | QK-gain init=4.0 | 3m51s |
+| 5.2041 | baseline | 3m44s |
 
 ---
 
-`Evidence` links to the entrant's frozen branch (config + seed + loss log + `final_metrics.json` + checkpoint hash).*
+`Evidence` = frozen branch/tag (config + seed + commit + `final_metrics.json`).
 
-This will be used to release useful 135M LLMs, which will be trained on a lot more tokens than this benchmark.
+**The mission (not a race yet):** beat [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M)
+with a fully-open 135M model. We can't train it yet — it needs ~100 h on a single consumer GPU
+(or a bigger/multi-GPU box we don't have). The `135m` config is ready (`--config 135m`) for when
+the compute is there; until then, the `10m` race finds the recipe that will get us there.
