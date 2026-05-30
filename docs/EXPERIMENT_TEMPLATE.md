@@ -39,22 +39,23 @@ git checkout <exp/branch-name>
 ```
 
 ## Run it (the task)
+The mechanism is baked into the model/config on this branch. Run the 25M preset:
 ```bash
-python experiments/sweep.py --config experiments/sweeps/<sweep_file>.yaml
+python train_llm.py --config 25m --seed 42
 ```
-Single variant `<variant>` (`<override>`). Seed 42, 507M tokens, ~25M params, bf16 — all fixed in the committed config. No edits.
+Seed 42, 507M tokens, ~25M params, bf16 — all fixed in the `25m` preset. No edits.
 
-*No baseline arm: compare against the **stored baseline #0** number (from [#18](https://github.com/vukrosic/universe-lm/issues/18)). val_loss has small bf16/CUDA noise, absorbed by the 0.01 promotion margin — same model as the leaderboard, which beats a stored record by a margin rather than re-running it. (Multi-arm sweeps with 3+ variants are fine when you're comparing variants to each other.)*
+*No baseline arm: compare against the **stored baseline #0** number (from [#18](https://github.com/vukrosic/universe-lm/issues/18)). val_loss has small bf16/CUDA noise, absorbed by the 0.01 promotion margin — same model as the leaderboard, which beats a stored record by a margin rather than re-running it.*
 
 *Run in `tmux` so the job survives disconnect. You can hand this whole issue to your AI; it should run it unattended.*
 
 ## Report in this issue
-- `<variant>` final val_loss (from `experiments/results/<sweep_file>.csv`), and the stored baseline #0 number you're comparing against.
+- final val_loss (from the run's final eval print / log), and the stored baseline #0 number you're comparing against.
 - <any mechanism-specific sanity signal — e.g. "did the learned gains move off init 1.0?">
 - One line: **your GPU, wall-time, git commit hash.** (Wall-time is metadata only.)
 
 ## Decision rule
-- `baseline_0 - <variant> ≥ 0.01` val_loss → write `<sweep_file>_135m.yaml`, say that it should be promoted to the 135M run in the issue comments.
+- `baseline_0 - <variant> ≥ 0.01` val_loss → say it should be promoted to the 135M preset run in the issue comments.
 - Otherwise → null result. Record it in [RESEARCH_IDEAS.md](RESEARCH_IDEAS.md) and move on.
 
 ## Out of scope
