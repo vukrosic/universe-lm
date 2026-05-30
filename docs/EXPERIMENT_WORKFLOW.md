@@ -13,7 +13,7 @@ Evidence is regenerable from `(config + seed + commit)`. The claim isn't. So:
 
 | | What | Where it lives |
 |---|---|---|
-| **TRACK** (permanent) | one row: `config · seed · commit hash · final val_loss · who/GPU` | leaderboard text on `main` |
+| **TRACK** (permanent) | one leaderboard row: `Run · val_loss · author · summary · date · commit/evidence` | leaderboard text on `main` |
 | **FREEZE** (per-experiment) | mechanism code + final `metrics.json` | the experiment's tag (see below) |
 | **DISCARD** (regenerable) | plots, per-step logs, intermediate sweep JSONs, one-off runner scripts | gitignored — never on `main` |
 
@@ -69,17 +69,20 @@ That starts a fresh moving branch from the exact frozen state.
 
 ---
 
-## The leaderboard is the queue
+## The leaderboard is the record, not a queue
 
-Filled rows = done. `OPEN` rows = jobs waiting for a donor's compute.
+One race: **lowest val loss on the `10m` config.** Each row is a general improvement
+(any mechanism), ranked by val loss; a challenger takes the record only by beating the
+standing best by **≥0.01**. Smaller configs (screens) are for experimentation — tracked,
+but nothing counts until it also beats `10m`.
 
 ```text
-| size | val_loss | seed | commit | who/GPU            |
-| 10M  | 4.98     | 42   | a1b2c  | you/5060           |
-| 25M  | OPEN — needs a donor                          |
-| 135M | OPEN — needs a donor                          |
+| Val loss | Run               | Author   | Commit |
+| 5.01     | baseline          | vukrosic | a1b2c  |
+| 4.95     | QK-gain init=2.2  | alice    | d4e5f  |
 ```
 
-A contributor checks out the experiment branch (or a tag), runs the missing rung,
-appends their row, and freezes their `metrics.json`. The branch + issue is the
-handoff point — someone literally continues where the last person stopped.
+A contributor checks out a challenger branch (or a tag), runs `10m`, and if they beat
+the record opens a PR — the win merges to `main` as the new champion architecture. The
+135M model is the **mission** (beat SmolLM2-135M), trained once the recipe and compute
+are there — it is *not* a leaderboard row.

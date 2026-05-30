@@ -12,7 +12,7 @@ mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters 
 
 | # | Val loss | Run | Author | Summary | Date | Evidence |
 |---|---|---|---|---|---|---|
-| 0 | 5.015 | baseline | vukrosic | Plain dense decoder (RoPE + GQA + RMSNorm + squared-ReLU + Muon), no added mechanism. seed=42, bf16, batch=2, 33m on RTX 5070. | 2026-05-30 | `--config 10m --seed 42`, [metrics](baselines/lock10m200m_baseline.json) · commit `e5178bb` |
+| 0 | _TBD_ | baseline | — | Plain dense decoder (RoPE + GQA + RMSNorm + squared-ReLU + Muon), no added mechanism. Establish by running `--config 10m --seed 42` on this commit. | — | _pending first plain run_ |
 
 ## Screens — quick experimentation (not records)
 
