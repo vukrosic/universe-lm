@@ -1,6 +1,6 @@
 # Open Superintelligence Lab
 
-**Goal #1: research in open, train and release a fully open-source 135M model that beats [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M).** Anyone can contribute — run an experiment, donate compute, or design a mechanism.
+**A fully-open AI research lab building and releasing real LLMs that compete with the best — in public, together.**
 
 A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or training.
 
