@@ -62,6 +62,14 @@ class MultiHeadAttention(nn.Module):
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
 
+        # QK-Gain: learnable per-head scalar, init 0.5 (lower = sharper attention)
+        # Size matches n_heads; init_qk_gain() sets the actual value
+        self.register_parameter("qk_gain", nn.Parameter(torch.ones(n_heads)))
+
+    def init_qk_gain(self, init_value: float = 0.5):
+        with torch.no_grad():
+            self.qk_gain.fill_(init_value)
+
     def forward(self, x):
         batch_size, seq_len = x.size(0), x.size(1)
         
@@ -89,6 +97,10 @@ class MultiHeadAttention(nn.Module):
         
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
+
+        # Apply QK-Gain
+        scale = self.qk_gain.view(1, self.n_heads, 1, 1)
+        Q = Q * scale
 
         # Compute attention
         attn_output = F.scaled_dot_product_attention(
