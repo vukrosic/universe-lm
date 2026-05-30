@@ -133,8 +133,8 @@ class HundredMillionConfig(LLMConfig):
 
 
 # ============================================================================
-# Release ladder (135M -> 1B). Same architecture at every size: dense decoder,
-# RoPE + GQA + RMSNorm + squared-ReLU + Muon. Scaling these is a hyperparameter
+# Release target (135M). Same architecture as every smaller size: dense decoder,
+# RoPE + GQA + RMSNorm + squared-ReLU + Muon. Scaling is a hyperparameter
 # + engineering problem, NOT an architecture change. Shape follows fixed ratios
 # (head_dim 64, d_ff = 4x d_model, GQA ~4:1) so larger sizes are "just numbers".
 # Verified param counts use tied embeddings (vocab 49,152).

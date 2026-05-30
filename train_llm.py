@@ -12,9 +12,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
-    ResearchConfig,
-    FastResearchConfig,
-    UniverseSmokeConfig,
     FiveMillionConfig,
     TwentyFiveMillionConfig,
     FiftyMillionConfig,
@@ -231,7 +228,7 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "research", "fast_research", "smoke", "5m", "25m", "50m", "100m"],
+        choices=["default", "5m", "25m", "50m", "100m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -265,9 +262,6 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
-        "research": ResearchConfig,
-        "fast_research": FastResearchConfig,
-        "smoke": UniverseSmokeConfig,
         "5m": FiveMillionConfig,
         "25m": TwentyFiveMillionConfig,
         "50m": FiftyMillionConfig,
