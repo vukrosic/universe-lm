@@ -2,6 +2,8 @@
 
 **A fully-open AI research lab building and releasing real LLMs that compete with the best — in public, together.**
 
+💬 **[Do AI research with us on Discord](https://discord.gg/6AbXGpKTwN)**
+
 A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or training.
 
 - Modular transformer with GQA, RoPE, and RMSNorm
