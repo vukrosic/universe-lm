@@ -438,9 +438,9 @@ def train_minimal_llm(
     device = resolve_device(getattr(config, "device", "auto"))
 
     # ============================================
-    # 1. Initialize model with fixed seed
+    # 1. Initialize model with the configured seed (varies init when --seed set)
     # ============================================
-    set_seed(42)
+    set_seed(getattr(config, "seed", 42))
     model = MinimalLLM(config)
     model = model.to(device)
     
@@ -532,7 +532,7 @@ def train_minimal_llm(
     # ============================================
     # 8. Reset RNG for reproducible training
     # ============================================
-    set_seed(42)
+    set_seed(getattr(config, "seed", 42))
     
     setup_time = time.time() - setup_start
     print(f"⚙️ Setup & Compilation complete in {setup_time:.2f}s")

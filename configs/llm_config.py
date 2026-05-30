@@ -26,6 +26,7 @@ class LLMConfig:
     vocab_size: int = 49152  
     
     # Base Training Defaults
+    seed: int = 42  # seeds model init AND data order; override via --seed
     device: str = "auto"  # auto, cuda, mps, or cpu
     compile_model: bool = True
     batch_size: int = 8
@@ -59,32 +60,6 @@ class LLMConfig:
 
 
 @dataclass
-class ResearchConfig(LLMConfig):
-    """Legacy research preset: 25,366,272 parameters."""
-
-    d_model: int = 384
-    n_heads: int = 8
-    n_layers: int = 4
-    d_ff: int = 1536
-    n_kv_heads: int = 4
-    max_seq_len: int = 1024
-    train_tokens: int = 25_000_000
-
-
-@dataclass
-class FastResearchConfig(LLMConfig):
-    """Fast smoke-test preset: 14,026,240 parameters."""
-
-    d_model: int = 256
-    n_heads: int = 4
-    n_layers: int = 2
-    d_ff: int = 1024
-    n_kv_heads: int = 2
-    max_seq_len: int = 512
-    train_tokens: int = 1_000_000
-
-
-@dataclass
 class TwoStepDebugConfig(LLMConfig):
     """Two-step debug preset: smallest possible run to test plumbing fast.
 
@@ -102,21 +77,6 @@ class TwoStepDebugConfig(LLMConfig):
     max_seq_len: int = 2048   # must match the pre-chunked data; do not lower
     train_tokens: int = 4096  # 2 steps at batch_size=1
     batch_size: int = 1
-    compile_model: bool = False
-
-
-@dataclass
-class UniverseSmokeConfig(LLMConfig):
-    """v0.0 smoke release: ~15M params, short MacBook-friendly run."""
-
-    d_model: int = 256
-    n_heads: int = 4
-    n_layers: int = 4
-    d_ff: int = 1024
-    n_kv_heads: int = 2
-    max_seq_len: int = 1024
-    train_tokens: int = 50_000_000
-    batch_size: int = 4
     compile_model: bool = False
 
 
@@ -196,31 +156,3 @@ class OneHundredThirtyFiveMillionConfig(LLMConfig):
     n_kv_heads: int = 3       # 3:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 2_700_000_000  # ~20x params (Chinchilla-optimal)
-
-
-@dataclass
-class FiveHundredMillionConfig(LLMConfig):
-    """Scaling ladder preset: ~0.5B params. Needs distributed training to reach
-    compute-optimal (~10B tokens) -- here for the config ladder, not yet trained."""
-
-    d_model: int = 1280
-    n_heads: int = 20         # head_dim 64
-    n_layers: int = 26
-    d_ff: int = 5120          # 4x d_model
-    n_kv_heads: int = 5       # 4:1 GQA
-    max_seq_len: int = 2048
-    train_tokens: int = 10_000_000_000  # ~20x params
-
-
-@dataclass
-class OneBillionConfig(LLMConfig):
-    """Scaling ladder preset: ~1B params. Requires multi-GPU FSDP + FlashAttention
-    to be practical (~20B tokens compute-optimal). Config-only for now."""
-
-    d_model: int = 1536
-    n_heads: int = 24         # head_dim 64
-    n_layers: int = 36
-    d_ff: int = 6144          # 4x d_model
-    n_kv_heads: int = 6       # 4:1 GQA
-    max_seq_len: int = 2048
-    train_tokens: int = 20_000_000_000  # ~20x params

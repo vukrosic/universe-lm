@@ -290,6 +290,7 @@ def main():
         config = preset_map[args.config]()
 
     # Override config with args
+    config.seed = args.seed
     if args.muon_lr is not None:
         config.muon_lr = args.muon_lr
     if args.adamw_lr is not None:
