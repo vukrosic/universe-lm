@@ -8,6 +8,11 @@ Pinned: `seed=42` · bf16. Beat the standing record by **≥0.01** to take it.
 mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters go in the
 **Run**/**Summary** text — no per-mechanism columns ([Parameter Golf](https://github.com/openai/parameter-golf) style).
 
+> **Proposed (not yet decided):** the ranked run stays `seed=42`, but before a result
+> *takes the record* we may require confirming it on **2–3 extra seeds** (off-leaderboard)
+> to prove the win isn't specific to seed 42's draw. Screening stays single-seed. Open
+> question — not enforced yet.
+
 ## `10m` — Full10M200M · 10M · 200M tokens  ·  **the target**
 
 | # | Val loss | Run | Author | Summary | Date | Evidence |
