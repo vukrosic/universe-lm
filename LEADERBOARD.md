@@ -12,7 +12,7 @@ mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters 
 
 | # | Val loss | Run | Author | Summary | Date | Evidence |
 |---|---|---|---|---|---|---|
-| 0 | _TBD_ | baseline | — | Plain dense decoder (RoPE + GQA + RMSNorm + squared-ReLU + Muon), no added mechanism. Establish by running `--config 10m --seed 42` on this commit. | — | _pending first plain run_ |
+| 0 | 5.015 | baseline | vukrosic | QK-gain init=0 (learnable per-head scalar starting at 0) — *not* the plain model; reproduce from tag `baseline/10m`, not main's HEAD. seed=42, bf16, batch=2, 48,829 steps, 33m on RTX 5070. | 2026-05-30 | [metrics](baselines/10m_baseline.json) · tag `baseline/10m` |
 
 ## Screens — quick experimentation (not records)
 
