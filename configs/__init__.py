@@ -1,6 +1,8 @@
 from .llm_config import (
     LLMConfig,
-    ToyConfig,
+    Nano3M32KConfig,
+    Micro7M1MConfig,
+    Mini10M20MConfig,
     TwentyFiveMillionConfig,
     FiftyMillionConfig,
     HundredMillionConfig,
@@ -9,7 +11,9 @@ from .dataset_config import DataConfig
 
 __all__ = [
     "LLMConfig",
-    "ToyConfig",
+    "Nano3M32KConfig",
+    "Micro7M1MConfig",
+    "Mini10M20MConfig",
     "TwentyFiveMillionConfig",
     "FiftyMillionConfig",
     "HundredMillionConfig",

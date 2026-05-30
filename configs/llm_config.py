@@ -81,17 +81,41 @@ class TwoStepDebugConfig(LLMConfig):
 
 
 @dataclass
-class ToyConfig(LLMConfig):
-    """Nano workflow preset: 3,236,288 parameters.
-
-    Not for science (94%+ embedding, screens flip sign) — this exists to exercise
-    the train→eval→log→compare pipeline as fast as possible. batch 2 x seq 2048 =
-    4,096 tok/step, 32,768 tokens = exactly 8 steps; wall-time is dominated by
-    startup, not compute. batch is small because the full-vocab (49,152) logits
-    dominate memory on a small GPU — at batch 8 the logit gradient alone is ~3 GB.
-    Compile off so the tiny run isn't buried under compilation overhead.
+class Mini10M20MConfig(LLMConfig):
+    """~10M params · 20M tokens · ~4880 steps.
     """
+    d_model: int = 144
+    n_heads: int = 6
+    n_layers: int = 3
+    d_ff: int = 576
+    n_kv_heads: int = 2
+    max_seq_len: int = 2048
+    batch_size: int = 2
+    train_tokens: int = 20_000_000
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
 
+
+@dataclass
+class Micro7M1MConfig(LLMConfig):
+    """~6.7M params · 1M tokens · ~244 steps.
+    """
+    d_model: int = 128
+    n_heads: int = 4
+    n_layers: int = 2
+    d_ff: int = 512
+    n_kv_heads: int = 2
+    max_seq_len: int = 2048
+    batch_size: int = 2
+    train_tokens: int = 1_000_000
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 244, 20))
+
+
+@dataclass
+class Nano3M32KConfig(LLMConfig):
+    """~3.2M params · 32k tokens · 8 steps.
+    """
     d_model: int = 64
     n_heads: int = 2
     n_layers: int = 2
@@ -99,9 +123,9 @@ class ToyConfig(LLMConfig):
     n_kv_heads: int = 1
     max_seq_len: int = 2048
     batch_size: int = 2
-    train_tokens: int = 32_768  # exactly 8 steps at 4,096 tok/step
+    train_tokens: int = 32_768
     compile_model: bool = False
-    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(8))  # val_loss after each of the 8 steps
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(8))
 
 
 @dataclass
