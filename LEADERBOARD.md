@@ -17,21 +17,22 @@ mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters 
 ## Screens — quick experimentation (not records)
 
 For finding promising mechanisms and reproducing baselines fast. Not ranked — only a `10m`
-win counts. Full QK-gain sweeps: [qk_leaderboard.md](qk_leaderboard.md).
+win counts. The **→ 10m** column ties each screen run to its real `10m` entry (or shows it
+hasn't been validated there yet). Full QK-gain sweeps: [qk_leaderboard.md](qk_leaderboard.md).
 
 **`screen3m`** — 3.2M · 32k tokens · `--config screen3m --seed 42`
 
-| Val loss | Run | Time |
-|---|---|---|
-| 9.2894 | QK-gain init=2.2 | 9s |
-| 9.3769 | baseline | 13s |
+| Val loss | Run | Time | → 10m |
+|---|---|---|---|
+| 9.2894 | QK-gain init=2.2 | 9s | not run at 10m yet |
+| 9.3769 | baseline | 13s | ties to `10m` #0 (gain=0, 5.015) |
 
 **`screen10m`** — 10M · 20M tokens · `--config screen10m --seed 42`
 
-| Val loss | Run | Time |
-|---|---|---|
-| 4.9816 | QK-gain init=4.0 | 3m51s |
-| 5.2041 | baseline | 3m44s |
+| Val loss | Run | Time | → 10m |
+|---|---|---|---|
+| 4.9816 | QK-gain init=4.0 | 3m51s | not run at 10m yet |
+| 5.2041 | baseline | 3m44s | ties to `10m` #0 (gain=0, 5.015) |
 
 ---
 
