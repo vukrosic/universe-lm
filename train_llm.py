@@ -12,10 +12,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
-    ToyConfig,
-    TwentyFiveMillionConfig,
-    FiftyMillionConfig,
-    HundredMillionConfig,
+    Screen3M32KConfig,
+    Screen10M20MConfig,
+    Full10M200MConfig,
+    Full135M2700MConfig,
 )
 from configs.dataset_config import DataConfig
 from training.trainer import train_minimal_llm
@@ -230,7 +230,7 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "toy", "25m", "50m", "100m"],
+        choices=["default", "screen3m", "screen10m", "10m", "135m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -264,10 +264,10 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
-        "toy": ToyConfig,
-        "25m": TwentyFiveMillionConfig,
-        "50m": FiftyMillionConfig,
-        "100m": HundredMillionConfig,
+        "screen3m": Screen3M32KConfig,
+        "screen10m": Screen10M20MConfig,
+        "10m": Full10M200MConfig,
+        "135m": Full135M2700MConfig,
     }
 
     if args.config_class:
