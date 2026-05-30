@@ -2,6 +2,14 @@
 
 ![Gain vs Val Loss](runs/qk_gain_vs_loss.png)
 
+## Lock10M200MConfig — 10M params · 200M tokens · ~48828 steps (~33min/run)
+
+| gain | final_vl | vs_baseline | time |
+|------|----------|-------------|------|
+| 0.0 (baseline) | 5.015 | — | 33m 05s |
+
+![Lock10M200MConfig training curves](runs/lock10m200m/lock10m200m_baseline.png)
+
 ## Mini10M20MConfig — 10M params · 20M tokens · ~4880 steps (~4min/run)
 
 | gain | final_vl | vs_baseline | time |
