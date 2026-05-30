@@ -59,82 +59,16 @@ class LLMConfig:
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
 
 
-@dataclass
-class TwoStepDebugConfig(LLMConfig):
-    """Two-step debug preset: smallest possible run to test plumbing fast.
-
-    Not for science — just verifies the pipeline end-to-end (on a MacBook or
-    anywhere) in seconds. batch_size=1 + compile off keeps memory/startup
-    minimal. Floor is train_tokens=2048 (one step at seq 2048, which the data is
-    chunked at); 4096 = 2 steps so you can see loss move. 500 tokens = 0 steps.
-    """
-
-    d_model: int = 64
-    n_heads: int = 2
-    n_layers: int = 2
-    d_ff: int = 256
-    n_kv_heads: int = 1
-    max_seq_len: int = 2048   # must match the pre-chunked data; do not lower
-    train_tokens: int = 4096  # 2 steps at batch_size=1
-    batch_size: int = 1
-    compile_model: bool = False
+# ============================================================================
+# SCREEN tier — undertrained (NOT 20x). Cheap, fast filters to find a mechanism's
+# sign + basin and kick out bad ideas before paying for a Full run. Screen
+# results never transfer-promote; the optimum drifts with training duration.
+# ============================================================================
 
 
 @dataclass
-class Mini10M20MConfig(LLMConfig):
-    """~10M params · 20M tokens · ~4880 steps.
-    """
-    d_model: int = 144
-    n_heads: int = 6
-    n_layers: int = 3
-    d_ff: int = 576
-    n_kv_heads: int = 2
-    max_seq_len: int = 2048
-    batch_size: int = 2
-    train_tokens: int = 20_000_000
-    compile_model: bool = False
-    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
-
-
-@dataclass
-class Lock10M200MConfig(LLMConfig):
-    """LOCKED tier — ~10M params · 200M tokens (20x Chinchilla) · ~48,800 steps.
-
-    Same shape as Mini10M20MConfig, but trained to the Chinchilla-matched 20x
-    regime so the QK-gain optimum is transfer-valid toward 135M. Screen tiers
-    (nano/micro/mini) only find the basin; this is where the optimum is locked.
-    """
-    d_model: int = 144
-    n_heads: int = 6
-    n_layers: int = 3
-    d_ff: int = 576
-    n_kv_heads: int = 2
-    max_seq_len: int = 2048
-    batch_size: int = 2
-    train_tokens: int = 200_000_000
-    compile_model: bool = False
-    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
-
-
-@dataclass
-class Micro7M1MConfig(LLMConfig):
-    """~6.7M params · 1M tokens · ~244 steps.
-    """
-    d_model: int = 128
-    n_heads: int = 4
-    n_layers: int = 2
-    d_ff: int = 512
-    n_kv_heads: int = 2
-    max_seq_len: int = 2048
-    batch_size: int = 2
-    train_tokens: int = 1_000_000
-    compile_model: bool = False
-    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 244, 20))
-
-
-@dataclass
-class Nano3M32KConfig(LLMConfig):
-    """~3.2M params · 32k tokens · 8 steps.
+class Screen3M32KConfig(LLMConfig):
+    """Fast screen — ~3.2M params · 32k tokens · 8 steps. Plumbing + sign/basin in seconds.
     """
     d_model: int = 64
     n_heads: int = 2
@@ -149,59 +83,55 @@ class Nano3M32KConfig(LLMConfig):
 
 
 @dataclass
-class TwentyFiveMillionConfig(LLMConfig):
-    """Small scaling-law preset: 25,366,272 parameters."""
-
-    d_model: int = 384
-    n_heads: int = 8
-    n_layers: int = 4
-    d_ff: int = 1536
-    n_kv_heads: int = 4
+class Screen10M20MConfig(LLMConfig):
+    """Screen — ~10M params · 20M tokens · ~4880 steps. Confirms sign survives more tokens.
+    """
+    d_model: int = 144
+    n_heads: int = 6
+    n_layers: int = 3
+    d_ff: int = 576
+    n_kv_heads: int = 2
     max_seq_len: int = 2048
-    train_tokens: int = 507_000_000  # 20x params
-
-
-@dataclass
-class FiftyMillionConfig(LLMConfig):
-    """Mid scaling-law preset: 48,244,224 parameters."""
-
-    d_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 8
-    d_ff: int = 2048
-    n_kv_heads: int = 4
-    max_seq_len: int = 2048
-    train_tokens: int = 965_000_000  # 20x params
-
-
-@dataclass
-class HundredMillionConfig(LLMConfig):
-    """Large scaling-law preset: 100,169,472 parameters."""
-
-    d_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 26
-    d_ff: int = 2048
-    n_kv_heads: int = 4
-    max_seq_len: int = 2048
-    train_tokens: int = 2_000_000_000  # 20x params
+    batch_size: int = 2
+    train_tokens: int = 20_000_000
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
 
 
 # ============================================================================
-# Release target (135M). Same architecture as every smaller size: dense decoder,
-# RoPE + GQA + RMSNorm + squared-ReLU + Muon. Scaling is a hyperparameter
-# + engineering problem, NOT an architecture change. Shape follows fixed ratios
-# (head_dim 64, d_ff = 4x d_model, GQA ~4:1) so larger sizes are "just numbers".
-# Verified param counts use tied embeddings (vocab 49,152).
+# FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
+# is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
+# you fit optimum-vs-size and extrapolate to the 135M release target. Same
+# architecture at every size (RoPE + GQA + RMSNorm + squared-ReLU + Muon);
+# scaling is hyperparameters + engineering, not an architecture change.
+# Param counts use tied embeddings (vocab 49,152).
 # ============================================================================
 
 
 @dataclass
-class OneHundredThirtyFiveMillionConfig(LLMConfig):
-    """Release-target preset: ~134.5M params (SmolLM2-135M class).
+class Full10M200MConfig(LLMConfig):
+    """Ladder — ~10M params · 200M tokens (20x) · ~48,800 steps.
 
-    Sized to train compute-optimal (~2.7B tokens) on a single rented GPU and
-    benchmark head-to-head vs SmolLM2-135M / Gemma-3-270M.
+    Same shape as Screen10M20MConfig but trained to the 20x regime — the cheapest
+    transfer-valid point, runnable locally. First rung of the release ladder.
+    """
+    d_model: int = 144
+    n_heads: int = 6
+    n_layers: int = 3
+    d_ff: int = 576
+    n_kv_heads: int = 2
+    max_seq_len: int = 2048
+    batch_size: int = 2
+    train_tokens: int = 200_000_000
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
+
+
+@dataclass
+class Full135M2700MConfig(LLMConfig):
+    """Release target — ~134.5M params · 2.7B tokens (20x). SmolLM2-135M class.
+
+    The model we race to release: benchmark head-to-head vs SmolLM2-135M.
     """
 
     d_model: int = 576

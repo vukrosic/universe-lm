@@ -1,17 +1,20 @@
 # Vast AI Instance
 
-This repository can be used on the remote Vast AI box at:
+## Connecting
 
 ```bash
-ssh -L 8080:localhost:8080 -p 39751 root@171.101.230.15
+ssh -p 50670 root@154.12.38.116
 ```
 
-The `-L 8080:localhost:8080` forward keeps any service you start on the remote
-machine's port `8080` reachable from your local browser at `http://localhost:8080`.
+No `-L` tunnel needed for command execution. The tunnel is only needed when you want to expose remote services (e.g., TensorBoard) to your local browser.
+
+## Why This Works
+
+The Vast AI SSH wrapper handles authentication interactively. Non-interactive probes (e.g., `ssh ... -o BatchMode=yes` or `ssh ... echo done`) will fail with "Connection closed by remote host" — this is the wrapper rejecting them, not a connectivity issue.
+
+Always use a real TTY session: just `ssh -p 50670 root@154.12.38.116` with no extra options that skip interactive auth.
 
 ## What Is Already Installed
-
-The instance already has a working Python and CUDA stack:
 
 - Ubuntu 24.04.4
 - `/usr/bin/python3` available system-wide
@@ -44,6 +47,23 @@ If you prefer not to activate the environment, use the interpreter directly:
 
 ```bash
 /venv/main/bin/python --version
+```
+
+## Long-Running Work
+
+Use `tmux` to keep sessions alive after you disconnect:
+
+```bash
+# Create a named session
+tmux new -s lock10m
+
+# Detach with Ctrl+B, then D
+
+# Reconnect later
+tmux attach -t lock10m
+
+# List sessions
+tmux list-sessions
 ```
 
 ## Notes

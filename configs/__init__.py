@@ -1,23 +1,17 @@
 from .llm_config import (
     LLMConfig,
-    Nano3M32KConfig,
-    Micro7M1MConfig,
-    Mini10M20MConfig,
-    Lock10M200MConfig,
-    TwentyFiveMillionConfig,
-    FiftyMillionConfig,
-    HundredMillionConfig,
+    Screen3M32KConfig,
+    Screen10M20MConfig,
+    Full10M200MConfig,
+    Full135M2700MConfig,
 )
 from .dataset_config import DataConfig
 
 __all__ = [
     "LLMConfig",
-    "Nano3M32KConfig",
-    "Micro7M1MConfig",
-    "Mini10M20MConfig",
-    "Lock10M200MConfig",
-    "TwentyFiveMillionConfig",
-    "FiftyMillionConfig",
-    "HundredMillionConfig",
+    "Screen3M32KConfig",
+    "Screen10M20MConfig",
+    "Full10M200MConfig",
+    "Full135M2700MConfig",
     "DataConfig",
 ]
