@@ -27,8 +27,6 @@ class MinimalLLM(nn.Module):
                     config.max_seq_len,
                     config.dropout,
                     n_kv_heads=config.n_kv_heads,
-                    qk_gain_init=config.qk_gain_init,
-                    qk_gain_per_layer=config.qk_gain_per_layer,
                 )
                 for i in range(config.n_layers)
             ]
@@ -43,14 +41,6 @@ class MinimalLLM(nn.Module):
         self.lm_head.weight = self.token_embedding.weight
 
         self.apply(self._init_weights)
-
-        # Initialize QK-Gain on all attention layers
-        if config.qk_gain_per_layer:
-            for block in self.transformer_blocks:
-                block.init_qk_gain(config.qk_gain_init)
-        else:
-            for block in self.transformer_blocks:
-                block.attention.init_qk_gain(config.qk_gain_init)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

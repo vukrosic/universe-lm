@@ -1,7 +1,0 @@
-# Plumbing smoke test: one variant, 2 steps, smallest model. Verifies the
-# pipeline runs end-to-end and writes final_metrics.json. Not for science.
-base_preset: "debug"
-seed: 42
-variants:
-  - name: debug_run
-    overrides: {}
