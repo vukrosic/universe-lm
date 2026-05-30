@@ -12,7 +12,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
-    ToyConfig,
+    Nano3M32KConfig,
+    Micro7M1MConfig,
+    Mini10M20MConfig,
     TwentyFiveMillionConfig,
     FiftyMillionConfig,
     HundredMillionConfig,
@@ -264,7 +266,9 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
-        "toy": ToyConfig,
+        "nano": Nano3M32KConfig,
+        "micro": Micro7M1MConfig,
+        "mini": Mini10M20MConfig,
         "25m": TwentyFiveMillionConfig,
         "50m": FiftyMillionConfig,
         "100m": HundredMillionConfig,

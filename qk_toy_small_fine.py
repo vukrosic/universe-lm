@@ -4,7 +4,7 @@
 import sys, json, time
 sys.path.insert(0, "/workspace/universe-lm-qk-pilot")
 
-from configs.llm_config import ToySmallConfig
+from configs.llm_config import Micro7M1MConfig
 from training.trainer import train_minimal_llm
 from data.loader import setup_tokenizer
 from configs.dataset_config import DataConfig
