@@ -12,7 +12,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
-    FiveMillionConfig,
+    ToyConfig,
     TwentyFiveMillionConfig,
     FiftyMillionConfig,
     HundredMillionConfig,
@@ -203,6 +203,8 @@ def prepare_datasets(data_cfg, tokenizer, cache_dir="./processed_data"):
 
 def build_eval_milestones(train_tokens: int) -> tuple[int, ...]:
     """Return denser validation checkpoints for longer baseline runs."""
+    if train_tokens <= 100_000:
+        return tuple(range(64))  # toy/nano runs: eval after every step
     if train_tokens <= 8_000_000:
         return (0, 25, 50, 75, 100, 150, 200, 300, 400)
     if train_tokens <= 25_000_000:
@@ -228,7 +230,7 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "5m", "25m", "50m", "100m"],
+        choices=["default", "toy", "25m", "50m", "100m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -262,7 +264,7 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
-        "5m": FiveMillionConfig,
+        "toy": ToyConfig,
         "25m": TwentyFiveMillionConfig,
         "50m": FiftyMillionConfig,
         "100m": HundredMillionConfig,

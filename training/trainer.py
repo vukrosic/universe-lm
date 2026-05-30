@@ -280,17 +280,28 @@ def train_model(
 
     # Final evaluation (if not stopped early)
     if not stopped_early or tokens_seen >= config.train_tokens:
-        final_eval = evaluate_model(model, val_loader, config)
-        final_eval['train_loss'] = current_loss_val
-        elapsed_time = (time.time() - train_start_time) / 60
-        current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
-        
-        metrics_history['steps'].append(step)
-        metrics_history['val_losses'].append(final_eval['val_loss'])
-        metrics_history['val_accuracies'].append(final_eval['val_accuracy'])
-        metrics_history['val_perplexities'].append(final_eval['val_perplexity'])
-        metrics_history['elapsed_times'].append(elapsed_time)
-        metrics_history['learning_rates'].append(current_lr)
+        # If the last in-loop milestone already evaluated these exact weights
+        # (last completed step == step - 1, no optimizer step since), reuse that
+        # result instead of re-evaluating — avoids a duplicate final data point.
+        if metrics_history['steps'] and metrics_history['steps'][-1] == step - 1:
+            final_eval = {
+                'val_loss': metrics_history['val_losses'][-1],
+                'val_accuracy': metrics_history['val_accuracies'][-1],
+                'val_perplexity': metrics_history['val_perplexities'][-1],
+                'train_loss': current_loss_val,
+            }
+        else:
+            final_eval = evaluate_model(model, val_loader, config)
+            final_eval['train_loss'] = current_loss_val
+            elapsed_time = (time.time() - train_start_time) / 60
+            current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
+
+            metrics_history['steps'].append(step)
+            metrics_history['val_losses'].append(final_eval['val_loss'])
+            metrics_history['val_accuracies'].append(final_eval['val_accuracy'])
+            metrics_history['val_perplexities'].append(final_eval['val_perplexity'])
+            metrics_history['elapsed_times'].append(elapsed_time)
+            metrics_history['learning_rates'].append(current_lr)
     else:
         # Use best metrics if stopped early
         if metrics_history['val_losses']:

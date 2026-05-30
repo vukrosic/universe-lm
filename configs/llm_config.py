@@ -81,16 +81,27 @@ class TwoStepDebugConfig(LLMConfig):
 
 
 @dataclass
-class FiveMillionConfig(LLMConfig):
-    """Tiny pipeline preset: 6,652,800 parameters."""
+class ToyConfig(LLMConfig):
+    """Nano workflow preset: 3,236,288 parameters.
 
-    d_model: int = 128
+    Not for science (94%+ embedding, screens flip sign) — this exists to exercise
+    the train→eval→log→compare pipeline as fast as possible. batch 2 x seq 2048 =
+    4,096 tok/step, 32,768 tokens = exactly 8 steps; wall-time is dominated by
+    startup, not compute. batch is small because the full-vocab (49,152) logits
+    dominate memory on a small GPU — at batch 8 the logit gradient alone is ~3 GB.
+    Compile off so the tiny run isn't buried under compilation overhead.
+    """
+
+    d_model: int = 64
     n_heads: int = 2
     n_layers: int = 2
-    d_ff: int = 512
+    d_ff: int = 256
     n_kv_heads: int = 1
     max_seq_len: int = 2048
-    train_tokens: int = 134_000_000  # 20x params
+    batch_size: int = 2
+    train_tokens: int = 32_768  # exactly 8 steps at 4,096 tok/step
+    compile_model: bool = False
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(8))  # val_loss after each of the 8 steps
 
 
 @dataclass
