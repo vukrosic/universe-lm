@@ -86,3 +86,43 @@ A contributor checks out a challenger branch (or a tag), runs `10m`, and if they
 the record opens a PR — the win merges to `main` as the new champion architecture. The
 135M model is the **mission** (beat SmolLM2-135M), trained once the recipe and compute
 are there — it is *not* a leaderboard row.
+
+---
+
+## Reproduce a run / plot against the baseline
+
+**The current baseline lives in `main`:** `baselines/10m_baseline.json` — the one
+reference file everyone plots against. It's overwritten when the champion changes;
+all *other* run JSONs (sweeps, old baselines) are scratch and live only at tags.
+*(Populated by the first plain `--config 10m --seed 42` run — see the `TBD` row in
+the leaderboard until then.)*
+
+**Reproduce any record** — you need `config + seed + the commit/tag from its row:**
+
+```bash
+# baseline (plain model — code is just main):
+git checkout <baseline-tag>        # e.g. baseline/10m
+python train_llm.py --config 10m --seed 42
+
+# a mechanism record (code NOT in main — checkout the experiment tag):
+git checkout exp/qk-gain
+python train_llm.py --config 10m --seed 42
+```
+
+Same `config + seed + commit` ⇒ same val loss within the bf16 noise floor (~0.007).
+
+**Plot your run vs baseline** — the baseline JSON is already in your tree:
+
+```python
+import json
+base = json.load(open("baselines/10m_baseline.json"))   # already in main
+mine = json.load(open("my_run.json"))
+# plot base["val_loss_curve"] vs mine["val_loss_curve"]
+```
+
+**Need a JSON that's only at a tag** (a past run, not the current baseline)?
+One line, no checkout:
+
+```bash
+git show exp/qk-gain:baselines/10m_qkgain.json > /tmp/that_run.json
+```
