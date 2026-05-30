@@ -45,17 +45,17 @@ python train_llm.py --config 25m --seed 42
 ```
 Seed 42, 507M tokens, ~25M params, bf16 — all fixed in the `25m` preset. No edits.
 
-*No baseline arm: compare against the **stored baseline #0** number (from [#18](https://github.com/vukrosic/universe-lm/issues/18)). val_loss has small bf16/CUDA noise, absorbed by the 0.01 promotion margin — same model as the leaderboard, which beats a stored record by a margin rather than re-running it.*
+*Run only the variant. Compare against the standing **leaderboard baseline** — never re-run a baseline arm.*
 
 *Run in `tmux` so the job survives disconnect. You can hand this whole issue to your AI; it should run it unattended.*
 
 ## Report in this issue
-- final val_loss (from the run's final eval print / log), and the stored baseline #0 number you're comparing against.
+- final val_loss (from the run's final eval print / log), and the leaderboard baseline you're comparing against.
 - <any mechanism-specific sanity signal — e.g. "did the learned gains move off init 1.0?">
 - One line: **your GPU, wall-time, git commit hash.** (Wall-time is metadata only.)
 
 ## Decision rule
-- `baseline_0 - <variant> ≥ 0.01` val_loss → say it should be promoted to the 135M preset run in the issue comments.
+- `leaderboard_baseline - <variant> ≥ 0.01` val_loss → say it should be promoted to the 135M preset run in the issue comments.
 - Otherwise → null result. Record it in [RESEARCH_IDEAS.md](RESEARCH_IDEAS.md) and move on.
 
 ## Out of scope
