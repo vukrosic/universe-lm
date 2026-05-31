@@ -217,6 +217,11 @@ __marimo__/
 # Pytorch model
 *.pt
 
+# Local-only experiment artifacts
+plots/
+docs/tutorials/
+utils/plot_smoke_comparison.py
+
 # Cache
 plots/**/*.png
 plots/baseline_compare/
