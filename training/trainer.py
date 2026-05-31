@@ -47,7 +47,7 @@ class EarlyStopping:
 
 
 def capture_rng_state() -> Dict[str, Any]:
-    """Capture RNG state so a finished run can be resumed later."""
+    """Capture RNG state so a checkpoint can be resumed later."""
     state = {
         "python": random.getstate(),
         "torch": torch.get_rng_state(),
@@ -72,6 +72,39 @@ def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
         torch.cuda.set_rng_state_all(state["cuda"])
 
 
+def capture_git_metadata() -> Dict[str, Any]:
+    """Capture repo identity for reproducible artifacts."""
+    def run_git(args: List[str]) -> Optional[str]:
+        try:
+            return subprocess.run(
+                ["git", *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except Exception:
+            return None
+
+    dirty = None
+    try:
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    except Exception:
+        pass
+
+    return {
+        "git_commit": run_git(["rev-parse", "HEAD"]),
+        "git_branch": run_git(["branch", "--show-current"]),
+        "git_dirty": dirty,
+    }
+
+
 def default_metrics_history() -> Dict[str, list]:
     return {
         "steps": [],
@@ -83,152 +116,33 @@ def default_metrics_history() -> Dict[str, list]:
     }
 
 
-def capture_git_metadata() -> Dict[str, Any]:
-    """Capture repo identity for leaderboard-ready artifacts."""
-    try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except Exception:
-        commit = None
-    try:
-        branch = subprocess.run(
-            ["git", "branch", "--show-current"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except Exception:
-        branch = None
-    try:
-        dirty = bool(
-            subprocess.run(
-                ["git", "status", "--porcelain"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        )
-    except Exception:
-        dirty = None
-    return {
-        "git_commit": commit,
-        "git_branch": branch,
-        "git_dirty": dirty,
-    }
-
-
-
 def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
-    adamw_base_params = []
-    adamw_embed_params = []
-    adamw_scalar_params = []
+    adamw_params = []
 
     for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        is_embedding = "token_embedding" in name or "lm_head" in name
-        is_scalar = ("norm" in name) or ("qk_gain" in name) or param.ndim <= 1
-        if param.ndim == 2 and not is_embedding and not is_scalar:
+        if (param.ndim == 2 and 
+            'token_embedding' not in name and 
+            'norm' not in name and 
+            param.requires_grad):
             muon_params.append(param)
         else:
-            if getattr(config, "use_per_group_lr", False):
-                if is_embedding:
-                    adamw_embed_params.append(param)
-                elif is_scalar:
-                    adamw_scalar_params.append(param)
-                else:
-                    adamw_base_params.append(param)
-            else:
-                adamw_base_params.append(param)
+            adamw_params.append(param)
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
-    if getattr(config, "use_per_group_lr", False):
-        print(f"  AdamW base parameters: {sum(p.numel() for p in adamw_base_params):,}")
-        print(f"  AdamW embedding parameters: {sum(p.numel() for p in adamw_embed_params):,}")
-        print(f"  AdamW scalar parameters: {sum(p.numel() for p in adamw_scalar_params):,}")
-    else:
-        print(f"  AdamW parameters: {sum(p.numel() for p in adamw_base_params):,}")
+    print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
 
     muon_optimizer = Muon(muon_params, lr=config.muon_lr, momentum=config.muon_momentum)
     device = resolve_device(getattr(config, "device", "auto"))
-    if getattr(config, "use_per_group_lr", False):
-        adamw_params = []
-        if adamw_base_params:
-            adamw_params.append(
-                {
-                    "params": adamw_base_params,
-                    "lr": config.adamw_lr,
-                    "weight_decay": config.weight_decay,
-                }
-            )
-        if adamw_embed_params:
-            adamw_params.append(
-                {
-                    "params": adamw_embed_params,
-                    "lr": config.adamw_lr * config.embed_lr_multiplier,
-                    "weight_decay": config.weight_decay,
-                }
-            )
-        if adamw_scalar_params:
-            adamw_params.append(
-                {
-                    "params": adamw_scalar_params,
-                    "lr": config.adamw_lr * config.scalar_lr_multiplier,
-                    "weight_decay": config.weight_decay,
-                }
-            )
-        adamw_optimizer = torch.optim.AdamW(adamw_params, fused=device.type == "cuda")
-    else:
-        adamw_optimizer = torch.optim.AdamW(
-            adamw_base_params,
-            lr=config.adamw_lr,
-            weight_decay=config.weight_decay,
-            fused=device.type == "cuda"
-        )
+    adamw_optimizer = torch.optim.AdamW(
+        adamw_params,
+        lr=config.adamw_lr,
+        weight_decay=config.weight_decay,
+        fused=device.type == "cuda"
+    )
 
     return [muon_optimizer, adamw_optimizer]
-
-
-def build_lr_lambda(schedule_type: str, warmup_steps: int, total_steps: int):
-    """Build a per-step LR multiplier that supports warmup plus decay-to-zero."""
-    schedule_type = (schedule_type or "constant").lower()
-    warmup_steps = max(1, warmup_steps)
-    total_steps = max(1, total_steps)
-
-    def warmup_factor(current_step: int) -> float:
-        if current_step < warmup_steps:
-            return current_step / warmup_steps
-        return 1.0
-
-    def decay_progress(current_step: int) -> float:
-        return (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
-
-    if schedule_type == "cosine":
-        def lr_lambda(current_step: int) -> float:
-            if current_step < warmup_steps:
-                return warmup_factor(current_step)
-            progress = min(max(decay_progress(current_step), 0.0), 1.0)
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
-        return lr_lambda
-
-    if schedule_type in {"linear", "warmup_decay_to_zero"}:
-        def lr_lambda(current_step: int) -> float:
-            if current_step < warmup_steps:
-                return warmup_factor(current_step)
-            progress = min(max(decay_progress(current_step), 0.0), 1.0)
-            return max(0.0, 1.0 - progress)
-        return lr_lambda
-
-    def lr_lambda(current_step: int) -> float:
-        return warmup_factor(current_step) if current_step < warmup_steps else 1.0
-
-    return lr_lambda
 
 
 def train_model(
@@ -689,11 +603,32 @@ def train_minimal_llm(
     tokens_per_opt = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
     total_steps = config.train_tokens // tokens_per_opt
     warmup_steps = max(1, int(total_steps * config.warmup_ratio))
-    schedule_type = getattr(config, 'schedule_type', 'constant')
+    schedule_type = getattr(config, 'schedule_type', 'cosine')
     
     schedulers = []
     for optimizer in optimizers:
-        lr_lambda = build_lr_lambda(schedule_type, warmup_steps, total_steps)
+        if schedule_type == 'cosine':
+            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
+                if current_step < warmup:
+                    return current_step / warmup
+                progress = (current_step - warmup) / max(1, total - warmup)
+                return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
+        elif schedule_type == 'linear':
+            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
+                if current_step < warmup:
+                    return current_step / warmup
+                progress = (current_step - warmup) / max(1, total - warmup)
+                return max(0.1, 1.0 - progress)
+        elif schedule_type == 'warmup_decay_to_zero':
+            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
+                if current_step < warmup:
+                    return current_step / warmup
+                progress = (current_step - warmup) / max(1, total - warmup)
+                return max(0.0, 1.0 - progress)
+        else:  # constant
+            def lr_lambda(current_step, warmup=warmup_steps):
+                return current_step / warmup if current_step < warmup else 1.0
+        
         schedulers.append(torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda))
 
     if checkpoint_payload and "optimizer_state_dicts" in checkpoint_payload:

@@ -32,42 +32,25 @@ class LLMConfig:
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
     train_tokens: int = 8000000
-
+    
     # Learning Rate (Aggressive for pre-training)
     muon_lr: float = 0.024
     muon_momentum: float = 0.95
     adamw_lr: float = 0.006
     warmup_ratio: float = 0.0
-    # Supported schedules: constant, cosine, linear, warmup_decay_to_zero
     schedule_type: str = "constant"
 
     # Evaluation
     eval_every: Optional[int] = None
     eval_steps: int = 100
     eval_milestones: Optional[Tuple[int, ...]] = None
-
+    
     # Regularization
     weight_decay: float = 0.2
     dropout: float = 0.0
     grad_clip: float = 1.0
     use_amp: bool = True
-    # Optional output logit cap: tanh(logits / cap) * cap
-    logit_softcap: Optional[float] = None
-    # Zero-init attn output + MLP output projections
-    zero_init_output_projections: bool = False
-    # Learnable per-head query gain; effective scale is 1 + qk_gain.
-    qk_gain_init: float = 0.0
-    # Per-group LR multipliers for embeddings and scalar/norm params.
-    use_per_group_lr: bool = False
-    embed_lr_multiplier: float = 1.0
-    scalar_lr_multiplier: float = 1.0
-    # FFN architecture: squared_relu or swiglu.
-    ffn_variant: str = "squared_relu"
-    # Learned residual multiplier on each block's attn/ff branches.
-    residual_scale_init: float = 1.0
-    # Learned skip from the token embedding into every block.
-    embedding_residual_scale_init: float = 0.0
-
+    
     # Logging
     log_milestones: Tuple[int, ...] = (100, 500, 1000)
 
@@ -141,6 +124,8 @@ class Full10M200MConfig(LLMConfig):
     batch_size: int = 2
     train_tokens: int = 200_000_000
     compile_model: bool = False
+    warmup_ratio: float = 0.02
+    schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
 
 
