@@ -4,6 +4,7 @@ from .llm_config import (
     Screen10M1MConfig,
     Screen10M5MConfig,
     Screen10M20MConfig,
+    Screen10M20MSwiGLUConfig,
     Full10M200MConfig,
     Full135M2700MConfig,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "Screen10M1MConfig",
     "Screen10M5MConfig",
     "Screen10M20MConfig",
+    "Screen10M20MSwiGLUConfig",
     "Full10M200MConfig",
     "Full135M2700MConfig",
     "DataConfig",

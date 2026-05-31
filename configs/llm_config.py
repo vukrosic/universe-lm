@@ -50,6 +50,7 @@ class LLMConfig:
     dropout: float = 0.0
     grad_clip: float = 1.0
     use_amp: bool = True
+    ffn_variant: str = "squared_relu"
     
     # Logging
     log_milestones: Tuple[int, ...] = (100, 500, 1000)
@@ -117,6 +118,12 @@ class Screen10M5MConfig(Screen10M20MConfig):
     Kept for checkpoint compatibility and short transfer checks.
     """
     train_tokens: int = 5_000_000
+
+
+@dataclass
+class Screen10M20MSwiGLUConfig(Screen10M20MConfig):
+    """Screen10M20M with SwiGLU feed-forward blocks."""
+    ffn_variant: str = "swiglu"
 
 
 # ============================================================================
