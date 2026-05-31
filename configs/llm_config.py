@@ -98,6 +98,25 @@ class Screen10M20MConfig(LLMConfig):
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
 
 
+@dataclass
+class Screen10M1MConfig(Screen10M20MConfig):
+    """Ultra-fast screen — ~10M params · 1M tokens · ~250 steps.
+
+    Kept for checkpoint compatibility and fast experiment screens.
+    """
+    train_tokens: int = 1_000_000
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 250, 25))
+
+
+@dataclass
+class Screen10M5MConfig(Screen10M20MConfig):
+    """Short screen — ~10M params · 5M tokens.
+
+    Kept for checkpoint compatibility and short transfer checks.
+    """
+    train_tokens: int = 5_000_000
+
+
 # ============================================================================
 # FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
 # is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
