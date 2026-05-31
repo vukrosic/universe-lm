@@ -6,10 +6,13 @@ import math
 import time
 import json
 import json
+import random
+import subprocess
 from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
+import numpy as np
 from configs.llm_config import LLMConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
@@ -43,34 +46,189 @@ class EarlyStopping:
             return False
 
 
+def capture_rng_state() -> Dict[str, Any]:
+    """Capture RNG state so a finished run can be resumed later."""
+    state = {
+        "python": random.getstate(),
+        "torch": torch.get_rng_state(),
+        "numpy": np.random.get_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
+    """Restore RNG state if a checkpoint stored it."""
+    if not state:
+        return
+    if state.get("python") is not None:
+        random.setstate(state["python"])
+    if state.get("torch") is not None:
+        torch.set_rng_state(state["torch"])
+    if state.get("numpy") is not None:
+        np.random.set_state(state["numpy"])
+    if torch.cuda.is_available() and state.get("cuda") is not None:
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def default_metrics_history() -> Dict[str, list]:
+    return {
+        "steps": [],
+        "val_losses": [],
+        "val_accuracies": [],
+        "val_perplexities": [],
+        "elapsed_times": [],
+        "learning_rates": [],
+    }
+
+
+def capture_git_metadata() -> Dict[str, Any]:
+    """Capture repo identity for leaderboard-ready artifacts."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except Exception:
+        commit = None
+    try:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except Exception:
+        branch = None
+    try:
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    except Exception:
+        dirty = None
+    return {
+        "git_commit": commit,
+        "git_branch": branch,
+        "git_dirty": dirty,
+    }
+
+
 
 def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
-    adamw_params = []
+    adamw_base_params = []
+    adamw_embed_params = []
+    adamw_scalar_params = []
 
     for name, param in model.named_parameters():
-        if (param.ndim == 2 and 
-            'token_embedding' not in name and 
-            'norm' not in name and 
-            param.requires_grad):
+        if not param.requires_grad:
+            continue
+        is_embedding = "token_embedding" in name or "lm_head" in name
+        is_scalar = ("norm" in name) or ("qk_gain" in name) or param.ndim <= 1
+        if param.ndim == 2 and not is_embedding and not is_scalar:
             muon_params.append(param)
         else:
-            adamw_params.append(param)
+            if getattr(config, "use_per_group_lr", False):
+                if is_embedding:
+                    adamw_embed_params.append(param)
+                elif is_scalar:
+                    adamw_scalar_params.append(param)
+                else:
+                    adamw_base_params.append(param)
+            else:
+                adamw_base_params.append(param)
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
-    print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
+    if getattr(config, "use_per_group_lr", False):
+        print(f"  AdamW base parameters: {sum(p.numel() for p in adamw_base_params):,}")
+        print(f"  AdamW embedding parameters: {sum(p.numel() for p in adamw_embed_params):,}")
+        print(f"  AdamW scalar parameters: {sum(p.numel() for p in adamw_scalar_params):,}")
+    else:
+        print(f"  AdamW parameters: {sum(p.numel() for p in adamw_base_params):,}")
 
     muon_optimizer = Muon(muon_params, lr=config.muon_lr, momentum=config.muon_momentum)
     device = resolve_device(getattr(config, "device", "auto"))
-    adamw_optimizer = torch.optim.AdamW(
-        adamw_params,
-        lr=config.adamw_lr,
-        weight_decay=config.weight_decay,
-        fused=device.type == "cuda"
-    )
+    if getattr(config, "use_per_group_lr", False):
+        adamw_params = []
+        if adamw_base_params:
+            adamw_params.append(
+                {
+                    "params": adamw_base_params,
+                    "lr": config.adamw_lr,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        if adamw_embed_params:
+            adamw_params.append(
+                {
+                    "params": adamw_embed_params,
+                    "lr": config.adamw_lr * config.embed_lr_multiplier,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        if adamw_scalar_params:
+            adamw_params.append(
+                {
+                    "params": adamw_scalar_params,
+                    "lr": config.adamw_lr * config.scalar_lr_multiplier,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        adamw_optimizer = torch.optim.AdamW(adamw_params, fused=device.type == "cuda")
+    else:
+        adamw_optimizer = torch.optim.AdamW(
+            adamw_base_params,
+            lr=config.adamw_lr,
+            weight_decay=config.weight_decay,
+            fused=device.type == "cuda"
+        )
 
     return [muon_optimizer, adamw_optimizer]
+
+
+def build_lr_lambda(schedule_type: str, warmup_steps: int, total_steps: int):
+    """Build a per-step LR multiplier that supports warmup plus decay-to-zero."""
+    schedule_type = (schedule_type or "constant").lower()
+    warmup_steps = max(1, warmup_steps)
+    total_steps = max(1, total_steps)
+
+    def warmup_factor(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return current_step / warmup_steps
+        return 1.0
+
+    def decay_progress(current_step: int) -> float:
+        return (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
+
+    if schedule_type == "cosine":
+        def lr_lambda(current_step: int) -> float:
+            if current_step < warmup_steps:
+                return warmup_factor(current_step)
+            progress = min(max(decay_progress(current_step), 0.0), 1.0)
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        return lr_lambda
+
+    if schedule_type in {"linear", "warmup_decay_to_zero"}:
+        def lr_lambda(current_step: int) -> float:
+            if current_step < warmup_steps:
+                return warmup_factor(current_step)
+            progress = min(max(decay_progress(current_step), 0.0), 1.0)
+            return max(0.0, 1.0 - progress)
+        return lr_lambda
+
+    def lr_lambda(current_step: int) -> float:
+        return warmup_factor(current_step) if current_step < warmup_steps else 1.0
+
+    return lr_lambda
 
 
 def train_model(
@@ -80,6 +238,7 @@ def train_model(
     val_loader: DataLoader,
     optimizers: List[torch.optim.Optimizer],
     schedulers: Optional[List] = None,
+    checkpoint_state: Optional[Dict[str, Any]] = None,
     early_stopper: Optional[EarlyStopping] = None,
     output_dir: Optional[str] = None,
     extra_config: Optional[Dict[str, Any]] = None,
@@ -108,26 +267,29 @@ def train_model(
     if schedulers is None:
         schedulers = []
 
-    current_loss_val = 0.0
+    current_loss_val = float(checkpoint_state.get("metrics", {}).get("train_loss", 0.0)) if checkpoint_state else 0.0
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     train_start_time = time.time()
-    metrics_history = {
-        'steps': [],
-        'val_losses': [],
-        'val_accuracies': [],
-        'val_perplexities': [],
-        'elapsed_times': [],
-        'learning_rates': [],
-    }
+    metrics_history = default_metrics_history()
+    if checkpoint_state and checkpoint_state.get("metrics_history"):
+        loaded_history = checkpoint_state["metrics_history"]
+        metrics_history = {
+            "steps": list(loaded_history.get("steps", [])),
+            "val_losses": list(loaded_history.get("val_losses", [])),
+            "val_accuracies": list(loaded_history.get("val_accuracies", [])),
+            "val_perplexities": list(loaded_history.get("val_perplexities", [])),
+            "elapsed_times": list(loaded_history.get("elapsed_times", [])),
+            "learning_rates": list(loaded_history.get("learning_rates", [])),
+        }
 
     # Training loop
     model.train()
-    step = 0
-    tokens_seen = 0
+    step = int(checkpoint_state.get("step", 0)) if checkpoint_state else 0
+    tokens_seen = int(checkpoint_state.get("tokens_seen", 0)) if checkpoint_state else 0
     desc = "Training"
-    pbar = tqdm(total=config.train_tokens, desc=desc, unit="tokens")
+    pbar = tqdm(total=config.train_tokens, desc=desc, unit="tokens", initial=min(tokens_seen, config.train_tokens))
     
     stopped_early = False
 
@@ -340,6 +502,7 @@ def train_model(
             'stopped_early': stopped_early,
             'actual_steps': step,
             'history': metrics_history,
+            **capture_git_metadata(),
         }
         if extra_config:
             metrics_data['experiment_config'] = extra_config
@@ -352,10 +515,17 @@ def train_model(
         # Save model checkpoint
         checkpoint_path = output_path / "model.pt"
         torch.save({
+            'checkpoint_version': 2,
             'model_state_dict': model.state_dict(),
+            'optimizer_state_dicts': [optimizer.state_dict() for optimizer in optimizers],
+            'scheduler_state_dicts': [scheduler.state_dict() for scheduler in schedulers],
             'config': config,
             'metrics': final_eval,
             'step': step,
+            'tokens_seen': tokens_seen,
+            'metrics_history': metrics_history,
+            'rng_state': capture_rng_state(),
+            'git_metadata': capture_git_metadata(),
         }, checkpoint_path)
         print(f"   💾 Model saved to {checkpoint_path}")
     
@@ -447,6 +617,7 @@ def train_minimal_llm(
     print(f"\n🚀 Training dense model")
     setup_start = time.time()
     device = resolve_device(getattr(config, "device", "auto"))
+    checkpoint_payload = None
 
     # ============================================
     # 1. Initialize model with the configured seed (varies init when --seed set)
@@ -458,8 +629,8 @@ def train_minimal_llm(
     # Load pretrained weights if specified
     if load_weights_path:
         print(f"Loading pretrained weights from {load_weights_path}...")
-        checkpoint = torch.load(load_weights_path, map_location=device, weights_only=False)
-        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        checkpoint_payload = torch.load(load_weights_path, map_location=device, weights_only=False)
+        state_dict = checkpoint_payload.get("model_state_dict", checkpoint_payload)
         model.load_state_dict(state_dict, strict=False)
 
     # ============================================
@@ -518,32 +689,27 @@ def train_minimal_llm(
     tokens_per_opt = config.batch_size * config.max_seq_len * config.gradient_accumulation_steps
     total_steps = config.train_tokens // tokens_per_opt
     warmup_steps = max(1, int(total_steps * config.warmup_ratio))
-    schedule_type = getattr(config, 'schedule_type', 'cosine')
+    schedule_type = getattr(config, 'schedule_type', 'constant')
     
     schedulers = []
     for optimizer in optimizers:
-        if schedule_type == 'cosine':
-            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
-                if current_step < warmup:
-                    return current_step / warmup
-                progress = (current_step - warmup) / max(1, total - warmup)
-                return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress))
-        elif schedule_type == 'linear':
-            def lr_lambda(current_step, warmup=warmup_steps, total=total_steps):
-                if current_step < warmup:
-                    return current_step / warmup
-                progress = (current_step - warmup) / max(1, total - warmup)
-                return max(0.1, 1.0 - progress)
-        else:  # constant
-            def lr_lambda(current_step, warmup=warmup_steps):
-                return current_step / warmup if current_step < warmup else 1.0
-        
+        lr_lambda = build_lr_lambda(schedule_type, warmup_steps, total_steps)
         schedulers.append(torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda))
+
+    if checkpoint_payload and "optimizer_state_dicts" in checkpoint_payload:
+        optimizer_states = checkpoint_payload.get("optimizer_state_dicts", [])
+        scheduler_states = checkpoint_payload.get("scheduler_state_dicts", [])
+        for optimizer, state_dict in zip(optimizers, optimizer_states):
+            optimizer.load_state_dict(state_dict)
+        for scheduler, state_dict in zip(schedulers, scheduler_states):
+            scheduler.load_state_dict(state_dict)
+        restore_rng_state(checkpoint_payload.get("rng_state"))
 
     # ============================================
     # 8. Reset RNG for reproducible training
     # ============================================
-    set_seed(getattr(config, "seed", 42))
+    if not (checkpoint_payload and "rng_state" in checkpoint_payload):
+        set_seed(getattr(config, "seed", 42))
     
     setup_time = time.time() - setup_start
     print(f"⚙️ Setup & Compilation complete in {setup_time:.2f}s")
@@ -564,6 +730,7 @@ def train_minimal_llm(
         val_loader=val_loader,
         optimizers=optimizers,
         schedulers=schedulers,
+        checkpoint_state=checkpoint_payload,
         early_stopper=None,
         output_dir=None,
         extra_config=None,
@@ -601,6 +768,7 @@ def train_minimal_llm(
         'tokens_seen': tokens_seen,
         'train_tokens': config.train_tokens,
         'history': metrics_history,
+        **capture_git_metadata(),
     }
     with open(metrics_file, 'w') as f:
         json.dump(metrics_data, f, indent=2)
@@ -652,9 +820,17 @@ def train_minimal_llm(
         # Save model
         checkpoint_path = output_path / "model.pt"
         torch.save({
+            'checkpoint_version': 2,
             'model_state_dict': results['model'].state_dict(),
+            'optimizer_state_dicts': [optimizer.state_dict() for optimizer in optimizers],
+            'scheduler_state_dicts': [scheduler.state_dict() for scheduler in schedulers],
             'config': config,
             'metrics': final_eval,
+            'step': step,
+            'tokens_seen': tokens_seen,
+            'metrics_history': metrics_history,
+            'rng_state': capture_rng_state(),
+            'git_metadata': capture_git_metadata(),
         }, checkpoint_path)
         
     
