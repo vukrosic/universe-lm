@@ -72,7 +72,13 @@ def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
     if state.get("numpy") is not None:
         np.random.set_state(state["numpy"])
     if torch.cuda.is_available() and state.get("cuda") is not None:
-        torch.cuda.set_rng_state_all(state["cuda"])
+        cuda_states = state["cuda"]
+        normalized_cuda_states = []
+        for cuda_state in cuda_states:
+            if not isinstance(cuda_state, torch.Tensor):
+                cuda_state = torch.as_tensor(cuda_state, dtype=torch.uint8)
+            normalized_cuda_states.append(cuda_state.cpu().contiguous())
+        torch.cuda.set_rng_state_all(normalized_cuda_states)
 
 
 def capture_git_metadata() -> Dict[str, Any]:
