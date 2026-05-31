@@ -221,6 +221,10 @@ __marimo__/
 plots/
 docs/tutorials/
 utils/plot_smoke_comparison.py
+queues/
+scripts/run_*.sh
+configs/quick_screen_experiments.py
+docs/KNOWN_LEVERS.md
 
 # Cache
 plots/**/*.png
