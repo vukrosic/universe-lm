@@ -18,8 +18,15 @@ import json
 import os
 import subprocess
 import time
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from registry.store import open_registry
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +57,16 @@ def parse_args() -> argparse.Namespace:
         "--idle-pattern",
         default="train_llm.py",
         help="Process pattern to watch before launching each job",
+    )
+    parser.add_argument(
+        "--registry-db",
+        default=None,
+        help="Optional SQLite registry database to update as jobs run",
+    )
+    parser.add_argument(
+        "--registry-thread",
+        default=None,
+        help="Thread name to record in the registry (defaults to queue file stem)",
     )
     parser.add_argument(
         "--poll-seconds",
@@ -200,29 +217,94 @@ def main() -> int:
     status_log = Path(args.status_log)
     log_dir = Path(args.log_dir)
     jobs = load_jobs(queue_path)
+    registry = open_registry(args.registry_db) if args.registry_db else None
+    thread_name = args.registry_thread or queue_path.stem
 
-    append_log(status_log, f"QUEUE START {time.strftime('%Y-%m-%dT%H:%M:%S%z')} queue={queue_path}")
-    for job in jobs:
-        kind = job.get("kind", "run")
-        if kind == "pause":
-            decision = wait_for_human_decision(job, status_log, args.poll_seconds)
-            if decision != "continue":
-                append_log(status_log, f"QUEUE STOP {job['name']} decision={decision}")
-                return 0
-            continue
-        if args.wait_for_idle:
-            while not is_idle(args.idle_pattern):
-                append_log(
-                    status_log,
-                    f"WAIT {job['name']} busy_with={args.idle_pattern} poll={args.poll_seconds}s",
+    try:
+        if registry:
+            registry.upsert_thread(thread_name, status="active", summary=f"Queue from {queue_path}")
+
+        append_log(status_log, f"QUEUE START {time.strftime('%Y-%m-%dT%H:%M:%S%z')} queue={queue_path}")
+        for job in jobs:
+            kind = job.get("kind", "run")
+            if kind == "pause":
+                decision = wait_for_human_decision(job, status_log, args.poll_seconds)
+                if decision != "continue":
+                    append_log(status_log, f"QUEUE STOP {job['name']} decision={decision}")
+                    if registry:
+                        registry.record_decision(
+                            thread_name=thread_name,
+                            decision=decision,
+                            reason=job.get("message"),
+                            decided_by="queue_runner",
+                        )
+                    return 0
+                continue
+            if args.wait_for_idle:
+                while not is_idle(args.idle_pattern):
+                    append_log(
+                        status_log,
+                        f"WAIT {job['name']} busy_with={args.idle_pattern} poll={args.poll_seconds}s",
+                    )
+                    time.sleep(args.poll_seconds)
+            queue_item_id = None
+            run_id = None
+            if registry:
+                queue_item_id = registry.upsert_queue_item(
+                    thread_name,
+                    job["name"],
+                    job["cmd"],
+                    status="running",
+                    log_path=str(log_dir / f"{job['name']}.log"),
+                    output_dir=job.get("cwd") or args.default_cwd,
+                    created_by="run_job_queue.py",
                 )
-                time.sleep(args.poll_seconds)
-        rc = run_job(job, args.default_cwd, log_dir, status_log)
-        if rc != 0 and args.stop_on_failure:
-            append_log(status_log, f"QUEUE STOP {job['name']} failed rc={rc}")
-            return rc
-    append_log(status_log, f"QUEUE DONE {time.strftime('%Y-%m-%dT%H:%M:%S%z')}")
-    return 0
+                run_id = registry.start_run(
+                    thread_name=thread_name,
+                    name=job["name"],
+                    command=job["cmd"],
+                    status="running",
+                    queue_item_id=queue_item_id,
+                    output_dir=job.get("cwd") or args.default_cwd,
+                )
+            rc = run_job(job, args.default_cwd, log_dir, status_log)
+            if registry and run_id:
+                if rc == 0:
+                    registry.finish_run(run_id, status="completed", output_dir=job.get("cwd") or args.default_cwd)
+                    registry.update_queue_item_status(
+                        thread_name,
+                        job["name"],
+                        status="completed",
+                        finished_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                        output_dir=job.get("cwd") or args.default_cwd,
+                    )
+                else:
+                    registry.finish_run(run_id, status="failed", output_dir=job.get("cwd") or args.default_cwd)
+                    registry.update_queue_item_status(
+                        thread_name,
+                        job["name"],
+                        status="failed",
+                        finished_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                        output_dir=job.get("cwd") or args.default_cwd,
+                    )
+            if rc != 0 and args.stop_on_failure:
+                append_log(status_log, f"QUEUE STOP {job['name']} failed rc={rc}")
+                if registry:
+                    registry.record_decision(
+                        thread_name=thread_name,
+                        run_id=run_id,
+                        decision="failed",
+                        reason=f"job exited rc={rc}",
+                        decided_by="queue_runner",
+                    )
+                return rc
+        append_log(status_log, f"QUEUE DONE {time.strftime('%Y-%m-%dT%H:%M:%S%z')}")
+        if registry:
+            registry.upsert_thread(thread_name, status="done", summary=f"Queue from {queue_path}")
+        return 0
+    finally:
+        if registry:
+            registry.close()
 
 
 if __name__ == "__main__":

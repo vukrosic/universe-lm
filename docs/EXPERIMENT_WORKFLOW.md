@@ -156,3 +156,24 @@ One line, no checkout:
 ```bash
 git show exp/qk-gain:baselines/10m_qkgain.json > /tmp/that_run.json
 ```
+
+---
+
+## Local registry, later server
+
+The live coordination database starts local on your MacBook as
+`registry/experiments.sqlite` and is ignored by git. The tracked pieces are the
+schema, the CLI, and this doc; the live SQLite file is just runtime state.
+
+- Use the local DB for threads, queue items, runs, eval points, comparisons, and decisions.
+- Keep `threads/*/NOTES.md` as the human narrative record.
+- Mirror or export the same schema to a server later when other people need live coordination.
+
+The intended path is:
+
+```text
+local SQLite -> shared server DB -> public read-only view
+```
+
+The database is coordination state, not evidence. The evidence still lives in the
+tagged commit, `metrics.json`, and the leaderboard row.

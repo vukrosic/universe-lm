@@ -218,6 +218,10 @@ __marimo__/
 *.pt
 
 # Local-only experiment artifacts
+registry/*.sqlite
+registry/*.sqlite-shm
+registry/*.sqlite-wal
+registry/*.sqlite-journal
 plots/
 docs/tutorials/
 utils/plot_smoke_comparison.py
