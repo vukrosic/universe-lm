@@ -65,9 +65,14 @@ class Muon(torch.optim.Optimizer):
                 state = self.state[p]
 
                 if "momentum_buffer" not in state:
-                    state["momentum_buffer"] = torch.zeros_like(g)
+                    state["momentum_buffer"] = torch.zeros_like(g, dtype=torch.float32)
 
                 buf = state["momentum_buffer"]
+                if buf.dtype != torch.float32:
+                    buf = buf.float()
+                    state["momentum_buffer"] = buf
+
+                g = g.float()
                 buf.lerp_(g, 1 - group["momentum"])
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
                 g = zeropower_polar_express(g, steps=group["ns_steps"]) # steps are 5 for both ns and pe
