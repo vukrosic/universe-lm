@@ -123,6 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     idea_add = idea_sub.add_parser("add", help="Propose a new experiment idea (status=proposed)")
     idea_add.add_argument("--title", required=True)
+    idea_add.add_argument("--summary", help="One-sentence summary shown on top")
+    idea_add.add_argument("--explanation", help="Step-by-step plain-English walkthrough")
+    idea_add.add_argument("--confidence", help="high|medium|low — confidence it lowers val loss")
+    idea_add.add_argument("--expected-gain", help="Estimated val-loss change at 200M, e.g. '-0.02 to -0.05'")
+    idea_add.add_argument("--pros", help="Pros, one per line (use \\n)")
+    idea_add.add_argument("--cons", help="Cons, one per line (use \\n)")
+    idea_add.add_argument("--reference-url", help="Source URL (paper/PR/blog) if any")
     idea_add.add_argument("--thread-name")
     idea_add.add_argument("--hypothesis")
     idea_add.add_argument("--lever", help="The one thing that changes")
@@ -269,6 +276,13 @@ def main() -> int:
             if args.idea_command == "add":
                 idea_id = registry.add_idea(
                     args.title,
+                    summary=args.summary,
+                    explanation=args.explanation,
+                    confidence=args.confidence,
+                    expected_gain=args.expected_gain,
+                    pros=args.pros,
+                    cons=args.cons,
+                    reference_url=args.reference_url,
                     thread_name=args.thread_name,
                     hypothesis=args.hypothesis,
                     lever=args.lever,

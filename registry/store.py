@@ -416,6 +416,14 @@ class ExperimentRegistry:
         self,
         title: str,
         *,
+        summary: Optional[str] = None,
+        explanation: Optional[str] = None,
+        confidence: Optional[str] = None,
+        expected_gain: Optional[str] = None,
+        pros: Optional[str] = None,
+        cons: Optional[str] = None,
+        outcome: Optional[str] = None,
+        reference_url: Optional[str] = None,
         thread_name: Optional[str] = None,
         hypothesis: Optional[str] = None,
         lever: Optional[str] = None,
@@ -435,16 +443,16 @@ class ExperimentRegistry:
         self.conn.execute(
             """
             INSERT INTO ideas (
-                id, title, thread_name, hypothesis, lever, rationale, expected_effect,
-                scale_target, command, gpu_class, estimated_minutes, priority, status,
-                proposed_by, reviewed_by, review_note, reviewed_at, queue_item_id,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+                id, title, summary, explanation, confidence, expected_gain, pros, cons, outcome, reference_url,
+                thread_name, hypothesis, lever, rationale, expected_effect, scale_target,
+                command, gpu_class, estimated_minutes, priority, status, proposed_by,
+                reviewed_by, review_note, reviewed_at, queue_item_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
             """,
             (
-                idea_id, title, thread_name, hypothesis, lever, rationale, expected_effect,
-                scale_target, command, gpu_class, estimated_minutes, priority, status,
-                proposed_by, now, now,
+                idea_id, title, summary, explanation, confidence, expected_gain, pros, cons, outcome, reference_url,
+                thread_name, hypothesis, lever, rationale, expected_effect, scale_target,
+                command, gpu_class, estimated_minutes, priority, status, proposed_by, now, now,
             ),
         )
         self.conn.commit()

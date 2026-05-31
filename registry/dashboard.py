@@ -75,17 +75,21 @@ def main():
     conn = get_db()
     cur = conn.cursor()
 
-    tab_ideas, tab_runs, tab_threads, tab_queue, tab_comparisons, tab_decisions = st.tabs(
-        ["💡 Ideas", "Runs", "Threads", "Queue", "Comparisons", "Decisions"]
+    tab_ideas, tab_negatives, tab_runs, tab_threads, tab_queue, tab_comparisons, tab_decisions = st.tabs(
+        ["💡 Ideas", "❌ Negatives", "Runs", "Threads", "Queue", "Comparisons", "Decisions"]
     )
 
     # ── Ideas / Approvals (the human gate) ─────────────────────────────────────
     with tab_ideas:
         st.caption("Proposed → **approve/reject** → promote approved to the run queue. "
                    "Approve/reject writes to the DB immediately.")
+        cur.execute("SELECT status, COUNT(*) FROM ideas GROUP BY status")
+        _counts = {s: n for s, n in cur.fetchall()}
+        _counts["all"] = sum(_counts.values())
         status_filter = st.radio(
             "Show", ["proposed", "approved", "rejected", "queued", "all"],
             horizontal=True, index=0,
+            format_func=lambda s: f"{s} ({_counts.get(s, 0)})",
         )
         if status_filter == "all":
             cur.execute("SELECT * FROM ideas ORDER BY priority, created_at")
@@ -97,9 +101,39 @@ def main():
         if not ideas:
             st.info(f"No ideas with status '{status_filter}'.")
         for idea in ideas:
-            badge = {"proposed": "🟡", "approved": "🟢", "rejected": "🔴",
-                     "queued": "🔵", "done": "⚪"}.get(idea["status"], "")
-            with st.expander(f"{badge} [{idea['status']}] {idea['title']}  ·  p{idea['priority']}"):
+            conf_row = (idea.get("confidence") or "").lower()
+            # color the row dot by confidence so green/yellow/red is visible while collapsed
+            badge = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(
+                conf_row,
+                {"proposed": "🟡", "approved": "🟢", "rejected": "🔴",
+                 "queued": "🔵", "done": "⚪"}.get(idea["status"], ""))
+            tag = f" · {conf_row}" if conf_row else ""
+            gain_row = idea.get("expected_gain") or ""
+            gain_tag = f" · {gain_row.split('(')[0].strip()}" if gain_row else ""
+            with st.expander(f"{badge} {idea['title']}{tag}{gain_tag}  ·  p{idea['priority']}"):
+                if idea.get("summary"):
+                    st.markdown(f"### {idea['summary']}")
+                conf = (idea.get("confidence") or "").lower()
+                if conf:
+                    dot = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(conf, "⚪")
+                    gain = idea.get("expected_gain") or "?"
+                    st.markdown(f"**My call:** {dot} **{conf.upper()}** confidence · "
+                                f"est. val-loss change at 200M: **{gain}**")
+                if idea.get("reference_url"):
+                    st.markdown(f"🔗 [{idea['reference_url']}]({idea['reference_url']})")
+                if idea.get("explanation"):
+                    st.markdown("**How it works:**")
+                    st.markdown(idea["explanation"])
+                if idea.get("pros") or idea.get("cons"):
+                    pc1, pc2 = st.columns(2)
+                    with pc1:
+                        st.markdown("**✅ Pros**")
+                        for line in (idea.get("pros") or "—").split("\n"):
+                            st.markdown(f"- {line}" if not line.startswith("-") else line)
+                    with pc2:
+                        st.markdown("**⚠️ Cons**")
+                        for line in (idea.get("cons") or "—").split("\n"):
+                            st.markdown(f"- {line}" if not line.startswith("-") else line)
                 st.markdown(f"**Thread:** {idea.get('thread_name') or '—'}  ·  "
                             f"**Est:** {idea.get('estimated_minutes') or '?'} min  ·  "
                             f"**GPU:** {idea.get('gpu_class') or '—'}")
@@ -129,6 +163,25 @@ def main():
                 elif idea["status"] == "approved":
                     st.success("Approved. Promote to queue via CLI: "
                                f"`python scripts/experiment_registry.py idea promote --id {idea['id']}`")
+
+    # ── Negatives (ran-and-lost) ───────────────────────────────────────────────
+    with tab_negatives:
+        st.caption("Experiments we actually ran that did NOT win. Kept so they are never "
+                   "re-proposed. Distinct from ideas rejected before running.")
+        cur.execute("SELECT * FROM ideas WHERE outcome='tested_negative' ORDER BY updated_at DESC")
+        ncols = [d[0] for d in cur.description]
+        negs = [dict(zip(ncols, row)) for row in cur.fetchall()]
+        if not negs:
+            st.info("No tested-negative experiments recorded yet.")
+        for idea in negs:
+            with st.expander(f"❌ {idea['title']}"):
+                if idea.get("summary"):
+                    st.markdown(f"**{idea['summary']}**")
+                st.markdown(f"**Measured result:** {idea.get('expected_gain') or '—'}")
+                if idea.get("review_note"):
+                    st.markdown(idea["review_note"])
+                if idea.get("reference_url"):
+                    st.markdown(f"🔗 [{idea['reference_url']}]({idea['reference_url']})")
 
     # ── Runs ──────────────────────────────────────────────────────────────────
     with tab_runs:
