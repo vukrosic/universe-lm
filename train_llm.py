@@ -234,8 +234,45 @@ def main():
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
-    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")
+    parser.add_argument(
+        "--load_checkpoint",
+        type=str,
+        help="Path to a checkpoint file to warm-start or fully resume from",
+    )
     parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
+    parser.add_argument(
+        "--schedule_type",
+        type=str,
+        choices=["constant", "cosine", "linear", "warmup_decay_to_zero"],
+        help="Learning rate schedule to use",
+    )
+    parser.add_argument("--warmup_ratio", type=float, help="Warmup fraction of total optimization steps")
+    parser.add_argument("--logit_softcap", type=float, help="Optional tanh cap for output logits")
+    parser.add_argument(
+        "--zero_init_output_projections",
+        type=str,
+        help="Zero-init attention and MLP output projections (true/false)",
+    )
+    parser.add_argument("--qk_gain_init", type=float, help="Initial value for the learnable QK gain")
+    parser.add_argument(
+        "--use_per_group_lr",
+        type=str,
+        help="Enable per-group AdamW learning rates (true/false)",
+    )
+    parser.add_argument("--embed_lr_multiplier", type=float, help="Multiplier for embedding LR")
+    parser.add_argument("--scalar_lr_multiplier", type=float, help="Multiplier for scalar/norm LR")
+    parser.add_argument(
+        "--ffn_variant",
+        type=str,
+        choices=["squared_relu", "swiglu"],
+        help="Feed-forward architecture variant",
+    )
+    parser.add_argument("--residual_scale_init", type=float, help="Initial residual multiplier for each block")
+    parser.add_argument(
+        "--embedding_residual_scale_init",
+        type=float,
+        help="Initial learned skip from token embeddings into every block",
+    )
     parser.add_argument(
         "--device",
         type=str,
@@ -295,6 +332,28 @@ def main():
         config.train_tokens = args.train_tokens
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
+    if args.schedule_type is not None:
+        config.schedule_type = args.schedule_type
+    if args.warmup_ratio is not None:
+        config.warmup_ratio = args.warmup_ratio
+    if args.logit_softcap is not None:
+        config.logit_softcap = args.logit_softcap
+    if args.zero_init_output_projections is not None:
+        config.zero_init_output_projections = (args.zero_init_output_projections.lower() == "true")
+    if args.qk_gain_init is not None:
+        config.qk_gain_init = args.qk_gain_init
+    if args.use_per_group_lr is not None:
+        config.use_per_group_lr = (args.use_per_group_lr.lower() == "true")
+    if args.embed_lr_multiplier is not None:
+        config.embed_lr_multiplier = args.embed_lr_multiplier
+    if args.scalar_lr_multiplier is not None:
+        config.scalar_lr_multiplier = args.scalar_lr_multiplier
+    if args.ffn_variant is not None:
+        config.ffn_variant = args.ffn_variant
+    if args.residual_scale_init is not None:
+        config.residual_scale_init = args.residual_scale_init
+    if args.embedding_residual_scale_init is not None:
+        config.embedding_residual_scale_init = args.embedding_residual_scale_init
     config.device = args.device
     if args.eval_every is not None:
         config.eval_every = args.eval_every
