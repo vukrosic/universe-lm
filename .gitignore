@@ -222,7 +222,9 @@ plots/
 docs/tutorials/
 utils/plot_smoke_comparison.py
 queues/
+threads/
 scripts/run_*.sh
+scripts/run_threads.py
 configs/quick_screen_experiments.py
 docs/KNOWN_LEVERS.md
 

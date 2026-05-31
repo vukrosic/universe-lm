@@ -29,3 +29,14 @@ class SwiGLUFeedForward(nn.Module):
     def forward(self, x):
         hidden = F.silu(self.gate_proj(x)) * self.up_proj(x)
         return self.down_proj(self.dropout(hidden))
+
+
+class LayerScale(nn.Module):
+    """Per-dimension learnable residual branch scale."""
+
+    def __init__(self, d_model: int, init_value: float):
+        super().__init__()
+        self.scale = nn.Parameter(torch.full((d_model,), float(init_value)))
+
+    def forward(self, x):
+        return x * self.scale

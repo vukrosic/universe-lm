@@ -125,7 +125,7 @@ def default_metrics_history() -> Dict[str, list]:
     }
 
 
-def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
+def setup_muon_optimizer(model: nn.Module, config: LLMConfig, *, use_fused_adamw: bool = True):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
     adamw_params = []
@@ -148,10 +148,36 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
         adamw_params,
         lr=config.adamw_lr,
         weight_decay=config.weight_decay,
-        fused=device.type == "cuda"
+        fused=use_fused_adamw and device.type == "cuda"
     )
 
     return [muon_optimizer, adamw_optimizer]
+
+
+def disable_fused_adamw(optimizer: torch.optim.Optimizer) -> None:
+    """Ensure resumed AdamW checkpoints use the eager path."""
+    # Local experiment patch: keep this out of main until resume checkpoints are
+    # made fused-AdamW compatible and covered by a small regression test.
+    if not isinstance(optimizer, torch.optim.AdamW):
+        return
+    optimizer.defaults["fused"] = False
+    for group in optimizer.param_groups:
+        group["fused"] = False
+
+
+def normalize_adamw_state(optimizer: torch.optim.Optimizer) -> None:
+    """Match resumed AdamW moment tensors to their current parameters."""
+    if not isinstance(optimizer, torch.optim.AdamW):
+        return
+    for group in optimizer.param_groups:
+        for param in group["params"]:
+            state = optimizer.state.get(param)
+            if not state:
+                continue
+            for key, value in list(state.items()):
+                if key == "step" or not isinstance(value, torch.Tensor):
+                    continue
+                state[key] = value.to(device=param.device, dtype=param.dtype).contiguous()
 
 
 def train_model(
@@ -244,31 +270,27 @@ def train_model(
             # Count tokens in this batch (approx: batch_size * seq_len)
             batch_tokens = x.numel()
 
-            # Forward pass (optimized to avoid large contiguous copies of logits)
+            # Forward pass. Shift labels instead of logits to save VRAM; last
+            # token -> -100 (ignored).
+            shift_labels = torch.full_like(y, -100)
+            shift_labels[:, :-1] = y[:, 1:]
+
             if config.use_amp and device.type == "cuda":
                 with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits = model(x)
-                    # Shift labels instead of logits to save ~3GB VRAM
-                    # We set the last token to -100 so cross_entropy ignores it
-                    shift_labels = torch.full_like(y, -100)
-                    shift_labels[:, :-1] = y[:, 1:]
-                    
                     ce_loss = F.cross_entropy(
                         logits.view(-1, config.vocab_size),
                         shift_labels.view(-1),
-                        ignore_index=-100
+                        ignore_index=-100,
                     )
                     loss = ce_loss / config.gradient_accumulation_steps
                 loss.backward()
             else:
                 logits = model(x)
-                shift_labels = torch.full_like(y, -100)
-                shift_labels[:, :-1] = y[:, 1:]
-                
                 ce_loss = F.cross_entropy(
                     logits.view(-1, config.vocab_size),
                     shift_labels.view(-1),
-                    ignore_index=-100
+                    ignore_index=-100,
                 )
                 loss = ce_loss / config.gradient_accumulation_steps
                 loss.backward()
@@ -547,7 +569,7 @@ def train_minimal_llm(
     # ============================================
     set_seed(getattr(config, "seed", 42))
     model = MinimalLLM(config)
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16) if device.type == "cuda" else model.to(device)
     
     # Load pretrained weights if specified
     if load_weights_path:
@@ -603,7 +625,8 @@ def train_minimal_llm(
     # ============================================
     # 6. Create FRESH optimizers (no accumulated state)
     # ============================================
-    optimizers = setup_muon_optimizer(model, config)
+    resume_with_optimizer_state = bool(checkpoint_payload and "optimizer_state_dicts" in checkpoint_payload)
+    optimizers = setup_muon_optimizer(model, config, use_fused_adamw=not resume_with_optimizer_state)
 
     # ============================================
     # 7. Create FRESH schedulers
@@ -645,6 +668,8 @@ def train_minimal_llm(
         scheduler_states = checkpoint_payload.get("scheduler_state_dicts", [])
         for optimizer, state_dict in zip(optimizers, optimizer_states):
             optimizer.load_state_dict(state_dict)
+            disable_fused_adamw(optimizer)
+            normalize_adamw_state(optimizer)
         for scheduler, state_dict in zip(schedulers, scheduler_states):
             scheduler.load_state_dict(state_dict)
         restore_rng_state(checkpoint_payload.get("rng_state"))

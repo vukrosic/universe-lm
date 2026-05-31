@@ -28,6 +28,7 @@ class MinimalLLM(nn.Module):
                     config.dropout,
                     n_kv_heads=config.n_kv_heads,
                     ffn_variant=config.ffn_variant,
+                    residual_scale_init=getattr(config, "residual_scale_init", None),
                 )
                 for i in range(config.n_layers)
             ]
@@ -63,6 +64,6 @@ class MinimalLLM(nn.Module):
         # Output projection
         x = self.norm(x)
         x = self.output_dropout(x)
-        logits = self.lm_head(x)
 
+        logits = self.lm_head(x)
         return logits

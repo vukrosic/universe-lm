@@ -51,7 +51,7 @@ class LLMConfig:
     grad_clip: float = 1.0
     use_amp: bool = True
     ffn_variant: str = "squared_relu"
-    
+    residual_scale_init: Optional[float] = None
     # Logging
     log_milestones: Tuple[int, ...] = (100, 500, 1000)
 

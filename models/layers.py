@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward, SwiGLUFeedForward
+from .components import LayerScale, SquaredReLUFeedForward, SwiGLUFeedForward
 
 
 class Rotary(nn.Module):
@@ -117,6 +117,7 @@ class TransformerBlock(nn.Module):
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
         ffn_variant: str = "squared_relu",
+        residual_scale_init: float | None = None,
     ):
         super().__init__()
 
@@ -128,6 +129,13 @@ class TransformerBlock(nn.Module):
         else:
             raise ValueError(f"Unknown ffn_variant: {ffn_variant}")
 
+        self.attn_residual_scale = (
+            LayerScale(d_model, residual_scale_init) if residual_scale_init is not None else None
+        )
+        self.ff_residual_scale = (
+            LayerScale(d_model, residual_scale_init) if residual_scale_init is not None else None
+        )
+
         # Normalization layers
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
@@ -136,9 +144,13 @@ class TransformerBlock(nn.Module):
     def forward(self, x):
         # Self-attention
         attn_out = self.attention(self.norm1(x))
+        if self.attn_residual_scale is not None:
+            attn_out = self.attn_residual_scale(attn_out)
         x = x + self.dropout(attn_out)
 
         # Feed-forward
         ff_out = self.feed_forward(self.norm2(x))
+        if self.ff_residual_scale is not None:
+            ff_out = self.ff_residual_scale(ff_out)
         x = x + self.dropout(ff_out)
         return x
