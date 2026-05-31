@@ -65,7 +65,10 @@ def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
     if state.get("python") is not None:
         random.setstate(state["python"])
     if state.get("torch") is not None:
-        torch.set_rng_state(state["torch"])
+        torch_state = state["torch"]
+        if not isinstance(torch_state, torch.Tensor):
+            torch_state = torch.as_tensor(torch_state, dtype=torch.uint8)
+        torch.set_rng_state(torch_state.cpu().contiguous())
     if state.get("numpy") is not None:
         np.random.set_state(state["numpy"])
     if torch.cuda.is_available() and state.get("cuda") is not None:
