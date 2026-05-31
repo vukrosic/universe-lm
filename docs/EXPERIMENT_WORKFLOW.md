@@ -33,6 +33,11 @@ to keep.
 Commit experiments to their branch — **never directly to `main`.** `main` only ever
 receives *promoted winners* (merged) plus the leaderboard text.
 
+For one-GPU sweeps that need a few jobs in sequence, use
+[`scripts/run_job_queue.py`](../scripts/run_job_queue.py). It runs each job in
+order, waits for `train_llm.py` to go idle between jobs, and supports a pause
+step when you want to stop for a human decision before continuing.
+
 ---
 
 ## Lifecycle: branches are temporary, tags are the archive
