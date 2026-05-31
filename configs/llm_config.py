@@ -95,6 +95,8 @@ class Screen10M20MConfig(LLMConfig):
     batch_size: int = 2
     train_tokens: int = 20_000_000
     compile_model: bool = False
+    warmup_ratio: float = 0.02
+    schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
 
 
