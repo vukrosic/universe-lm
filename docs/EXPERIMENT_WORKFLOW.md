@@ -55,6 +55,15 @@ ACTIVE      → branch  (exp/qk-gain)        ← contributors run / append here
 - **Tags** are the permanent archive. Every experiment — won or null — leaves an immutable tag. Cheap, forever, invisible in normal branch view.
 - **`main`** accumulates only: promoted mechanisms + leaderboard rows + configs/protocol/README.
 
+### Freeze checklist
+
+When a run is worth keeping:
+
+- Tag the exact commit that produced it, for example `result/<name>`.
+- Keep the final `metrics.json` with the tag or result note.
+- Do not commit `model.pt` to git; if you need a restartable checkpoint, store it separately under `checkpoints/<version>/model.pt` or publish it through the release pipeline.
+- Record the exact command, seed, and dataset path in the result note or leaderboard row.
+
 ### Why a deleted branch loses nothing
 
 The tag keeps the commit reachable, so it's never garbage-collected. `git checkout <tag>`

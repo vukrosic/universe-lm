@@ -22,5 +22,7 @@ For the raw evidence, commit the full run output — config, logs, metrics, plot
 Don't open a PR and don't push to `main`. If the numbers look interesting, we'll
 pull up that branch in your repo and review the raw results there.
 
+Keep `model.pt` out of git; if you want a reusable checkpoint, save it separately under `checkpoints/<version>/model.pt` or use the release pipeline.
+
 The issue comment is the report; the frozen branch is the evidence. We curate
 the winners into `main` ourselves.
