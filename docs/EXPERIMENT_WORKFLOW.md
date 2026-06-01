@@ -33,6 +33,13 @@ to keep.
 Commit experiments to their branch — **never directly to `main`.** `main` only ever
 receives *promoted winners* (merged) plus the leaderboard text.
 
+> **Registry location (canonical):** the one real DB lives in a *separate* repo at
+> `/Users/vukrosic/my-life/experiment-registry/registry/experiments.sqlite`
+> (code in `experiment-registry/registry/`, dashboard `streamlit run registry/dashboard.py`
+> → http://localhost:8501). It is **not** inside this repo. Do **not** create a
+> `registry/` dir here — a stray empty copy will silently shadow the real one and read
+> as "0 rows". Always pass the absolute `--db` path above.
+
 For one-GPU sweeps that need a few jobs in sequence, the **registry DB is the
 only source of truth** — there is no JSONL queue. Add a row to
 `queue_items`, then run the DB-driven worker:
