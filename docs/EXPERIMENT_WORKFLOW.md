@@ -33,26 +33,31 @@ to keep.
 Commit experiments to their branch — **never directly to `main`.** `main` only ever
 receives *promoted winners* (merged) plus the leaderboard text.
 
-For one-GPU sweeps that need a few jobs in sequence, use
-[`scripts/run_job_queue.py`](../scripts/run_job_queue.py). It runs each job in
-order, waits for `train_llm.py` to go idle between jobs, and supports a pause
-step when you want to stop for a human decision before continuing.
-
-Minimal queue file:
-
-```jsonl
-{"name":"screen10m_swiglu","cmd":"python train_llm.py --config_class ..."}
-{"kind":"pause","name":"review","message":"check the first result, then continue"}
-{"name":"screen10m_zero_init","cmd":"python train_llm.py --config_class ..."}
-```
-
-Typical launch:
+For one-GPU sweeps that need a few jobs in sequence, the **registry DB is the
+only source of truth** — there is no JSONL queue. Add a row to
+`queue_items`, then run the DB-driven worker:
 
 ```bash
-tmux new -s quick_queue \
-  "/venv/main/bin/python3 scripts/run_job_queue.py --queue queues/my_queue.jsonl \
-   --status-log logs/my_queue_status.log --log-dir logs/my_queue"
+# add jobs to the queue
+python /Users/vukrosic/my-life/experiment-registry/scripts/experiment_registry.py \
+  --db /Users/vukrosic/my-life/experiment-registry/registry/experiments.sqlite \
+  queue upsert --thread-name recipe --name screen10m_swiglu \
+  --command "python train_llm.py --config screen10m --seed 42 --<flag>" \
+  --priority 11
+
+# launch the worker (idempotent, waits for train_llm.py to be idle)
+tmux new -s queue_worker \
+  "python /Users/vukrosic/my-life/experiment-registry/scripts/experiment_registry.py \
+   --db /Users/vukrosic/my-life/experiment-registry/registry/experiments.sqlite \
+   queue run --wait-for-idle"
 ```
+
+The worker reads `queue_items` with `status='queued'`, executes each
+`command` in order (priority desc, then created_at), updates the row to
+`running` then `done` / `failed`, and streams stdout/stderr to
+`logs/queue/<thread>__<name>.log`. Pass `--pause-for-decision` to block
+after each job until a `decision` row is recorded for that thread — your
+human gate replaces the old `kind: pause` JSONL line.
 
 ---
 
