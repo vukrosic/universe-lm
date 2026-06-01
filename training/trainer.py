@@ -161,6 +161,8 @@ def train_model(
     pbar = tqdm(total=config.train_tokens, desc=desc, unit="tokens", initial=min(tokens_seen, config.train_tokens))
     
     stopped_early = False
+    gated = False  # set True when we pause at a pre-registered gate step for human review
+    gate_step = getattr(config, "stop_at_step", None)
     output_path = Path(output_dir) if output_dir else None
     if output_path:
         output_path.mkdir(parents=True, exist_ok=True)
@@ -348,6 +350,31 @@ def train_model(
                         stopped_early = True
                         break
 
+                # Gate stop: pause the run at a pre-registered step so a human can
+                # judge the curve before spending the rest of the compute. We only
+                # gate on a milestone (we just evaluated + checkpointed above), so
+                # gate.pt is a full, resumable state with a fresh eval point.
+                if gate_step is not None and step >= gate_step:
+                    if output_path:
+                        save_training_checkpoint(
+                            output_path / "gate.pt",
+                            model,
+                            config,
+                            optimizers,
+                            schedulers,
+                            live_metrics,
+                            step,
+                            tokens_seen,
+                            metrics_history,
+                        )
+                        print(f"\n⏸️  Gate reached: stop_at_step={gate_step} (paused at step {step}). "
+                              f"Saved resumable checkpoint for human review.\n"
+                              f"    Resume the SAME run with: --load_checkpoint {output_path / 'gate.pt'}")
+                    else:
+                        print(f"\n⏸️  Gate reached at step {step}, but no --output_dir set, so no checkpoint was saved.")
+                    gated = True
+                    break
+
             step += 1
         
         # If we finished the inner loop but didn't stop early, 
@@ -355,13 +382,13 @@ def train_model(
         if not stopped_early and 'ce_loss' in locals():
             current_loss_val = ce_loss.item()
 
-        if stopped_early:
+        if stopped_early or gated:
             break
 
     pbar.close()
 
     # Final evaluation (if not stopped early)
-    if not stopped_early or tokens_seen >= config.train_tokens:
+    if (not stopped_early and not gated) or tokens_seen >= config.train_tokens:
         # If the last in-loop milestone already evaluated these exact weights
         # (last completed step == step - 1, no optimizer step since), reuse that
         # result instead of re-evaluating — avoids a duplicate final data point.
@@ -451,6 +478,7 @@ def train_model(
         'steps': step,
         'tokens_seen': tokens_seen,
         'train_loss': current_loss_val if 'current_loss_val' in locals() else 0.0,
+        'gated': gated,
     }
 
 
@@ -678,6 +706,7 @@ def train_minimal_llm(
     metrics_history = results['metrics_history']
     step = results['steps']
     tokens_seen = results['tokens_seen']
+    gated = results.get('gated', False)
 
     # ============================================
     # 10. Unified Saving & Reporting
@@ -702,6 +731,7 @@ def train_minimal_llm(
         'actual_steps': step,
         'tokens_seen': tokens_seen,
         'train_tokens': config.train_tokens,
+        'gated': gated,
         'history': metrics_history,
         **capture_git_metadata(),
     }
@@ -787,5 +817,6 @@ def train_minimal_llm(
         'setup_time': setup_time,
         'training_time': total_training_time,
         'steps': step,
-        'tokens_seen': tokens_seen
+        'tokens_seen': tokens_seen,
+        'gated': gated,
     }
