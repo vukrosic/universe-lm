@@ -5,7 +5,8 @@ import torch.nn.functional as F
 import math
 import time
 import json
-import json
+import random
+import numpy as np
 from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -16,6 +17,27 @@ from optimizers.muon import Muon
 from training.device import resolve_device
 from training.evaluation import evaluate_model
 from utils.helpers import set_seed, format_time
+
+
+def capture_rng_state() -> Dict[str, Any]:
+    state = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
+    if not state:
+        return
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all(state["cuda"])
 
 
 class EarlyStopping:

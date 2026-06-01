@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward
+from .components import SquaredReLUFeedForward, SwiGLUFeedForward
 
 
 class Rotary(nn.Module):
@@ -27,6 +27,7 @@ class MultiHeadAttention(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        qk_gain_init: float = 0.0,
     ):
         super().__init__()
         self.d_model = d_model
@@ -61,6 +62,9 @@ class MultiHeadAttention(nn.Module):
 
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
+        self.qk_gain = nn.Parameter(
+            torch.full((1, 1, self.n_heads, 1), float(qk_gain_init))
+        )
 
     def forward(self, x):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -81,7 +85,8 @@ class MultiHeadAttention(nn.Module):
         # Apply RoPE
         Q = self.rotary(self.q_norm(Q))
         K = self.rotary(self.k_norm(K))
-        
+        Q = Q * (1.0 + self.qk_gain)
+
         # Repeat K/V for GQA if needed
         if self.n_kv_heads != self.n_heads:
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
@@ -116,23 +121,46 @@ class TransformerBlock(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        qk_gain_init: float = 0.0,
+        ffn_variant: str = "squared_relu",
+        residual_scale_init: float = 1.0,
+        embedding_residual_scale_init: float = 0.0,
     ):
         super().__init__()
 
-        self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout, n_kv_heads)
-        self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
+        self.attention = MultiHeadAttention(
+            d_model,
+            n_heads,
+            max_seq_len,
+            dropout,
+            n_kv_heads,
+            qk_gain_init=qk_gain_init,
+        )
+        ffn_variant = (ffn_variant or "squared_relu").lower()
+        if ffn_variant == "swiglu":
+            self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
+        else:
+            self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
 
         # Normalization layers
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+        self.residual_scale_attn = nn.Parameter(torch.tensor(float(residual_scale_init)))
+        self.residual_scale_ff = nn.Parameter(torch.tensor(float(residual_scale_init)))
+        self.embedding_residual_scale = nn.Parameter(
+            torch.tensor(float(embedding_residual_scale_init))
+        )
 
-    def forward(self, x):
+    def forward(self, x, x0: torch.Tensor | None = None):
+        if x0 is not None:
+            x = x + self.dropout(x0) * self.embedding_residual_scale
+
         # Self-attention
         attn_out = self.attention(self.norm1(x))
-        x = x + self.dropout(attn_out)
+        x = x + self.dropout(attn_out) * self.residual_scale_attn
 
         # Feed-forward
         ff_out = self.feed_forward(self.norm2(x))
-        x = x + self.dropout(ff_out)
+        x = x + self.dropout(ff_out) * self.residual_scale_ff
         return x

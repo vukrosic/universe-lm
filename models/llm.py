@@ -27,6 +27,10 @@ class MinimalLLM(nn.Module):
                     config.max_seq_len,
                     config.dropout,
                     n_kv_heads=config.n_kv_heads,
+                    qk_gain_init=config.qk_gain_init,
+                    ffn_variant=config.ffn_variant,
+                    residual_scale_init=config.residual_scale_init,
+                    embedding_residual_scale_init=config.embedding_residual_scale_init,
                 )
                 for i in range(config.n_layers)
             ]
@@ -41,6 +45,8 @@ class MinimalLLM(nn.Module):
         self.lm_head.weight = self.token_embedding.weight
 
         self.apply(self._init_weights)
+        if getattr(config, "zero_init_output_projections", False):
+            self._zero_init_output_projections()
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -50,18 +56,30 @@ class MinimalLLM(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def _zero_init_output_projections(self) -> None:
+        """Zero the residual-producing projections for an identity-start lever."""
+        for block in self.transformer_blocks:
+            attention = block.attention
+            with torch.no_grad():
+                attention.qkvo_proj[attention.qkv_size:].zero_()
+                block.feed_forward.down_proj.weight.zero_()
+
     def forward(self, x):
         # Token embeddings
         x = self.token_embedding(x) * math.sqrt(self.config.d_model)
         x = self.position_dropout(x)
+        x0 = x
 
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x)
+            x = block(x, x0=x0)
 
         # Output projection
         x = self.norm(x)
         x = self.output_dropout(x)
         logits = self.lm_head(x)
+        if getattr(self.config, "logit_softcap", None):
+            cap = float(self.config.logit_softcap)
+            logits = cap * torch.tanh(logits / cap)
 
         return logits

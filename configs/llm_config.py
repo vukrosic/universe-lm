@@ -40,6 +40,14 @@ class LLMConfig:
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
 
+    # Structural knobs used by the model stack.
+    qk_gain_init: float = 0.0
+    ffn_variant: str = "squared_relu"
+    residual_scale_init: float = 1.0
+    embedding_residual_scale_init: float = 0.0
+    zero_init_output_projections: bool = False
+    logit_softcap: Optional[float] = None
+
     # Evaluation
     eval_every: Optional[int] = None
     eval_steps: int = 100
@@ -95,7 +103,30 @@ class Screen10M20MConfig(LLMConfig):
     batch_size: int = 2
     train_tokens: int = 20_000_000
     compile_model: bool = False
+    warmup_ratio: float = 0.02
+    schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 4880, 200))
+
+
+@dataclass
+class Screen10M1MConfig(Screen10M20MConfig):
+    """Ultra-fast screen — ~10M params · 1M tokens · ~250 steps.
+
+    Same shape as Screen10M20MConfig, but much shorter so it can quickly sort
+    many ideas while still using the winning 10M schedule.
+    """
+    train_tokens: int = 1_000_000
+    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 250, 25))
+
+
+@dataclass
+class Screen10M5MConfig(Screen10M20MConfig):
+    """Short screen — ~10M params · 5M tokens.
+
+    Same shape and schedule as the winning 10M screen, but long enough to act
+    as a real control for the 5M architecture sweep.
+    """
+    train_tokens: int = 5_000_000
 
 
 # ============================================================================

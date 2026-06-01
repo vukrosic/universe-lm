@@ -13,6 +13,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from configs.llm_config import (
     LLMConfig,
     Screen3M32KConfig,
+    Screen10M1MConfig,
+    Screen10M5MConfig,
     Screen10M20MConfig,
     Full10M200MConfig,
     Full135M2700MConfig,
@@ -230,7 +232,7 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "screen3m", "screen10m", "10m", "135m"],
+        choices=["default", "screen3m", "screen1m", "screen5m", "screen10m", "10m", "135m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -265,6 +267,8 @@ def main():
     preset_map = {
         "default": LLMConfig,
         "screen3m": Screen3M32KConfig,
+        "screen1m": Screen10M1MConfig,
+        "screen5m": Screen10M5MConfig,
         "screen10m": Screen10M20MConfig,
         "10m": Full10M200MConfig,
         "135m": Full135M2700MConfig,
