@@ -21,13 +21,6 @@ For finding promising mechanisms and reproducing baselines fast. Not ranked — 
 win counts. The **→ 10m** column ties each screen run to its real `10m` entry (or shows it
 hasn't been validated there yet). Full QK-gain sweeps: [qk_leaderboard.md](qk_leaderboard.md).
 
-**`screen3m`** — 3.2M · 32k tokens · `--config screen3m --seed 42`
-
-| Val loss | Run | Time | → 10m |
-|---|---|---|---|
-| 9.2894 | QK-gain init=2.2 | 9s | not run at 10m yet |
-| 9.3769 | baseline | 13s | ties to `10m` #0 (gain=0, 5.015) |
-
 **`screen10m`** — 10M · 20M tokens · `--config screen10m --seed 42`
 
 | Val loss | Run | Time | → 10m |

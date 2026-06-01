@@ -68,22 +68,6 @@ class LLMConfig:
 
 
 @dataclass
-class Screen3M32KConfig(LLMConfig):
-    """Fast screen — ~3.2M params · 32k tokens · 8 steps. Plumbing + sign/basin in seconds.
-    """
-    d_model: int = 64
-    n_heads: int = 2
-    n_layers: int = 2
-    d_ff: int = 256
-    n_kv_heads: int = 1
-    max_seq_len: int = 2048
-    batch_size: int = 2
-    train_tokens: int = 32_768
-    compile_model: bool = False
-    eval_milestones: Optional[Tuple[int, ...]] = tuple(range(8))
-
-
-@dataclass
 class Screen10M20MConfig(LLMConfig):
     """Screen — ~10M params · 20M tokens · ~4880 steps. Confirms sign survives more tokens.
     """

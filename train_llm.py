@@ -12,7 +12,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
-    Screen3M32KConfig,
     Screen10M20MConfig,
     Full10M200MConfig,
     Full135M2700MConfig,
@@ -230,11 +229,12 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "screen3m", "screen10m", "10m", "135m"],
+        choices=["default", "screen10m", "10m", "135m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
-    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from")
+    parser.add_argument("--load_checkpoint", type=str, help="Path to checkpoint file to load weights from. Point at a full gate.pt/latest.pt to RESUME the same run (restores optimizer + scheduler + step + RNG).")
+    parser.add_argument("--stop_at_step", type=int, help="Pause the run at the first eval milestone >= this step: saves a resumable gate.pt and exits for human review. Resume with --load_checkpoint <dir>/gate.pt.")
     parser.add_argument("--compile", type=str, help="Whether to compile the model (true/false)")
     parser.add_argument(
         "--device",
@@ -264,7 +264,6 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
-        "screen3m": Screen3M32KConfig,
         "screen10m": Screen10M20MConfig,
         "10m": Full10M200MConfig,
         "135m": Full135M2700MConfig,
@@ -296,6 +295,8 @@ def main():
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device
+    if args.stop_at_step is not None:
+        config.stop_at_step = args.stop_at_step
     if args.eval_every is not None:
         config.eval_every = args.eval_every
     if args.save_every is not None:
