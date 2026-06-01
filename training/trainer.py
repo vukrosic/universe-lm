@@ -5,17 +5,19 @@ import torch.nn.functional as F
 import math
 import time
 import json
-import json
-import random
-import subprocess
 from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List, Optional, Callable, Dict, Any
-import numpy as np
 from configs.llm_config import LLMConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
+from training.checkpointing import (
+    capture_git_metadata,
+    capture_rng_state,
+    restore_rng_state,
+    save_training_checkpoint,
+)
 from training.device import resolve_device
 from training.evaluation import evaluate_model
 from utils.helpers import set_seed, format_time
@@ -46,72 +48,16 @@ class EarlyStopping:
             return False
 
 
-def capture_rng_state() -> Dict[str, Any]:
-    """Capture RNG state so a checkpoint can be resumed later."""
-    state = {
-        "python": random.getstate(),
-        "torch": torch.get_rng_state(),
-        "numpy": np.random.get_state(),
-    }
-    if torch.cuda.is_available():
-        state["cuda"] = torch.cuda.get_rng_state_all()
-    return state
-
-
-def restore_rng_state(state: Optional[Dict[str, Any]]) -> None:
-    """Restore RNG state if a checkpoint stored it."""
-    if not state:
-        return
-    if state.get("python") is not None:
-        random.setstate(state["python"])
-    if state.get("torch") is not None:
-        torch_state = state["torch"]
-        if not isinstance(torch_state, torch.Tensor):
-            torch_state = torch.as_tensor(torch_state, dtype=torch.uint8)
-        torch.set_rng_state(torch_state.cpu().contiguous())
-    if state.get("numpy") is not None:
-        np.random.set_state(state["numpy"])
-    if torch.cuda.is_available() and state.get("cuda") is not None:
-        cuda_states = state["cuda"]
-        normalized_cuda_states = []
-        for cuda_state in cuda_states:
-            if not isinstance(cuda_state, torch.Tensor):
-                cuda_state = torch.as_tensor(cuda_state, dtype=torch.uint8)
-            normalized_cuda_states.append(cuda_state.cpu().contiguous())
-        torch.cuda.set_rng_state_all(normalized_cuda_states)
-
-
-def capture_git_metadata() -> Dict[str, Any]:
-    """Capture repo identity for reproducible artifacts."""
-    def run_git(args: List[str]) -> Optional[str]:
-        try:
-            return subprocess.run(
-                ["git", *args],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        except Exception:
-            return None
-
-    dirty = None
-    try:
-        dirty = bool(
-            subprocess.run(
-                ["git", "status", "--porcelain"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        )
-    except Exception:
-        pass
-
-    return {
-        "git_commit": run_git(["rev-parse", "HEAD"]),
-        "git_branch": run_git(["branch", "--show-current"]),
-        "git_dirty": dirty,
-    }
+def load_exact_step_baseline(config: LLMConfig) -> Dict[int, float]:
+    """Load exact-step baseline values for log-only comparisons."""
+    if config.train_tokens < 150_000_000:
+        return {}
+    baseline_path = Path("baselines/10m_baseline.json")
+    if not baseline_path.exists():
+        return {}
+    with open(baseline_path) as f:
+        baseline = json.load(f)
+    return dict(zip(baseline.get("steps", []), baseline.get("val_losses", [])))
 
 
 def default_metrics_history() -> Dict[str, list]:
@@ -148,7 +94,7 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
         adamw_params,
         lr=config.adamw_lr,
         weight_decay=config.weight_decay,
-        fused=device.type == "cuda"
+        fused=device.type == "cuda",
     )
 
     return [muon_optimizer, adamw_optimizer]
@@ -215,6 +161,27 @@ def train_model(
     pbar = tqdm(total=config.train_tokens, desc=desc, unit="tokens", initial=min(tokens_seen, config.train_tokens))
     
     stopped_early = False
+    output_path = Path(output_dir) if output_dir else None
+    if output_path:
+        output_path.mkdir(parents=True, exist_ok=True)
+    exact_step_baseline = load_exact_step_baseline(config)
+
+    def write_live_metrics(current_metrics: Dict[str, Any], current_step: int, current_tokens: int) -> None:
+        if not output_path:
+            return
+        live_metrics = {
+            'final_metrics': current_metrics,
+            'total_time_minutes': (time.time() - train_start_time) / 60,
+            'stopped_early': stopped_early,
+            'actual_steps': current_step,
+            'tokens_seen': current_tokens,
+            'history': metrics_history,
+            **capture_git_metadata(),
+        }
+        if extra_config:
+            live_metrics['experiment_config'] = extra_config
+        with open(output_path / "metrics.json", 'w') as f:
+            json.dump(live_metrics, f, indent=2)
 
     while tokens_seen < config.train_tokens:
         for batch_idx, batch in enumerate(train_loader):
@@ -343,6 +310,36 @@ def train_model(
                       f"Val Acc: {eval_metrics['val_accuracy']:.4f}, "
                       f"Val PPL: {eval_metrics['val_perplexity']:.2f}, "
                       f"LR: {current_lr:.5f}")
+                if step in exact_step_baseline:
+                    baseline_loss = exact_step_baseline[step]
+                    delta = eval_metrics['val_loss'] - baseline_loss
+                    print(f"   Baseline@step {step}: {baseline_loss:.4f} | delta: {delta:+.4f}")
+
+                live_metrics = {**eval_metrics, 'train_loss': current_loss_val}
+                write_live_metrics(live_metrics, step, tokens_seen)
+                if output_path:
+                    save_training_checkpoint(
+                        output_path / "latest.pt",
+                        model,
+                        config,
+                        optimizers,
+                        schedulers,
+                        live_metrics,
+                        step,
+                        tokens_seen,
+                        metrics_history,
+                    )
+                    save_training_checkpoint(
+                        output_path / f"checkpoint_step_{step}.pt",
+                        model,
+                        config,
+                        optimizers,
+                        schedulers,
+                        live_metrics,
+                        step,
+                        tokens_seen,
+                        metrics_history,
+                    )
                 
                 # Early stopping check
                 if early_stopper is not None:
@@ -414,9 +411,6 @@ def train_model(
     
     # Save outputs if directory specified
     if output_dir:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        
         # Save metrics
         metrics_file = output_path / "metrics.json"
         metrics_data = {
@@ -437,20 +431,17 @@ def train_model(
         
         # Save model checkpoint
         checkpoint_path = output_path / "model.pt"
-        torch.save({
-            'checkpoint_version': 2,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dicts': [optimizer.state_dict() for optimizer in optimizers],
-            'scheduler_state_dicts': [scheduler.state_dict() for scheduler in schedulers],
-            'config': config,
-            'metrics': final_eval,
-            'step': step,
-            'tokens_seen': tokens_seen,
-            'metrics_history': metrics_history,
-            'rng_state': capture_rng_state(),
-            'git_metadata': capture_git_metadata(),
-        }, checkpoint_path)
-        print(f"   💾 Model saved to {checkpoint_path}")
+        save_training_checkpoint(
+            checkpoint_path,
+            model,
+            config,
+            optimizers,
+            schedulers,
+            final_eval,
+            step,
+            tokens_seen,
+            metrics_history,
+        )
     
     return {
         'model': model,
@@ -547,7 +538,7 @@ def train_minimal_llm(
     # ============================================
     set_seed(getattr(config, "seed", 42))
     model = MinimalLLM(config)
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16) if device.type == "cuda" else model.to(device)
     
     # Load pretrained weights if specified
     if load_weights_path:
@@ -676,7 +667,7 @@ def train_minimal_llm(
         schedulers=schedulers,
         checkpoint_state=checkpoint_payload,
         early_stopper=None,
-        output_dir=None,
+        output_dir=output_dir,
         extra_config=None,
         log_every=getattr(config, 'log_every', 100),
     )
@@ -763,19 +754,17 @@ def train_minimal_llm(
             
         # Save model
         checkpoint_path = output_path / "model.pt"
-        torch.save({
-            'checkpoint_version': 2,
-            'model_state_dict': results['model'].state_dict(),
-            'optimizer_state_dicts': [optimizer.state_dict() for optimizer in optimizers],
-            'scheduler_state_dicts': [scheduler.state_dict() for scheduler in schedulers],
-            'config': config,
-            'metrics': final_eval,
-            'step': step,
-            'tokens_seen': tokens_seen,
-            'metrics_history': metrics_history,
-            'rng_state': capture_rng_state(),
-            'git_metadata': capture_git_metadata(),
-        }, checkpoint_path)
+        save_training_checkpoint(
+            checkpoint_path,
+            results['model'],
+            config,
+            optimizers,
+            schedulers,
+            final_eval,
+            step,
+            tokens_seen,
+            metrics_history,
+        )
         
     
     # Final Output
