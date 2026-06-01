@@ -69,6 +69,8 @@ instance/
 
 hf_cache/
 hf_cache_debug/
+registry/*.sqlite
+registry/__pycache__/
 
 checkpoints/**/*.png
 
