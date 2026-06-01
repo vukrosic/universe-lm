@@ -14,7 +14,9 @@ from configs.llm_config import (
     LLMConfig,
     Screen3M32KConfig,
     Screen10M20MConfig,
+    Screen10M20MValueResidualConfig,
     Full10M200MConfig,
+    Full10M200MValueResidualConfig,
     Full135M2700MConfig,
 )
 from configs.dataset_config import DataConfig
@@ -230,7 +232,15 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "screen3m", "screen10m", "10m", "135m"],
+        choices=[
+            "default",
+            "screen3m",
+            "screen10m",
+            "screen10m_value_residual",
+            "10m",
+            "10m_value_residual",
+            "135m",
+        ],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -266,7 +276,9 @@ def main():
         "default": LLMConfig,
         "screen3m": Screen3M32KConfig,
         "screen10m": Screen10M20MConfig,
+        "screen10m_value_residual": Screen10M20MValueResidualConfig,
         "10m": Full10M200MConfig,
+        "10m_value_residual": Full10M200MValueResidualConfig,
         "135m": Full135M2700MConfig,
     }
 

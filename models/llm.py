@@ -28,6 +28,8 @@ class MinimalLLM(nn.Module):
                     config.dropout,
                     n_kv_heads=config.n_kv_heads,
                     ffn_variant=config.ffn_variant,
+                    value_residual=config.value_residual,
+                    value_residual_init=config.value_residual_init,
                 )
                 for i in range(config.n_layers)
             ]
@@ -57,8 +59,15 @@ class MinimalLLM(nn.Module):
         x = self.position_dropout(x)
 
         # Pass through transformer blocks
-        for block in self.transformer_blocks:
-            x = block(x)
+        value_residual_source = None
+        for block_idx, block in enumerate(self.transformer_blocks):
+            x, block_value_source = block(
+                x,
+                value_residual_source=value_residual_source,
+                return_value_source=self.config.value_residual and block_idx == 0,
+            )
+            if block_idx == 0 and self.config.value_residual:
+                value_residual_source = block_value_source
 
         # Output projection
         x = self.norm(x)

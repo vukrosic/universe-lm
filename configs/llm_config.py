@@ -39,6 +39,8 @@ class LLMConfig:
     adamw_lr: float = 0.006
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
+    value_residual: bool = False
+    value_residual_init: float = 0.0
 
     # Evaluation
     eval_every: Optional[int] = None
@@ -102,6 +104,12 @@ class Screen10M20MConfig(LLMConfig):
 
 
 @dataclass
+class Screen10M20MValueResidualConfig(Screen10M20MConfig):
+    """Screen with value residual learning enabled."""
+    value_residual: bool = True
+
+
+@dataclass
 class Screen10M1MConfig(Screen10M20MConfig):
     """Ultra-fast screen — ~10M params · 1M tokens · ~250 steps.
 
@@ -155,6 +163,12 @@ class Full10M200MConfig(LLMConfig):
     warmup_ratio: float = 0.02
     schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
+
+
+@dataclass
+class Full10M200MValueResidualConfig(Full10M200MConfig):
+    """Full 10M ladder run with value residual learning enabled."""
+    value_residual: bool = True
 
 
 @dataclass

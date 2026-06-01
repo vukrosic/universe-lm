@@ -62,7 +62,14 @@ class MultiHeadAttention(nn.Module):
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
 
-    def forward(self, x):
+    def forward(
+        self,
+        x,
+        *,
+        value_residual_source: torch.Tensor | None = None,
+        value_residual_alpha: torch.Tensor | None = None,
+        return_value_source: bool = False,
+    ):
         batch_size, seq_len = x.size(0), x.size(1)
         
         # ============ MERGED QKV PROJECTION ============
@@ -77,7 +84,12 @@ class MultiHeadAttention(nn.Module):
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
         K = K.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
         V = V.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
-        
+        value_source = V
+
+        if value_residual_source is not None and value_residual_alpha is not None:
+            mix = torch.sigmoid(value_residual_alpha).to(dtype=V.dtype)
+            V = (1.0 - mix) * V + mix * value_residual_source
+
         # Apply RoPE
         Q = self.rotary(self.q_norm(Q))
         K = self.rotary(self.k_norm(K))
@@ -102,7 +114,10 @@ class MultiHeadAttention(nn.Module):
         
         # ============ MERGED O PROJECTION ============
         # Use the last part of qkvo_proj for output projection
-        return F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        out = F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        if return_value_source:
+            return out, value_source
+        return out
 
 
 class TransformerBlock(nn.Module):
@@ -117,6 +132,8 @@ class TransformerBlock(nn.Module):
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
         ffn_variant: str = "squared_relu",
+        value_residual: bool = False,
+        value_residual_init: float = 0.0,
     ):
         super().__init__()
 
@@ -132,13 +149,27 @@ class TransformerBlock(nn.Module):
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+        self.use_value_residual = value_residual
+        self.value_residual_alpha = (
+            nn.Parameter(torch.tensor(float(value_residual_init)))
+            if value_residual
+            else None
+        )
 
-    def forward(self, x):
+    def forward(self, x, *, value_residual_source: torch.Tensor | None = None, return_value_source: bool = False):
         # Self-attention
-        attn_out = self.attention(self.norm1(x))
+        attn_out = self.attention(
+            self.norm1(x),
+            value_residual_source=value_residual_source if self.use_value_residual else None,
+            value_residual_alpha=self.value_residual_alpha if self.use_value_residual else None,
+            return_value_source=return_value_source,
+        )
+        value_source = None
+        if isinstance(attn_out, tuple):
+            attn_out, value_source = attn_out
         x = x + self.dropout(attn_out)
 
         # Feed-forward
         ff_out = self.feed_forward(self.norm2(x))
         x = x + self.dropout(ff_out)
-        return x
+        return x, value_source
