@@ -39,6 +39,9 @@ class LLMConfig:
     adamw_lr: float = 0.006
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
+    per_group_lr: bool = False
+    embedding_lr_multiplier: float = 2.0
+    scalar_lr_multiplier: float = 1.5
 
     # Evaluation
     eval_every: Optional[int] = None
@@ -102,6 +105,14 @@ class Screen10M20MConfig(LLMConfig):
 
 
 @dataclass
+class Screen10M20MPerGroupLRConfig(Screen10M20MConfig):
+    """Screen with per-group LR enabled for embeddings / scalar params."""
+    per_group_lr: bool = True
+    embedding_lr_multiplier: float = 2.0
+    scalar_lr_multiplier: float = 1.5
+
+
+@dataclass
 class Screen10M1MConfig(Screen10M20MConfig):
     """Ultra-fast screen — ~10M params · 1M tokens · ~250 steps.
 
@@ -155,6 +166,14 @@ class Full10M200MConfig(LLMConfig):
     warmup_ratio: float = 0.02
     schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
+
+
+@dataclass
+class Full10M200MPerGroupLRConfig(Full10M200MConfig):
+    """Full 10M ladder run with per-group LR enabled."""
+    per_group_lr: bool = True
+    embedding_lr_multiplier: float = 2.0
+    scalar_lr_multiplier: float = 1.5
 
 
 @dataclass

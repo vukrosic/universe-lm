@@ -129,6 +129,9 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
     adamw_params = []
+    adamw_embedding_params = []
+    adamw_scalar_params = []
+    adamw_regular_params = []
 
     for name, param in model.named_parameters():
         if (param.ndim == 2 and 
@@ -138,18 +141,60 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             muon_params.append(param)
         else:
             adamw_params.append(param)
+            if getattr(config, "per_group_lr", False):
+                if "token_embedding" in name:
+                    adamw_embedding_params.append(param)
+                elif param.ndim <= 1 or "norm" in name or name.endswith("alpha"):
+                    adamw_scalar_params.append(param)
+                else:
+                    adamw_regular_params.append(param)
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
     print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
+    if getattr(config, "per_group_lr", False):
+        print(f"  AdamW embedding parameters: {sum(p.numel() for p in adamw_embedding_params):,}")
+        print(f"  AdamW scalar parameters: {sum(p.numel() for p in adamw_scalar_params):,}")
+        print(f"  AdamW regular parameters: {sum(p.numel() for p in adamw_regular_params):,}")
 
     muon_optimizer = Muon(muon_params, lr=config.muon_lr, momentum=config.muon_momentum)
     device = resolve_device(getattr(config, "device", "auto"))
-    adamw_optimizer = torch.optim.AdamW(
-        adamw_params,
-        lr=config.adamw_lr,
-        weight_decay=config.weight_decay,
-        fused=device.type == "cuda"
-    )
+    if getattr(config, "per_group_lr", False):
+        adamw_param_groups = []
+        if adamw_regular_params:
+            adamw_param_groups.append(
+                {
+                    "params": adamw_regular_params,
+                    "lr": config.adamw_lr,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        if adamw_embedding_params:
+            adamw_param_groups.append(
+                {
+                    "params": adamw_embedding_params,
+                    "lr": config.adamw_lr * config.embedding_lr_multiplier,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        if adamw_scalar_params:
+            adamw_param_groups.append(
+                {
+                    "params": adamw_scalar_params,
+                    "lr": config.adamw_lr * config.scalar_lr_multiplier,
+                    "weight_decay": config.weight_decay,
+                }
+            )
+        adamw_optimizer = torch.optim.AdamW(
+            adamw_param_groups,
+            fused=device.type == "cuda"
+        )
+    else:
+        adamw_optimizer = torch.optim.AdamW(
+            adamw_params,
+            lr=config.adamw_lr,
+            weight_decay=config.weight_decay,
+            fused=device.type == "cuda"
+        )
 
     return [muon_optimizer, adamw_optimizer]
 
