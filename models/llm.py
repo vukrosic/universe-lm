@@ -37,6 +37,7 @@ class MinimalLLM(nn.Module):
 
         # Transformer blocks
         self.use_value_embed = getattr(config, "use_value_embed", False)
+        self.use_query_embed = getattr(config, "use_query_embed", False)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         self.transformer_blocks = nn.ModuleList(
             [
@@ -52,6 +53,7 @@ class MinimalLLM(nn.Module):
                     use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
                     use_layerscale=getattr(config, "use_layerscale", False),
                     use_value_embed=self.use_value_embed,
+                    use_query_embed=self.use_query_embed,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(config.n_layers)
@@ -121,7 +123,9 @@ class MinimalLLM(nn.Module):
         else:
             x = self.emb_proj(tok) * math.sqrt(self.config.d_model)
         # #29 value-embed source: the raw token embedding, injected into each V
-        ve = tok if self.use_value_embed else None
+        # #30 query-embed source: same `tok` (raw embedding). Both Q-embed and
+        # V-embed can read from the same source, so we only branch once.
+        ve = tok if (self.use_value_embed or self.use_query_embed) else None
         if self.use_smear_gate:
             prev = torch.zeros_like(x)
             prev[:, 1:] = x[:, :-1]
