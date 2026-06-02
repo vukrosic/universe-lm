@@ -65,6 +65,10 @@ class LLMConfig:
     # #30 query embeddings: same trick on Q. Tests whether V's win was
     # V-specific or generalizes to "token identity straight into attention."
     use_query_embed: bool = False
+    # #31 key embeddings: same trick on K. K goes through RoPE downstream,
+    # so the projection's term is positionally rotated — different operating
+    # point from V (no RoPE) or Q (also RoPE'd).
+    use_key_embed: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -203,6 +207,19 @@ class Screen10M20MQueryEmbedConfig(Screen10M20MConfig):
     use_query_embed: bool = True
 
 
+@dataclass
+class Screen10M20MKeyEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token key embeddings injected into attention K.
+
+    The natural mirror of #29/#30. K goes through RoPE downstream, so the
+    projection's term is positionally rotated — a different operating point
+    from V (no RoPE) and Q (also RoPE'd). The cheapest probe of whether
+    the token-identity-into-attention lever has more headroom in the K
+    direction.
+    """
+    use_key_embed: bool = True
+
+
 # ============================================================================
 # FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
 # is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
@@ -276,6 +293,12 @@ class Full10M200MValueEmbedConfig(Full10M200MConfig):
 class Full10M200MQueryEmbedConfig(Full10M200MConfig):
     """Full10M200M with token query embeddings injected into attention Q."""
     use_query_embed: bool = True
+
+
+@dataclass
+class Full10M200MKeyEmbedConfig(Full10M200MConfig):
+    """Full10M200M with token key embeddings injected into attention K."""
+    use_key_embed: bool = True
 
 
 @dataclass

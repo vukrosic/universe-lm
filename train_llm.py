@@ -228,6 +228,7 @@ def main():
     parser.add_argument("--zero_init_resid", type=str, help="Zero-init attn-O + ffn-down projections, #22 (true/false)")
     parser.add_argument("--use_value_embed", type=str, help="Inject (factorized) token embedding into attention V, #29 (true/false)")
     parser.add_argument("--use_query_embed", type=str, help="Inject (factorized) token embedding into attention Q, #30 (true/false)")
+    parser.add_argument("--use_key_embed", type=str, help="Inject (factorized) token embedding into attention K, #31 (true/false)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
         "--config",
@@ -304,6 +305,8 @@ def main():
         config.use_value_embed = (args.use_value_embed.lower() == "true")
     if args.use_query_embed is not None:
         config.use_query_embed = (args.use_query_embed.lower() == "true")
+    if args.use_key_embed is not None:
+        config.use_key_embed = (args.use_key_embed.lower() == "true")
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device

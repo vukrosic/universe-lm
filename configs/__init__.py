@@ -11,6 +11,7 @@ from .llm_config import (
     Screen10M20MLayerScaleConfig,
     Screen10M20MValueEmbedConfig,
     Screen10M20MQueryEmbedConfig,
+    Screen10M20MKeyEmbedConfig,
     Full10M200MConfig,
     Full10M200MOutputAdapterConfig,
     Full10M200MSmearGateConfig,
@@ -19,6 +20,7 @@ from .llm_config import (
     Full10M200MLayerScaleConfig,
     Full10M200MValueEmbedConfig,
     Full10M200MQueryEmbedConfig,
+    Full10M200MKeyEmbedConfig,
     Full135M2700MConfig,
 )
 from .dataset_config import DataConfig
@@ -36,6 +38,7 @@ __all__ = [
     "Screen10M20MLayerScaleConfig",
     "Screen10M20MValueEmbedConfig",
     "Screen10M20MQueryEmbedConfig",
+    "Screen10M20MKeyEmbedConfig",
     "Full10M200MConfig",
     "Full10M200MOutputAdapterConfig",
     "Full10M200MSmearGateConfig",
@@ -44,6 +47,7 @@ __all__ = [
     "Full10M200MLayerScaleConfig",
     "Full10M200MValueEmbedConfig",
     "Full10M200MQueryEmbedConfig",
+    "Full10M200MKeyEmbedConfig",
     "Full135M2700MConfig",
     "DataConfig",
 ]

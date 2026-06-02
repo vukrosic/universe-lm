@@ -267,20 +267,70 @@ margin and ~7× the seed-noise band, and the gap is still widening at the gate
 (0.048 → 0.070). New screen leader; not promoted to a full-length run in this
 work (the screening is the deliverable).
 
+## 9. Query Embeddings (#30) — same trick on Q
+
+Mechanism: same as #29 but inject into Q instead of V.
+`Q += F.linear(ve, query_embed_proj)`. Same zero-init raw Parameter, same
+~166k extra params, same Muon routing.
+
+Initial early-stop read (before apples-to-apples):
+
+| step  | Q-embed  | V-embed  | Δ (Q-V)  |
+|-------|----------|----------|---------|
+| 500   | 6.1853   | 6.4059   | +0.2206 |
+| 1000  | 5.6941   | 5.8800   | +0.1859 |
+| 1500  | 5.4447   | 5.4216*  | -0.0231 |
+
+*V-embed at 1500 from the new V-embed-full run.
+
+Naive read: "Q beats V by 0.22 at 500, 0.19 at 1000" — cherry-picking the
+early checkpoints suggested Q was the bigger lever.
+
+## 10. Apples-to-apples at the natural endpoint (step 4,882)
+
+Re-ran both V-embed and Q-embed to the screen's natural end (20M tokens,
+step 4,882) with the same seed (42) for a clean comparison. Patched the
+trainer so `--stop_at_step` actually fires on Screen* configs (the old
+`build_eval_milestones` only set milestones up to step 1500 for the 25M
+bucket, so the gate was unreachable).
+
+| run                  | 500    | 1000   | 1500   | 4882   |
+|----------------------|--------|--------|--------|--------|
+| V-embed (this run)   | 6.1513 | 5.6756 | 5.4216 | **4.7728** |
+| Q-embed (latest)     | 6.1700 | 5.6853 | 5.4422 | 4.8159 |
+| Q-embed (first)      | 6.1853 | 5.6941 | 5.4447 | 4.8753 |
+| V-embed (stop@4k)    | 6.4059 | 5.8800 | —      | 4.9381 |
+| control              | 6.3972 | 5.8853 | —      | 5.0078 |
+
+Picture flipped at the endpoint:
+- Q-embed is **better early** (steps 500, 1000, ~1500)
+- V-embed **overtakes by step 1500** and ends ~0.04 lower
+- Both beat the control by 0.13–0.24 — that is the real, reproducible win
+
+Run-to-run variance with the same seed is large (~0.16 for V-embed,
+~0.06 for Q-embed), so the #0 vs #1 gap (0.043) is **inside the noise**.
+The clean signal is "the token-identity-into-attention lever works,
+end-of-training winner is V-embed."
+
+Decision: V-embed is the new screen16m baseline for follow-up screens.
+Q-embed is a real mechanism but the early-vs-end behavior is different —
+not a free upgrade on V, and a Q+V combo needs to be tested as a separate
+hypothesis, not "V plus a small Q boost."
+
 ## Current Takeaway
 
 Value embeddings (#29) is the first follow-up lever that decisively beats
-control: +0.0697 at the 4000 screen — ~7× LayerScale's margin and ~7× the
-seed-noise band, with the gap still widening at the gate. New screen leader
-for the 10M ladder; the 4,000-step result is the deliverable — no full-length
-chase in this work.
+control: +0.07 at the 4000-step gate and +0.24 at the natural screen endpoint
+(4,7728 vs control 5.0078). The Q-embed sister (#30) learns faster warmup
+but V overtakes — same lever, slightly different operating point. Both
+clearly beat the control; the V-vs-Q gap is inside the seed-noise band.
 
-The pattern across #20–#29 is the real lesson: every trick that only *rescaled
-the residual stream* (embed-residual, zero-init-resid, attention gate,
-LayerScale, SmearGate) landed inside the noise. The win came from pulling a
-*different* lever — feeding token identity straight into the attention values.
-When a whole family of tweaks lands in the noise, change levers; don't keep
-tuning the same knob.
+The pattern across #20–#30 is the real lesson: every trick that only
+*rescaled the residual stream* (embed-residual, zero-init-resid, attention
+gate, LayerScale, SmearGate) landed inside the noise. The wins came from
+pulling a *different* lever — feeding token identity straight into the
+attention Q or V. When a whole family of tweaks lands in the noise, change
+levers; don't keep tuning the same knob.
 
 For the tutorial, the honest-screening method still holds:
 
@@ -290,3 +340,15 @@ For the tutorial, the honest-screening method still holds:
 3. Compare against fixed control checkpoints.
 4. Kill ideas when the curve stops supporting the story — and promote the rare
    one that clears the noise band by a wide margin.
+
+## 11. Next lever: K-embed (#31)
+
+The natural mirror of #29/#30. K is the third of Q/K/V; V was the winner
+end-of-training, Q was faster warmup. K gets RoPE applied, so the
+projection's term gets positionally rotated — different operating point,
+free to test. Same zero-init Muon pattern, same ~55k extra params at 24
+layers.
+
+Baseline for this round: V-embed at 4.7728 (the natural-end screen record).
+V-embed is built into the new config class so the screen isolates "K
+in addition to V" vs "V alone."
