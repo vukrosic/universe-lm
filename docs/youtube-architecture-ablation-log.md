@@ -376,3 +376,63 @@ within the Q/K/V family. The pattern across #29-#31 is consistent:
 **V/Q/K all beat control by 0.13-0.24, all use ~0.7% extra params, all
 are the same lever in different positions. The lever works; the V
 position is the best single choice.**
+
+## 13. V+Q combo (#32) result
+
+Combination probe. V-embed is the end-game winner (4.7728), Q-embed is
+the warmup winner (4.8159, faster at steps 500/1000). Tests whether the
+two are additive — fast warmup + good end-game — or whether V's
+V-specific position is the unique story.
+
+Same zero-init Muon pattern as #29-#30. New config class
+`Screen10M20MVQEmbedConfig` has both `use_value_embed=True` and
+`use_query_embed=True` (the model code already supported running them
+together; the `ve` source is computed once and shared). Cost = 24
+layers × (q_size 144 + kv_size 48) × emb_rank 48 = 221,184 extra
+params (~2.9% over baseline). Smoke test passed: max|logit diff|=0 at
+init (Q-embed zero-init = no-op), 24/24 nonzero grad on both
+projections, param delta matches expected.
+
+Ran to natural end (step 4,883, 20M tokens):
+
+| #    | val_loss | Δ vs V-embed |
+|------|----------|--------------|
+| V+Q  | **4.7428** | **-0.0300**  |
+| V    | 4.7728    | 0            |
+| Q    | 4.8159    | +0.0431      |
+| K    | 4.8228    | +0.0500      |
+
+**V+Q beats V-embed alone by 0.0300** at the natural end. The signal
+is consistent with the additive hypothesis: Q's warmup advantage + V's
+end-game edge do not cancel. The 0.0300 improvement is inside the
+~0.06-0.16 run-to-run noise band for V-embed, so single-seed certainty
+isn't there — but the direction matches the prediction and the curve
+never crosses (V+Q is better at every step from 500 onward).
+
+> **Fairness note (corrected):** the apples-to-apples control at the
+> natural end (step 4,882) has not been run yet. The current "control"
+> 5.0078 is a 4,000-step eval (different step count, ~16M tokens
+> instead of ~20M), so the "V+Q beats control by 0.2660" claim from an
+> earlier draft was unfair. The leaderboard now has two tiers:
+> `screen16m` (step 4,000, 16M tokens) and `screen20m` (step 4,882,
+> 20M tokens). The natural-end control row is marked **pending** until
+> a fresh rerun fills it.
+
+This is the new screen16m #0. The Q/K/V-embed lever is not just "a
+thing that works" — combining positions is a real direction worth
+pushing. Next probes to consider: V+K, V+Q+K, and a fundamentally
+different lever (output-side token injection, learnable per-head
+temperature, etc.).
+
+### Full curve across Q/K/V/QV at the screen's natural end
+
+| step  | V+Q     | V       | Q       | K       | control  |
+|-------|---------|---------|---------|---------|----------|
+| 500   | 6.0992  | 6.4059 | 6.1853  | **6.1641**  | 6.3972   |
+| 1000  | 5.6015  | 5.8800 | 5.6941  | **5.6813**  | 5.8853   |
+| 4000  | **4.7875** | 4.9381 | 4.8607† | 4.8722  | 5.0078‡  |
+| 4882  | **4.7428** | 4.7728 | 4.8159  | 4.8228  | pending   |
+
+† Q-embed @4k from milestone history inside the natural-end run (no
+gated rerun). ‡ Control is gated at 4k, not natural-end. Both marked
+in the leaderboard.

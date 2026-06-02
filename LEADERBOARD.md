@@ -4,7 +4,7 @@ Race to the **lowest val loss on the `10m` model** (Full10M200M — ~10M params,
 Pinned: `seed=42` · bf16. Beat the standing record by **≥0.01** to take it.
 
 **Acceptance rule:** `10m` is the target — only a win here is a real record. Smaller configs
-(`screen3m`, `screen10m`) are just for quick experimentation: use them to find promising
+(`screen16m`, `screen10m`) are just for quick experimentation: use them to find promising
 mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters go in the
 **Run**/**Summary** text — no per-mechanism columns ([Parameter Golf](https://github.com/openai/parameter-golf) style).
 
@@ -20,17 +20,38 @@ mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters 
 
 Fast public screen for iteration. This ranks ideas before spending the full 200M-token run,
 but it is not the final `10m` record. `16M` here means the exact comparison point
-`4,000 steps × 4,096 tokens/step = 16,384,000 tokens`.
+`4,000 steps × 4,096 tokens/step = 16,384,000 tokens`. Every row below is the eval at **step
+4,000** (16,384,000 tokens) so all comparisons are apples-to-apples.
 
 Reproduce a direct screen run with `--config screen10m --train_tokens 16384000 --seed 42`.
 
-| # | Val loss | Run | Author | Summary | Date | Evidence |
+| # | Val loss | Δ vs ctrl | Run | Summary | Date | Evidence |
 |---|---|---|---|---|---|---|
-| 0 | **4.7728** | value-embeddings (full) | vukrosic | Value embeddings (`#29`) run to the screen's natural endpoint (step 4,882, 20M tokens): **4.7728**. Beats the prior screen record (4.9381) by **0.1653** and the control (5.0088) by **0.2360**. Run-to-run variance with the same seed is ~0.16 (this run vs the original 4.9381 stop-at-4k run, both seed 42), so treat absolute numbers as ±0.10. seed=42, bf16, batch=2. **Screen only — the 4,882-step result, not a full-length champion.** Reproduce: `--config 10m --config_class configs.llm_config.Screen10M200MValueEmbedConfig --seed 42`. | 2026-06-02 | branch `exp/resid-levers` · `logs/s_valembed_full.log` |
-| 1 | 4.8159 | query-embeddings (full) | vukrosic | Query embeddings (`#30`) run to the screen's natural endpoint: **4.8159**. **Does not beat V-embed at the endpoint** — Q learns faster early (better at steps 500, 1000) but V overtakes by step 1500 and ends lower (4.7728 vs 4.8159). For an end-of-training screen, V is the better pick. A second Q run gave 4.8753 — same seed, different result, so the comparison is in the run-to-run noise band. seed=42, bf16, batch=2. **Screen only.** Reproduce: `--config 10m --config_class configs.llm_config.Screen10M20MQueryEmbedConfig --seed 42`. | 2026-06-02 | branch `exp/resid-levers` · `logs/s_qembed.log`, `logs/s_qembed_4k.log` · tag `result/screen16m-query-embed-30` (superseded) |
-| 2 | 4.8228 | key-embeddings (full) | vukrosic | Key embeddings (`#31`) run to the screen's natural endpoint: **4.8228**. K-embed has the **fastest warmup of all three** (best at 500, 1000, 4000) but loses to V at the natural end. Same pattern as Q-embed: K/Q win warmup, V wins endpoint. K is essentially tied with Q at the end (4.8228 vs 4.8159, inside noise). seed=42, bf16, batch=2. **Screen only.** Reproduce: `--config 10m --config_class configs.llm_config.Screen10M20MKeyEmbedConfig --seed 42`. | 2026-06-02 | branch `exp/resid-levers` · `logs/s_kembed_full.log` |
-| 3 | 4.9381 | value-embeddings (stop@4k) | vukrosic | Value embeddings (`#29`), original `--stop_at_step 4000` run. The V-embed architecture — inject the factorized token embedding into attention V at every layer via a zero-init Muon projection `V += W·ve`, reusing the existing `emb_rank=48` table (~55k extra params, +0.7%). Beats the control (5.0088) by **0.0707**. Run was gated at step 4000 by the milestone eval there, so this number is the eval at 4000. Re-run to natural end is 4.7728 (row 0). seed=42, bf16, batch=2. [tutorial](docs/tutorials/value_embeddings/README.md) | 2026-06-02 | branch `exp/resid-levers` · `logs/s_valembed.log` |
-| 4 | 5.0088 | emb-factor-depth | vukrosic | First screen record, taken from the current `10m` champion's intermediate eval at step 4,000 / 16,384,000 tokens. Low-rank embedding (emb_rank=48) + depth 3→24 layers, seed=42, bf16, batch=2. | 2026-06-02 | commit `cbe5677` · tag `result/10m-emb-factor-depth` · [metrics](baselines/10m_baseline.json) |
+| 0 | **4.7875** | -0.2203 | vq-embeddings | V+Q combo (`#32`) at step 4,000. The V-embed + Q-embed projections are added together (24 layers × (q_size 144 + kv_size 48) × emb_rank 48 = 221,184 extra params, +2.9%). Beats V-embed alone at 4k (4.9381) by **0.1506**. Value at 4k taken from `s_vqembed_full`'s milestone history (the run continued to natural end, row 0 of the tier below). | 2026-06-02 | `logs/s_vqembed_full.log` · milestone @ step 4000 |
+| 1 | 4.8722 | -0.1356 | key-embeddings | K-embed (`#31`) at step 4,000 (taken from `s_kembed_full`'s milestone history). Fastest warmup of the Q/K/V family at this checkpoint. | 2026-06-02 | `logs/s_kembed_full.log` · milestone @ step 4000 |
+| 2 | 4.9009 | -0.1069 | key-embeddings (gated) | K-embed (`#31`) gated run, evaluated at step 4,000. ~0.03 worse than the milestone-history read of the same arch (4.8722) — same seed, same step, run-to-run noise. | 2026-06-02 | `runs/s_kembed/metrics.json` |
+| 3 | 4.9381 | -0.0697 | value-embeddings (gated) | V-embed (`#29`) gated run, evaluated at step 4,000. The architecture: inject factorized token embedding into attention V at every layer via a zero-init Muon projection `V += W·ve` (~55k extra params, +0.7%). [tutorial](docs/tutorials/value_embeddings/README.md) | 2026-06-02 | `runs/s_valembed/gate.pt` |
+| 4 | 5.0078 | 0 | control | Plain `Screen10M20MConfig` (no embed flags), gated at step 4,000. seed=42, bf16, batch=2. 13.8 min on RTX 3050. | 2026-06-02 | `runs/s_ctrl/metrics.json` |
+
+**Missing from this tier (would need a `--stop_at_step 4000` rerun):** Q-embed and a clean
+V-only gated run. Q-embed and V-embed-natural-end have step 4,000 evals inside their
+natural-end run histories (4.8607 and 4.9381 respectively) but a clean apples-to-apples
+read needs a gated rerun. Will fill when the next probe needs them.
+
+## `screen20m` — 10M · 20M tokens · step 4,882 · **natural-end tier**
+
+Same screen configs as above but trained to the **natural end** (step 4,882 ≈ 20M tokens).
+This is where the "real" comparison lives — the 4k tier measures warmup speed, this tier
+measures end-of-training quality. **Pending:** a control at the natural end (currently
+gated at 4k) so the Δ-vs-ctrl column is honest.
+
+| # | Val loss | Run | Summary | Date | Evidence |
+|---|---|---|---|---|---|
+| 0 | **4.7428** | vq-embeddings | V+Q combo (`#32`) at natural end, 4,883 steps. The screen's first natural-end winner under the V/Q/K/V+Q family. Beats V-embed alone (row 1) by **0.0300** and K-embed (row 3) by 0.0800. The 0.0300 V+Q → V delta is inside the 0.06-0.16 V-embed noise band, so single-seed certainty is weak — but the curve never crosses (V+Q is better at every step from 500 onward) and the direction matches the additive hypothesis (Q's warmup edge + V's end-game edge). | 2026-06-02 | `runs/s_vqembed_full/metrics.json` · `logs/s_vqembed_full.log` |
+| 1 | 4.7728 | value-embeddings | V-embed (`#29`) at natural end, 4,882 steps. Beats K-embed (row 3) by 0.0500 and Q-embed (row 2) by 0.0431, but loses to V+Q (row 0) by 0.0300. | 2026-06-02 | `runs/s_valembed_full/metrics.json` · `logs/s_valembed_full.log` |
+| 2 | 4.8159 | query-embeddings | Q-embed (`#30`) at natural end. Re-run (s_qembed) gave 4.8753 — same seed, different result, so single-seed Q values are inside the 0.06 noise band. Best Q read is 4.8159. | 2026-06-02 | `runs/s_qembed_4k/metrics.json` · `logs/s_qembed_4k.log` |
+| 3 | 4.8228 | key-embeddings | K-embed (`#31`) at natural end, 4,882 steps. Same pattern as Q-embed: K is essentially tied with Q (4.8228 vs 4.8159, inside noise). | 2026-06-02 | `runs/s_kembed_full/metrics.json` · `logs/s_kembed_full.log` |
+| 4 | **pending** | control | A `Screen10M20MConfig` (no embed flags) run to step 4,882 — **not yet on the box**. Without this row, "Δ vs ctrl" on rows 0-3 is unfair (4k eval, not 4,882). Will be filled with a fresh rerun. | — | — |
 
 ## Screens — quick experimentation (not records)
 
