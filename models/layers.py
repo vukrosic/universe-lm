@@ -27,6 +27,9 @@ class MultiHeadAttention(nn.Module):
         max_seq_len: int,
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
+        use_attn_output_gate: bool = False,
+        use_value_embed: bool = False,
+        value_embed_rank: int | None = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -61,8 +64,21 @@ class MultiHeadAttention(nn.Module):
 
         self.rotary = Rotary(self.d_k, max_seq_len)
         self.dropout = dropout
+        self.use_attn_output_gate = use_attn_output_gate
+        if self.use_attn_output_gate:
+            self.attn_output_gate = nn.Parameter(torch.zeros(n_heads))
 
-    def forward(self, x):
+        # #29 value embeddings: project the (factorized) token embedding into the
+        # V subspace and add it to the values. Raw zero-init weight (not nn.Linear)
+        # so it (a) starts as an exact baseline, (b) trains immediately via Muon,
+        # and (c) draws no RNG at init — keeping every other weight bit-identical to
+        # the control run, so the screen isolates the mechanism, not a re-seed.
+        self.use_value_embed = use_value_embed
+        if self.use_value_embed:
+            assert value_embed_rank is not None, "value_embed_rank required"
+            self.value_embed_proj = nn.Parameter(torch.zeros(self.kv_size, value_embed_rank))
+
+    def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
         
         # ============ MERGED QKV PROJECTION ============
@@ -72,6 +88,11 @@ class MultiHeadAttention(nn.Module):
         # Split the result into Q, K, V
         Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
+
+        # #29 value embeddings: add the projected token embedding to the values
+        # (before head reshape). Zero-inited projection => exact baseline at step 0.
+        if self.use_value_embed and ve is not None:
+            V = V + F.linear(ve, self.value_embed_proj)
         
         # Reshape to multi-head format
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
@@ -94,6 +115,9 @@ class MultiHeadAttention(nn.Module):
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
         )
+        if self.use_attn_output_gate:
+            gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
+            attn_output = attn_output * gate
         
         # Reshape output
         attn_output = attn_output.transpose(1, 2).reshape(
@@ -118,10 +142,23 @@ class TransformerBlock(nn.Module):
         n_kv_heads: int | None = None,
         ffn_variant: str = "squared_relu",
         use_embed_residual: bool = False,
+        use_attn_output_gate: bool = False,
+        use_layerscale: bool = False,
+        use_value_embed: bool = False,
+        value_embed_rank: int | None = None,
     ):
         super().__init__()
 
-        self.attention = MultiHeadAttention(d_model, n_heads, max_seq_len, dropout, n_kv_heads)
+        self.attention = MultiHeadAttention(
+            d_model,
+            n_heads,
+            max_seq_len,
+            dropout,
+            n_kv_heads,
+            use_attn_output_gate=use_attn_output_gate,
+            use_value_embed=use_value_embed,
+            value_embed_rank=value_embed_rank,
+        )
         if ffn_variant == "squared_relu":
             self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
         elif ffn_variant == "swiglu":
@@ -140,17 +177,25 @@ class TransformerBlock(nn.Module):
         if use_embed_residual:
             self.resid_m0 = nn.Parameter(torch.ones(d_model))
             self.resid_m1 = nn.Parameter(torch.zeros(d_model))
+        self.use_layerscale = use_layerscale
+        if self.use_layerscale:
+            self.attn_layerscale = nn.Parameter(torch.zeros(d_model))
+            self.ffn_layerscale = nn.Parameter(torch.zeros(d_model))
 
-    def forward(self, x, x0=None):
+    def forward(self, x, x0=None, ve=None):
         # Re-inject the original embedding before attention/MLP (#20)
         if self.use_embed_residual:
             x = self.resid_m0 * x + self.resid_m1 * x0
 
         # Self-attention
-        attn_out = self.attention(self.norm1(x))
+        attn_out = self.attention(self.norm1(x), ve)
+        if self.use_layerscale:
+            attn_out = attn_out * (1.0 + self.attn_layerscale)
         x = x + self.dropout(attn_out)
 
         # Feed-forward
         ff_out = self.feed_forward(self.norm2(x))
+        if self.use_layerscale:
+            ff_out = ff_out * (1.0 + self.ffn_layerscale)
         x = x + self.dropout(ff_out)
         return x

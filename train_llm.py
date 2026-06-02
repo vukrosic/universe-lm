@@ -226,6 +226,7 @@ def main():
     parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
     parser.add_argument("--use_embed_residual", type=str, help="Re-inject token embedding each block, #20 (true/false)")
     parser.add_argument("--zero_init_resid", type=str, help="Zero-init attn-O + ffn-down projections, #22 (true/false)")
+    parser.add_argument("--use_value_embed", type=str, help="Inject (factorized) token embedding into attention V, #29 (true/false)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
         "--config",
@@ -298,6 +299,8 @@ def main():
         config.use_embed_residual = (args.use_embed_residual.lower() == "true")
     if args.zero_init_resid is not None:
         config.zero_init_resid = (args.zero_init_resid.lower() == "true")
+    if args.use_value_embed is not None:
+        config.use_value_embed = (args.use_value_embed.lower() == "true")
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device

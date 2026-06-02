@@ -221,7 +221,6 @@ __marimo__/
 
 # Local-only experiment artifacts
 plots/
-docs/tutorials/
 utils/plot_smoke_comparison.py
 queues/
 scripts/run_*.sh

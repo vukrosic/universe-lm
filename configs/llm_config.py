@@ -30,6 +30,10 @@ class LLMConfig:
     # (vocab x r) @ (r x d_model), freeing params to reallocate into transformer
     # depth/width at a fixed total budget. lm_head stays tied to the factorization.
     emb_rank: Optional[int] = None
+    # Optional additive low-rank output adapter. This keeps the cheap factorized
+    # input embedding but gives the tied softmax a small independent correction.
+    # None = baseline tied head only.
+    output_adapter_rank: Optional[int] = None
 
     # Residual-stream levers (both default off; identity/baseline-initialized, so
     # "off" reproduces the current model bit-for-bit).
@@ -41,6 +45,23 @@ class LLMConfig:
     #   so each block is an exact identity at step 0 (clean signal propagation through
     #   the deep stack). Zero extra params — purely an init change.
     zero_init_resid: bool = False
+    # #27 SmearGate: add a learned per-channel amount of the previous token's
+    # embedding before the transformer stack. Causal, zero-init, costs d_model.
+    use_smear_gate: bool = False
+    # #23 U-Net skips: add zero-init learned bridges from early block outputs to
+    # mirrored late blocks. Helps deep narrow stacks preserve early lexical detail.
+    use_unet_skips: bool = False
+    # #28 Attention output gate: zero-init per-head multiplier on attention output.
+    # Starts as exact baseline via output *= (1 + gate).
+    use_attn_output_gate: bool = False
+    # #21 LayerScale: zero-init per-channel scales on attention and MLP residual
+    # outputs. Starts as exact baseline via branch *= (1 + gate).
+    use_layerscale: bool = False
+    # #29 value embeddings (speedrun records 55/63): inject the (factorized) token
+    # embedding into attention V at every layer via a tiny per-layer projection,
+    # zero-inited so step 0 == baseline. Reuses the existing rank-r table as the
+    # source, so cost is only ~r*kv_size/layer (~56k total) — stays in budget.
+    use_value_embed: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -132,6 +153,47 @@ class Screen10M20MSwiGLUConfig(Screen10M20MConfig):
     ffn_variant: str = "swiglu"
 
 
+@dataclass
+class Screen10M20MOutputAdapterConfig(Screen10M20MConfig):
+    """Screen10M20M with a rank-32 additive output adapter.
+
+    Tests whether the rank-48 tied factorized softmax is too narrow after the
+    embedding/depth reallocation. Adds ~1.58M parameters while staying under
+    the 10M class.
+    """
+    output_adapter_rank: int = 32
+
+
+@dataclass
+class Screen10M20MSmearGateConfig(Screen10M20MConfig):
+    """Screen10M20M with SmearGate previous-token embedding blend."""
+    use_smear_gate: bool = True
+
+
+@dataclass
+class Screen10M20MUNetSkipConfig(Screen10M20MConfig):
+    """Screen10M20M with zero-init U-Net skip bridges across depth."""
+    use_unet_skips: bool = True
+
+
+@dataclass
+class Screen10M20MAttnOutputGateConfig(Screen10M20MConfig):
+    """Screen10M20M with per-head attention-output gates."""
+    use_attn_output_gate: bool = True
+
+
+@dataclass
+class Screen10M20MLayerScaleConfig(Screen10M20MConfig):
+    """Screen10M20M with per-channel attention/MLP LayerScale gates."""
+    use_layerscale: bool = True
+
+
+@dataclass
+class Screen10M20MValueEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token value embeddings injected into attention V."""
+    use_value_embed: bool = True
+
+
 # ============================================================================
 # FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
 # is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
@@ -163,6 +225,42 @@ class Full10M200MConfig(LLMConfig):
     warmup_ratio: float = 0.02
     schedule_type: str = "warmup_decay_to_zero"
     eval_milestones: Optional[Tuple[int, ...]] = tuple(range(0, 48800, 2000))
+
+
+@dataclass
+class Full10M200MOutputAdapterConfig(Full10M200MConfig):
+    """Full10M200M with a rank-32 additive output adapter."""
+    output_adapter_rank: int = 32
+
+
+@dataclass
+class Full10M200MSmearGateConfig(Full10M200MConfig):
+    """Full10M200M with SmearGate previous-token embedding blend."""
+    use_smear_gate: bool = True
+
+
+@dataclass
+class Full10M200MUNetSkipConfig(Full10M200MConfig):
+    """Full10M200M with zero-init U-Net skip bridges across depth."""
+    use_unet_skips: bool = True
+
+
+@dataclass
+class Full10M200MAttnOutputGateConfig(Full10M200MConfig):
+    """Full10M200M with per-head attention-output gates."""
+    use_attn_output_gate: bool = True
+
+
+@dataclass
+class Full10M200MLayerScaleConfig(Full10M200MConfig):
+    """Full10M200M with per-channel attention/MLP LayerScale gates."""
+    use_layerscale: bool = True
+
+
+@dataclass
+class Full10M200MValueEmbedConfig(Full10M200MConfig):
+    """Full10M200M with token value embeddings injected into attention V."""
+    use_value_embed: bool = True
 
 
 @dataclass

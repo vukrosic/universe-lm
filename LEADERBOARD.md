@@ -16,6 +16,19 @@ mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters 
 | 1 | 4.5486 | warmup_decay_w002 | vukrosic | warmup_decay_to_zero, warmup_ratio=0.02, seed=42, bf16, 200M tokens, 48,829 steps. Frozen result tag: `result/issue30-warmup-decay-w002-10m`. | 2026-05-31 | commit `e1de876` · tag `result/issue30-warmup-decay-w002-10m` |
 | 2 | 5.015 | baseline | vukrosic | QK-gain init=0 (learnable per-head scalar starting at 0) — *not* the plain model; reproduce from tag `baseline/10m`, not main's HEAD. seed=42, bf16, batch=2, 48,829 steps, 33m on RTX 5070. | 2026-05-30 | tag `baseline/10m` |
 
+## `screen16m` — 10M · 16.384M tokens · step 4,000 · **speedrun screen**
+
+Fast public screen for iteration. This ranks ideas before spending the full 200M-token run,
+but it is not the final `10m` record. `16M` here means the exact comparison point
+`4,000 steps × 4,096 tokens/step = 16,384,000 tokens`.
+
+Reproduce a direct screen run with `--config screen10m --train_tokens 16384000 --seed 42`.
+
+| # | Val loss | Run | Author | Summary | Date | Evidence |
+|---|---|---|---|---|---|---|
+| 0 | **4.9381** | value-embeddings | vukrosic | Value embeddings (`#29`): inject the factorized token embedding into attention V at every layer via a zero-init Muon projection `V += W·ve`, reusing the existing `emb_rank=48` table (~55k extra params, +0.7%). Beats the standing screen record (5.0088) by **0.0707** at step 4,000; gap still widening across steps (Δ vs control −0.009 → +0.005 → +0.048 → +0.069 at 500/1k/2k/4k). seed=42, bf16, batch=2. **Screen only — the 4,000-step result, not a full-length champion.** Reproduce: `--config 10m --stop_at_step 4000 --use_value_embed true --seed 42`. | 2026-06-02 | branch `exp/resid-levers` · `logs/s_valembed.log` · [tutorial](docs/tutorials/value_embeddings/README.md) |
+| 1 | 5.0088 | emb-factor-depth | vukrosic | First screen record, taken from the current `10m` champion's intermediate eval at step 4,000 / 16,384,000 tokens. Low-rank embedding (emb_rank=48) + depth 3→24 layers, seed=42, bf16, batch=2. | 2026-06-02 | commit `cbe5677` · tag `result/10m-emb-factor-depth` · [metrics](baselines/10m_baseline.json) |
+
 ## Screens — quick experimentation (not records)
 
 For finding promising mechanisms and reproducing baselines fast. Not ranked — only a `10m`
@@ -31,7 +44,8 @@ hasn't been validated there yet). Full QK-gain sweeps: [qk_leaderboard.md](qk_le
 
 ---
 
-`Evidence` = frozen branch/tag (config + seed + commit + `final_metrics.json`).
+`Evidence` = frozen branch/tag plus metrics artifact (`final_metrics` for full runs,
+`history` for screen capture points).
 
 **The mission (not a race yet):** beat [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M)
 with a fully-open 135M model. We can't train it yet — it needs ~100 h on a single consumer GPU
