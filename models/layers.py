@@ -32,6 +32,7 @@ class MultiHeadAttention(nn.Module):
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
         use_key_embed: bool = False,
+        use_output_embed: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -92,6 +93,18 @@ class MultiHeadAttention(nn.Module):
         if self.use_key_embed:
             assert value_embed_rank is not None, "value_embed_rank required (used for K too)"
             self.key_embed_proj = nn.Parameter(torch.zeros(self.kv_size, value_embed_rank))
+        # #33 output embeddings: same trick, applied AFTER the O projection
+        # (output side of attention, not input side). This is the
+        # modded-nanogpt speedrun "value embeddings" position — the token
+        # identity bypasses the attention computation entirely and lands
+        # straight in the residual. Tests "is V-embed winning because V is
+        # a unique position, or because any token-signal-to-residual helps?"
+        # Shape: [d_model, emb_rank] (one d_model, not kv_size — the output
+        # is full d_model, not per-head).
+        self.use_output_embed = use_output_embed
+        if self.use_output_embed:
+            assert value_embed_rank is not None, "value_embed_rank required (used for O too)"
+            self.output_embed_proj = nn.Parameter(torch.zeros(self.d_model, value_embed_rank))
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -149,7 +162,15 @@ class MultiHeadAttention(nn.Module):
         
         # ============ MERGED O PROJECTION ============
         # Use the last part of qkvo_proj for output projection
-        return F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        output = F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        # #33 output embeddings: add the projected token embedding to the
+        # attention OUTPUT (post-O). Different operating point from V/Q/K
+        # (which inject into attention inputs). ve is the raw token
+        # embedding [B, T, emb_rank], projection is zero-init so step 0
+        # matches the baseline.
+        if self.use_output_embed and ve is not None:
+            output = output + F.linear(ve, self.output_embed_proj)
+        return output
 
 
 class TransformerBlock(nn.Module):
@@ -171,6 +192,7 @@ class TransformerBlock(nn.Module):
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
         use_key_embed: bool = False,
+        use_output_embed: bool = False,
     ):
         super().__init__()
 
@@ -184,6 +206,7 @@ class TransformerBlock(nn.Module):
             use_value_embed=use_value_embed,
             use_query_embed=use_query_embed,
             use_key_embed=use_key_embed,
+            use_output_embed=use_output_embed,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":

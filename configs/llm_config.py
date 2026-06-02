@@ -69,6 +69,13 @@ class LLMConfig:
     # so the projection's term is positionally rotated — different operating
     # point from V (no RoPE) or Q (also RoPE'd).
     use_key_embed: bool = False
+    # #33 output embeddings: same trick, but applied AFTER the O projection
+    # (output side of attention, not input side). The token's raw embedding
+    # bypasses the attention computation entirely and lands straight in
+    # the residual stream. This is the modded-nanogpt speedrun "value
+    # embeddings" position — tests whether V-embed's win is V-specific or
+    # is "any token-signal-to-residual" wins.
+    use_output_embed: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -218,6 +225,38 @@ class Screen10M20MKeyEmbedConfig(Screen10M20MConfig):
     direction.
     """
     use_key_embed: bool = True
+
+
+@dataclass
+class Screen10M20MVQEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token value + query embeddings injected into attention.
+
+    #32 — combination probe. V is the end-of-training winner (#29, 4.7728),
+    Q is the fast-warmup winner (#30, 4.8159). Tests whether the lever is
+    additive (Q's warmup advantage + V's end-game edge) or whether V's
+    V-specific position is the unique story. Cost = V-embed + Q-embed
+    projections = ~166k extra params (~2% over baseline).
+    """
+    use_value_embed: bool = True
+    use_query_embed: bool = True
+
+
+@dataclass
+class Screen10M20MOutputEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token embeddings injected into the attention OUTPUT.
+
+    #33 — fundamentally different lever. Where #29-#32 inject the raw
+    token embedding into the attention INPUTS (V/Q/K, inside the score
+    computation), this one injects it into the attention OUTPUT (after
+    the O projection, straight into the residual stream). The token
+    identity bypasses attention entirely. Tests "is V-embed winning
+    because V is a unique position, or because any token-signal-to-
+    residual helps?" Most likely outcome: underperforms V-embed (since
+    the signal bypasses attention) but a clean probe of an architectural
+    question we haven't asked yet. Cost = 24 × d_model 144 × emb_rank
+    48 = 165,888 extra params (~2.1%).
+    """
+    use_output_embed: bool = True
 
 
 # ============================================================================

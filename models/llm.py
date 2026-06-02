@@ -39,6 +39,7 @@ class MinimalLLM(nn.Module):
         self.use_value_embed = getattr(config, "use_value_embed", False)
         self.use_query_embed = getattr(config, "use_query_embed", False)
         self.use_key_embed = getattr(config, "use_key_embed", False)
+        self.use_output_embed = getattr(config, "use_output_embed", False)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         self.transformer_blocks = nn.ModuleList(
             [
@@ -56,6 +57,7 @@ class MinimalLLM(nn.Module):
                     use_value_embed=self.use_value_embed,
                     use_query_embed=self.use_query_embed,
                     use_key_embed=self.use_key_embed,
+                    use_output_embed=self.use_output_embed,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(config.n_layers)
@@ -128,7 +130,9 @@ class MinimalLLM(nn.Module):
         # #30 query-embed source: same `tok` (raw embedding). Both Q-embed and
         # V-embed can read from the same source, so we only branch once.
         # #31 key-embed source: same `tok` too.
-        ve = tok if (self.use_value_embed or self.use_query_embed or self.use_key_embed) else None
+        # #33 output-embed source: same `tok` (raw embedding). All four
+        # share the same `ve` plumbing.
+        ve = tok if (self.use_value_embed or self.use_query_embed or self.use_key_embed or self.use_output_embed) else None
         if self.use_smear_gate:
             prev = torch.zeros_like(x)
             prev[:, 1:] = x[:, :-1]
