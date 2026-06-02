@@ -35,6 +35,8 @@ class MultiHeadAttention(nn.Module):
         use_output_embed: bool = False,
         use_q_gain: bool = False,
         use_k_gain: bool = False,
+        use_deep_value_embed: bool = False,
+        deep_value_embed_hidden: int | None = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -82,6 +84,25 @@ class MultiHeadAttention(nn.Module):
         if self.use_value_embed:
             assert value_embed_rank is not None, "value_embed_rank required"
             self.value_embed_proj = nn.Parameter(torch.zeros(self.kv_size, value_embed_rank))
+        # #45 deep value embeddings: 2-layer non-linear V projection.
+        # V += GELU(ve @ W1) @ W2.
+        # F.linear(ve, W1) computes ve @ W1.T, so W1 is stored as
+        # [hidden, emb_rank] (like Linear's weight convention).
+        # Same for W2: stored as [kv_size, hidden].
+        # Both zero-init so step 0 = exact baseline.
+        # Cost per layer: hidden × emb_rank + kv_size × hidden.
+        # For Screen10M20M (emb_rank=48, hidden=96, kv_size=48): 9,216.
+        # Total: 24 × 9,216 = 221,184 params (+2.9%).
+        self.use_deep_value_embed = use_deep_value_embed
+        if self.use_deep_value_embed:
+            assert value_embed_rank is not None, "value_embed_rank required for deep V-embed"
+            assert deep_value_embed_hidden is not None, "deep_value_embed_hidden required"
+            self.deep_value_embed_W1 = nn.Parameter(
+                torch.zeros(deep_value_embed_hidden, value_embed_rank)
+            )
+            self.deep_value_embed_W2 = nn.Parameter(
+                torch.zeros(self.kv_size, deep_value_embed_hidden)
+            )
         # #30 query embeddings: same trick on Q. Tests whether V's win is
         # V-specific or generalizes to "token identity straight into attention."
         self.use_query_embed = use_query_embed
@@ -139,6 +160,13 @@ class MultiHeadAttention(nn.Module):
         # (before head reshape). Zero-inited projection => exact baseline at step 0.
         if self.use_value_embed and ve is not None:
             V = V + F.linear(ve, self.value_embed_proj)
+        # #45 deep value embeddings: 2-layer non-linear V projection.
+        # V += GELU(ve @ W1) @ W2. Both W1 and W2 are zero-init so step 0
+        # is exact baseline. The GELU has a dead-zone at 0 so the
+        # gradient flows through W2 first (Muon), then W1.
+        if self.use_deep_value_embed and ve is not None:
+            v_hidden = F.gelu(F.linear(ve, self.deep_value_embed_W1))
+            V = V + F.linear(v_hidden, self.deep_value_embed_W2)
         # #30 query embeddings: same trick, on Q.
         if self.use_query_embed and ve is not None:
             Q = Q + F.linear(ve, self.query_embed_proj)
@@ -161,15 +189,15 @@ class MultiHeadAttention(nn.Module):
         if self.use_q_gain:
             Q = Q * (1.0 + self.q_gain.view(1, 1, self.n_heads, 1))
         # #42 per-head K-gain: symmetric to Q-gain. Multiplies K after
-        # RoPE. Zero-init baseline.
-        if self.use_k_gain:
-            K = K * (1.0 + self.k_gain.view(1, 1, self.n_kv_heads, 1))
-        
+        # RoPE. Zero-init baseline. Applied AFTER repeat_interleave so
+        # the per-head scalar matches the final head count (n_heads).
         # Repeat K/V for GQA if needed
         if self.n_kv_heads != self.n_heads:
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
             V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
-        
+        if self.use_k_gain:
+            K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
+
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
@@ -221,6 +249,8 @@ class TransformerBlock(nn.Module):
         use_output_embed: bool = False,
         use_q_gain: bool = False,
         use_k_gain: bool = False,
+        use_deep_value_embed: bool = False,
+        deep_value_embed_hidden: int | None = None,
     ):
         super().__init__()
 
@@ -237,6 +267,8 @@ class TransformerBlock(nn.Module):
             use_output_embed=use_output_embed,
             use_q_gain=use_q_gain,
             use_k_gain=use_k_gain,
+            use_deep_value_embed=use_deep_value_embed,
+            deep_value_embed_hidden=deep_value_embed_hidden,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":

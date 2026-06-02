@@ -232,6 +232,8 @@ def main():
     parser.add_argument("--use_output_embed", type=str, help="Inject (factorized) token embedding into attention output (post-O), #33 (true/false)")
     parser.add_argument("--use_q_gain", type=str, help="Per-head learnable Q-gain (post-RoPE), #37 (true/false)")
     parser.add_argument("--use_k_gain", type=str, help="Per-head learnable K-gain (post-RoPE), #42 (true/false)")
+    parser.add_argument("--use_deep_value_embed", type=str, help="2-layer non-linear V-embed (GELU bottleneck), #45 (true/false)")
+    parser.add_argument("--deep_value_embed_hidden", type=int, help="Hidden dim for deep V-embed (default 96)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
         "--config",
@@ -316,6 +318,10 @@ def main():
         config.use_q_gain = (args.use_q_gain.lower() == "true")
     if args.use_k_gain is not None:
         config.use_k_gain = (args.use_k_gain.lower() == "true")
+    if args.use_deep_value_embed is not None:
+        config.use_deep_value_embed = (args.use_deep_value_embed.lower() == "true")
+    if args.deep_value_embed_hidden is not None:
+        config.deep_value_embed_hidden = args.deep_value_embed_hidden
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device

@@ -85,6 +85,14 @@ class LLMConfig:
     # norm+RoPE. Tests if K side also benefits from per-head scaling
     # and if V+q+k_gain beats V+q_gain.
     use_k_gain: bool = False
+    # #45 deep value embeddings: 2-layer non-linear V projection.
+    # V += GELU(ve @ W1) @ W2. Tests if the linear V-embed (#29) has
+    # saturated at a single projection, or whether a non-linear
+    # "bottleneck" V-embed has more capacity. Mutually exclusive
+    # with use_value_embed. Hidden dim is deep_value_embed_hidden
+    # (default 96 = 2× emb_rank for Screen10M20M).
+    use_deep_value_embed: bool = False
+    deep_value_embed_hidden: Optional[int] = None
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -377,6 +385,50 @@ class Screen10M20MQKGainConfig(Screen10M20MConfig):
     """
     use_q_gain: bool = True
     use_k_gain: bool = True
+
+
+@dataclass
+class Screen10M20MDeepVEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with 2-layer non-linear V-embed (GELU bottleneck).
+
+    #45 — deep V-embed probe. Tests whether the linear V-embed (#29,
+    4.7728) has saturated at a single projection, or whether a
+    non-linear "bottleneck" V-embed has more capacity. The
+    architecture:
+
+        V += GELU(ve @ W1) @ W2
+        W1: [emb_rank=48, hidden=96]  zero-init
+        W2: [hidden=96, kv_size=48]   zero-init
+
+    Both zero-init so step 0 = exact baseline. GELU has a dead-zone
+    at 0 so the first gradient step only flows through W2 (similar
+    to standard deep ResNets).
+
+    Cost = 24 × (48 × 96 + 96 × 48) = 24 × 9,216 = 221,184 extra
+    params (+2.9% over baseline, +1.4% over V-embed).
+
+    If deep V-embed > V-embed (linear), the V-embed win has more
+    capacity to unlock. If deep V-embed ≈ V-embed, the linear
+    projection is already sufficient. If deep V-embed < V-embed,
+    the non-linearity hurts (likely due to overfitting or gradient
+    issues with the dead-zone at init).
+    """
+    use_deep_value_embed: bool = True
+    deep_value_embed_hidden: int = 96
+
+
+@dataclass
+class Screen10M20MDeepVQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with deep V-embed + per-head Q-gain.
+
+    #46 — combines #45 (deep V-embed) with #37 (q_gain). Tests
+    whether the q_gain lever is also additive with the deeper
+    V-embed architecture. If V_deep+q_gain > V+q_gain (4.6815),
+    deep V-embed is the new capacity ceiling.
+    """
+    use_deep_value_embed: bool = True
+    deep_value_embed_hidden: int = 96
+    use_q_gain: bool = True
 
 
 @dataclass

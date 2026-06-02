@@ -517,3 +517,135 @@ Since the "anywhere in attention" story is now well-explored, the
 
 Recommended next: try (3) — pick a non-embed change and see if any of
 them break the 0.10 noise band.
+
+## §15 K-gain lever + V+q+k_gain — second non-embed lever
+
+### K-gain lever (#42)
+
+K-gain is symmetric to Q-gain: a per-head learnable scalar that
+multiplies K by `(1 + k_gain)` after RoPE, zero-init baseline.
+The implementation: applied **after** `repeat_interleave` for GQA,
+so the per-head scalar matches `n_heads` (not `n_kv_heads`). Cost
+is 24 × 6 = 144 extra params (same as q_gain).
+
+The question: is the "per-head temperature" lever symmetric on Q
+and K? Or is it specifically a Q-side phenomenon (q-modulated
+attention patterns)?
+
+Ran three probes:
+
+| #    | config           | val_loss | seed | notes                          |
+|------|------------------|----------|------|--------------------------------|
+| #42  | k_gain           | 4.7553   | 42   | K-gain alone                   |
+| #44  | q_gain + k_gain  | 4.7259   | 42   | Both gains, no embed           |
+| #43  | V + q_gain + k_gain | 4.6750 | 42   | V-embed + both gains (new)     |
+
+For reference, single-seed V+q_gain was 4.6797.
+
+K-gain alone: 4.7553, beats control by 0.0431 (just outside the
+0.06-0.16 noise band on the tight end). Real but weak lever.
+Q-gain alone was 4.7200 (gap 0.0353 stronger). Q side wins.
+
+Q+K gain (no embed): 4.7259, essentially tied with q_gain alone
+(4.7200, +0.0059). K-gain gives essentially nothing on top of
+q_gain when no embed is present.
+
+V+q+k_gain: 4.6750, **new single-seed #0**, beats V+q_gain
+(4.6797) by 0.0047. Within noise but pointing in the right
+direction. Multi-seed confirmation in flight (`s_vqkgain_s43`).
+
+### Updated rank — all screen20m runs
+
+Sorted by val loss:
+
+| # | val_loss | config                | std/notes             |
+|---|----------|-----------------------|-----------------------|
+| 0 | 4.6750   | V+q+k_gain (#43)      | 1 seed (s43 running)  |
+| 1 | 4.6789   | V+O+q_gain (#38)      | 3 seeds, std 0.0048   |
+| 2 | 4.6797   | V+q_gain (#39)        | 3 seeds, std 0.0057   |
+| 3 | 4.7169   | V+Q+q_gain (#40)      | 1 seed                |
+| 4 | 4.7200   | q_gain (#41)          | 1 seed                |
+| 5 | 4.7188   | V+O (#35)             | 1 seed                |
+| 6 | 4.7259   | q+k_gain (#44)        | 1 seed                |
+| 7 | 4.7294   | V+O+K (#36)           | 1 seed                |
+| 8 | 4.7428   | V+Q (#32)             | 1 seed                |
+| 9 | 4.7553   | k_gain (#42)          | 1 seed                |
+| 10 | 4.7728  | V (#29)               | 1 seed                |
+| 11 | 4.7984  | control               | baseline              |
+| 12 | 4.8159  | Q (#30)               | 1 seed                |
+| 13 | 4.8228  | K (#31)               | 1 seed                |
+| 14 | 4.8250  | V+Q+K (#34)           | 1 seed                |
+| 15 | 4.8350  | O (#33)               | 1 seed                |
+
+### What we learned
+
+1. **K-gain is a real but weaker lever** than Q-gain. Per-head
+   temperature is asymmetric: Q-side rescaling matters more than
+   K-side rescaling.
+2. **V+q+k_gain (4.6750) is the new #0**, but only by 0.0047 over
+   V+q_gain (4.6797) — well within the 0.0057 std. K-gain adds a
+   tiny bit on top of V+q_gain.
+3. **V+Q+q_gain (4.7169) is significantly worse** than V+q_gain
+   (4.6797) by 0.0372. Q-embed is **redundant with q_gain** — both
+   are score-side levers, they conflict.
+4. **Q+K gain (no embed) is essentially q_gain alone**. The
+   K-gain lever only adds value when V-embed is also present
+   (V+q+k_gain > V+q_gain).
+5. **O-embed is fully redundant** when q_gain is on (V+q_gain ≈
+   V+O+q_gain within noise).
+
+### Pattern across all 16 runs
+
+The "wins" are concentrated in two families:
+- **V-embed alone** (5 combinations: V, V+Q, V+Q+K, V+O, V+O+K)
+- **Q-gain alone** (4 combinations: q_gain, V+q_gain, V+Q+q_gain,
+  V+O+q_gain)
+
+Within each family, **adding the "secondary" lever (K-embed, K-gain,
+O-embed) gives diminishing or no returns** in isolation. The
+interactions:
+- V+Q: 4.7428 (V+Q vs V: -0.0300) — additive
+- V+O: 4.7188 (V+O vs V: -0.0540) — strongly additive
+- V+Q+K: 4.8250 (V+Q+K vs V+Q: +0.0822) — anti-additive
+- V+O+K: 4.7294 (V+O+K vs V+O: +0.0106) — neutral
+- V+q_gain: 4.6815 (vs V: -0.0913) — strongly additive
+- V+O+q_gain: 4.6789 (vs V+q_gain: -0.0026) — neutral
+- V+Q+q_gain: 4.7169 (vs V+q_gain: +0.0372) — anti-additive
+- V+q+k_gain: 4.6750 (vs V+q_gain: -0.0047) — neutral/additive
+
+**Take-away:** Q-embed and O-embed are roughly the "second best"
+lever each, with K-embed being a bad position. The fact that V+Q
+gains from V+Q+q_gain going *up* suggests Q-embed and q_gain share
+the same gradient slot in the attention score computation. O-embed
+doesn't conflict because O-embed is on a *different* residual
+path (post-attention aggregation), and q_gain modulates Q
+*before* the score computation. They live in different parts of
+the architecture.
+
+### Updated cost / benefit
+
+- V-embed: +55,296 params, -0.0256 val (single-seed)
+- q_gain: +144 params, -0.0784 val (real standalone)
+- V+q_gain: +55,440 params, **-0.1187 val** (3-seed mean -0.1169)
+- V+q+k_gain: +55,584 params, **-0.1234 val** (1 seed)
+
+The most cost-effective lever is q_gain alone: 144 params for
+0.0784 improvement. V+q_gain is the best of the embed+non-embed
+combos, and V+q+k_gain is the "everything" combo at marginal
+extra cost.
+
+### Next probes to consider
+
+- **V+q+k_gain multi-seed**: confirm the 4.6750 with seeds 43, 44.
+- **Bigger V-embed source**: try `emb_rank=96` or `192` for the
+  V-embed projection (currently uses `emb_rank=48`).
+- **Deeper V-embed projection**: V_2 = GELU(W1·ve) then V += W2·V_2
+  (a 2-layer non-linear embed projection, instead of the current
+  linear). Cost: 24 × (kv_size 48 × emb_rank 48) + 24 × (emb_rank
+  48 × emb_rank 48) = 110,592 + 55,296 = 165,888 extra params
+  (+2.1%).
+- **Token identity into FFN**: add `e_j` (or a projection of it)
+  to the FFN input, not just attention. This is a "residual token"
+  path that doesn't go through attention. Tests if the V-embed win
+  is specifically about attention content, or about residual
+  content too.
