@@ -436,3 +436,84 @@ temperature, etc.).
 † Q-embed @4k from milestone history inside the natural-end run (no
 gated rerun). ‡ Control is gated at 4k, not natural-end. Both marked
 in the leaderboard.
+
+## 14. O-embed (#33) result — fundamentally different lever
+
+The Q/K/V family is the same trick in different positions; O-embed
+tests a different operating point entirely. Where #29-#32 inject `e_j`
+into attention *inputs* (so the token identity enters the score
+computation), #33 injects `e_j` into attention *output* (post-O
+projection, straight into the residual). The signal bypasses attention.
+
+This is the modded-nanogpt speedrun's "value embeddings" position. The
+hypothesis to test: if V-embed wins because V is a unique position,
+O-embed should underperform. If V-embed wins because any
+token-signal-into-the-residual helps, O-embed should also win.
+
+Same zero-init raw-Parameter pattern as #29-#32. New config class
+`Screen10M20MOutputEmbedConfig` (single `use_output_embed=True`
+flag). Cost = 24 × d_model 144 × emb_rank 48 = 165,888 extra params
+(~2.1%). Smoke test passed: max|logit diff|=0 at init, 24/24 nonzero
+grad on output_embed_proj, param delta matches expected.
+
+Ran to natural end (step 4,883, 20M tokens):
+
+| #    | val_loss | Δ vs V |
+|------|----------|--------|
+| V+Q  | 4.7428   | -0.0300 |
+| V    | 4.7728   | 0      |
+| Q    | 4.8159   | +0.0431 |
+| K    | 4.8228   | +0.0500 |
+| O    | **4.8350** | **+0.0622** |
+
+O-embed is the **worst of the V/Q/K/O embed family** at the natural
+end. The hypothesis is confirmed: the token-signal win is *inside
+attention* (where the signal affects what the model attends to and
+what gets aggregated), not in the residual (where the signal is just
+another additive vector). A direct path from the input embedding to
+the residual stream is not the lever; the lever is a path through
+attention.
+
+Important caveat: O-embed is **way better than control** (will be
+apples-to-apples once the natural-end control run finishes, currently
+in flight as `s_ctrl_full`). So the token signal *does* help in the
+residual too — just less than inside attention. The O-embed is the
+"additive embed, wrong position" failure mode, not a "levers don't
+work" failure mode.
+
+### Full curve across all five embeds
+
+| step  | V+Q     | V       | Q       | K       | O       |
+|-------|---------|---------|---------|---------|---------|
+| 500   | 6.0992  | 6.4059 | 6.1853  | **6.1641** | 6.1506  |
+| 1000  | 5.6015  | 5.8800 | 5.6941  | **5.6813** | 5.6684  |
+| 4000  | **4.7875** | 4.9381 | 4.8607† | 4.8722  | 4.8834  |
+| 4882  | **4.7428** | 4.7728 | 4.8159  | 4.8228  | 4.8350  |
+
+O-embed has the *fastest warmup of all five* at step 500 (6.1506) and
+1000 (5.6684), but loses the V-embed race by step 4882. Pattern: the
+warmup advantage of an embed-position probe correlates weakly with
+the end-of-training ranking. V-embed is the unique end-of-training
+winner.
+
+### Next lever to consider
+
+Since the "anywhere in attention" story is now well-explored, the
+*real* architectural questions are:
+
+1. **Output-side + input-side combo**: O-embed + V-embed (V + O)?
+   Costs 24 × (kv_size 48 + d_model 144) × emb_rank 48 = 221k extra
+   params. Would test if the two positions are additive (V+Q was
+   additive; V+O might be too).
+2. **Multi-source embed**: project `e_j` through two different
+   projections (one for warmup, one for end-game) and use them at
+   different layers. Tests "is the warmup-vs-endgame tradeoff
+   learnable per-layer?"
+3. **A non-embed architectural change**: QK-layernorm, attention
+   temperature scaling, SwiGLU activation, etc. None of the
+   embed-lever work has touched a non-embed lever. The V-embed
+   family was the only architectural change to make a difference
+   in the 0.10+ band.
+
+Recommended next: try (3) — pick a non-embed change and see if any of
+them break the 0.10 noise band.
