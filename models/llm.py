@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 from typing import Optional
 from configs.llm_config import LLMConfig
@@ -13,8 +14,16 @@ class MinimalLLM(nn.Module):
         super().__init__()
         self.config = config
 
-        # Token embeddings
-        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        # Token embeddings.
+        # emb_rank is None -> full (vocab x d_model) table (default).
+        # emb_rank=r -> low-rank factorization: (vocab x r) @ (r x d_model).
+        self.emb_rank = getattr(config, "emb_rank", None)
+        if self.emb_rank is None:
+            self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+            self.emb_proj = None
+        else:
+            self.token_embedding = nn.Embedding(config.vocab_size, self.emb_rank)
+            self.emb_proj = nn.Linear(self.emb_rank, config.d_model, bias=False)
         self.position_dropout = nn.Dropout(config.dropout)
 
         # Transformer blocks
@@ -37,9 +46,15 @@ class MinimalLLM(nn.Module):
         self.norm = nn.RMSNorm(config.d_model)
         self.output_dropout = nn.Dropout(config.dropout)
 
-        # Language modeling head (tied with embeddings)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        self.lm_head.weight = self.token_embedding.weight
+        # Language modeling head (tied with embeddings).
+        # Full case: standard tied Linear. Factorized case: lm_head is computed
+        # functionally in forward() through the SAME two matrices, so input and
+        # output embeddings stay tied with zero extra params.
+        if self.emb_rank is None:
+            self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+            self.lm_head.weight = self.token_embedding.weight
+        else:
+            self.lm_head = None
 
         self.apply(self._init_weights)
 
@@ -53,7 +68,10 @@ class MinimalLLM(nn.Module):
 
     def forward(self, x):
         # Token embeddings
-        x = self.token_embedding(x) * math.sqrt(self.config.d_model)
+        if self.emb_rank is None:
+            x = self.token_embedding(x) * math.sqrt(self.config.d_model)
+        else:
+            x = self.emb_proj(self.token_embedding(x)) * math.sqrt(self.config.d_model)
         x = self.position_dropout(x)
 
         # Pass through transformer blocks
@@ -63,6 +81,12 @@ class MinimalLLM(nn.Module):
         # Output projection
         x = self.norm(x)
         x = self.output_dropout(x)
-        logits = self.lm_head(x)
+        if self.emb_rank is None:
+            logits = self.lm_head(x)
+        else:
+            # Tied factorized head: d_model -> r (via emb_proj^T) -> vocab (via
+            # token_embedding^T). Reuses the exact embedding matrices.
+            z = F.linear(x, self.emb_proj.weight.t())          # (..., r)
+            logits = F.linear(z, self.token_embedding.weight)  # (..., vocab)
 
         return logits

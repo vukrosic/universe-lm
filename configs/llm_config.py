@@ -23,8 +23,14 @@ class LLMConfig:
     # chunked at seq_len 2048, which the RoPE cache depends on; a mismatch
     # causes runtime errors.
     max_seq_len: int = 2048  # do not change; matches the downloaded data
-    vocab_size: int = 49152  
-    
+    vocab_size: int = 49152
+
+    # Low-rank embedding factorization (ALBERT-style). None = full vocab x d_model
+    # embedding (default, current behavior). An int r factorizes it into
+    # (vocab x r) @ (r x d_model), freeing params to reallocate into transformer
+    # depth/width at a fixed total budget. lm_head stays tied to the factorization.
+    emb_rank: Optional[int] = None
+
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
     device: str = "auto"  # auto, cuda, mps, or cpu
@@ -69,13 +75,18 @@ class LLMConfig:
 
 @dataclass
 class Screen10M20MConfig(LLMConfig):
-    """Screen — ~10M params · 20M tokens · ~4880 steps. Confirms sign survives more tokens.
+    """Screen — ~7.7M params · 20M tokens · ~4880 steps. Confirms sign survives more tokens.
+
+    The 10M architecture: low-rank embedding (emb_rank=48) + depth (24 layers).
+    Embedding factorized 49152x144 -> (49152x48)@(48x144), freeing ~4.7M params
+    from the lookup table and spending them on transformer depth at a fixed budget.
     """
     d_model: int = 144
     n_heads: int = 6
-    n_layers: int = 3
+    n_layers: int = 24
     d_ff: int = 576
     n_kv_heads: int = 2
+    emb_rank: int = 48
     max_seq_len: int = 2048
     batch_size: int = 2
     train_tokens: int = 20_000_000
@@ -122,16 +133,18 @@ class Screen10M20MSwiGLUConfig(Screen10M20MConfig):
 
 @dataclass
 class Full10M200MConfig(LLMConfig):
-    """Ladder — ~10M params · 200M tokens (20x) · ~48,800 steps.
+    """Ladder — ~7.7M params · 200M tokens (20x) · ~48,800 steps. The 10m record target.
 
-    Same shape as Screen10M20MConfig but trained to the 20x regime — the cheapest
+    The 10M architecture: low-rank embedding (emb_rank=48) + depth (24 layers),
+    same shape as Screen10M20MConfig but trained to the 20x regime — the cheapest
     transfer-valid point, runnable locally. First rung of the release ladder.
     """
     d_model: int = 144
     n_heads: int = 6
-    n_layers: int = 3
+    n_layers: int = 24
     d_ff: int = 576
     n_kv_heads: int = 2
+    emb_rank: int = 48
     max_seq_len: int = 2048
     batch_size: int = 2
     train_tokens: int = 200_000_000
