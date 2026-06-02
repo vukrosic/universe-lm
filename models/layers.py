@@ -34,6 +34,7 @@ class MultiHeadAttention(nn.Module):
         use_key_embed: bool = False,
         use_output_embed: bool = False,
         use_q_gain: bool = False,
+        use_k_gain: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -116,6 +117,12 @@ class MultiHeadAttention(nn.Module):
         self.use_q_gain = use_q_gain
         if self.use_q_gain:
             self.q_gain = nn.Parameter(torch.zeros(self.n_heads))
+        # #42 per-head K-gain: symmetric to q_gain, but on K. Tests
+        # whether scaling K helps as much as scaling Q, and whether
+        # both are additive (V+q+k_gain might beat V+q_gain).
+        self.use_k_gain = use_k_gain
+        if self.use_k_gain:
+            self.k_gain = nn.Parameter(torch.zeros(self.n_heads))
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -153,6 +160,10 @@ class MultiHeadAttention(nn.Module):
         # RoPE. Zero-init, so step 0 == baseline.
         if self.use_q_gain:
             Q = Q * (1.0 + self.q_gain.view(1, 1, self.n_heads, 1))
+        # #42 per-head K-gain: symmetric to Q-gain. Multiplies K after
+        # RoPE. Zero-init baseline.
+        if self.use_k_gain:
+            K = K * (1.0 + self.k_gain.view(1, 1, self.n_kv_heads, 1))
         
         # Repeat K/V for GQA if needed
         if self.n_kv_heads != self.n_heads:
@@ -209,6 +220,7 @@ class TransformerBlock(nn.Module):
         use_key_embed: bool = False,
         use_output_embed: bool = False,
         use_q_gain: bool = False,
+        use_k_gain: bool = False,
     ):
         super().__init__()
 
@@ -224,6 +236,7 @@ class TransformerBlock(nn.Module):
             use_key_embed=use_key_embed,
             use_output_embed=use_output_embed,
             use_q_gain=use_q_gain,
+            use_k_gain=use_k_gain,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":

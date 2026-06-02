@@ -41,6 +41,7 @@ class MinimalLLM(nn.Module):
         self.use_key_embed = getattr(config, "use_key_embed", False)
         self.use_output_embed = getattr(config, "use_output_embed", False)
         self.use_q_gain = getattr(config, "use_q_gain", False)
+        self.use_k_gain = getattr(config, "use_k_gain", False)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         self.transformer_blocks = nn.ModuleList(
             [
@@ -60,6 +61,7 @@ class MinimalLLM(nn.Module):
                     use_key_embed=self.use_key_embed,
                     use_output_embed=self.use_output_embed,
                     use_q_gain=self.use_q_gain,
+                    use_k_gain=self.use_k_gain,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(config.n_layers)

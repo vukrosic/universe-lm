@@ -81,6 +81,10 @@ class LLMConfig:
     # Equivalent to a per-head temperature on attention scores.
     # Non-embed lever: changes the attention math, not the inputs.
     use_q_gain: bool = False
+    # #42 per-head K-gain: symmetric to Q-gain. Multiplies K after
+    # norm+RoPE. Tests if K side also benefits from per-head scaling
+    # and if V+q+k_gain beats V+q_gain.
+    use_k_gain: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -337,6 +341,42 @@ class Screen10M20MQGainConfig(Screen10M20MConfig):
     attention patterns.
     """
     use_q_gain: bool = True
+
+
+@dataclass
+class Screen10M20MKGainConfig(Screen10M20MConfig):
+    """Screen10M20M with per-head learnable K-gain (post-RoPE).
+
+    #42 — symmetric to q_gain but on K. Tests whether scaling K
+    helps as much as scaling Q. If k_gain is similar to q_gain,
+    the lever is "per-head temperature" in general. If only q_gain
+    helps, it's specifically the Q side.
+    """
+    use_k_gain: bool = True
+
+
+@dataclass
+class Screen10M20MVQKGainConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + per-head Q-gain + per-head K-gain.
+
+    #43 — V+q+k_gain. Tests whether q_gain and k_gain are
+    additive. If V+q+k_gain < V+q_gain, k_gain is hurting or
+    redundant. If V+q+k_gain > V+q_gain, k_gain adds value.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_k_gain: bool = True
+
+
+@dataclass
+class Screen10M20MQKGainConfig(Screen10M20MConfig):
+    """Screen10M20M with per-head Q-gain + per-head K-gain (no embed).
+
+    #44 — pure double-gain (no embed). Tests if the Q-gain and
+    K-gain levers together beat either alone.
+    """
+    use_q_gain: bool = True
+    use_k_gain: bool = True
 
 
 @dataclass
