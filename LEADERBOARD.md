@@ -43,17 +43,24 @@ read needs a gated rerun. Will fill when the next probe needs them.
 
 Same screen configs as above but trained to the **natural end** (step 4,882 ≈ 20M tokens).
 This is where the "real" comparison lives — the 4k tier measures warmup speed, this tier
-measures end-of-training quality. **Pending:** a control at the natural end (currently
-gated at 4k) so the Δ-vs-ctrl column is honest.
+measures end-of-training quality. **All rows below are at step 4,883 (apples-to-apples
+on token count and training step).**
 
-| # | Val loss | Run | Summary | Date | Evidence |
-|---|---|---|---|---|---|
-| 0 | **4.7428** | vq-embeddings | V+Q combo (`#32`) at natural end, 4,883 steps. The screen's first natural-end winner under the V/Q/K/V+Q family. Beats V-embed alone (row 1) by **0.0300** and K-embed (row 3) by 0.0800. The 0.0300 V+Q → V delta is inside the 0.06-0.16 V-embed noise band, so single-seed certainty is weak — but the curve never crosses (V+Q is better at every step from 500 onward) and the direction matches the additive hypothesis (Q's warmup edge + V's end-game edge). | 2026-06-02 | `runs/s_vqembed_full/metrics.json` · `logs/s_vqembed_full.log` |
-| 1 | 4.7728 | value-embeddings | V-embed (`#29`) at natural end, 4,882 steps. Beats K-embed (row 3) by 0.0500 and Q-embed (row 2) by 0.0431, but loses to V+Q (row 0) by 0.0300. | 2026-06-02 | `runs/s_valembed_full/metrics.json` · `logs/s_valembed_full.log` |
-| 2 | 4.8159 | query-embeddings | Q-embed (`#30`) at natural end. Re-run (s_qembed) gave 4.8753 — same seed, different result, so single-seed Q values are inside the 0.06 noise band. Best Q read is 4.8159. | 2026-06-02 | `runs/s_qembed_4k/metrics.json` · `logs/s_qembed_4k.log` |
-| 3 | 4.8228 | key-embeddings | K-embed (`#31`) at natural end, 4,882 steps. Same pattern as Q-embed: K is essentially tied with Q (4.8228 vs 4.8159, inside noise). | 2026-06-02 | `runs/s_kembed_full/metrics.json` · `logs/s_kembed_full.log` |
-| 4 | 4.8350 | output-embeddings | O-embed (`#33`) at natural end, 4,883 steps. The "fundamentally different lever" probe: inject `e_j` into attention **output** (post-O), bypasses the score computation entirely. **Underperforms all of V/Q/K** (worst natural-end of the embed family), but is still way better than control. Lesson: the token-signal win is **inside attention** (V/Q/K), not in the residual. The signal needs to be inside the attention computation to earn its keep. | 2026-06-02 | `runs/s_oembed_full/metrics.json` · `logs/s_oembed_full.log` |
-| 5 | **pending** | control | A `Screen10M20MConfig` (no embed flags) run to step 4,882 — running on the box as `s_ctrl_full`, ~17 min from launch. Will fill this row. | — | — |
+**Noise band warning:** run-to-run variance with the same seed is **0.06–0.16** for the
+embed-family runs (e.g. Q-embed produced 4.8159 and 4.8753 on two runs with seed 42).
+The 4k gated control (`s_ctrl`, 5.0078) and the natural-end control (`s_ctrl_full`,
+4.8487 at the same step) differ by 0.16. **Single-seed deltas inside ±0.10 should be
+treated as noise, not signal.** The 0.30–0.09 V-embed / V+Q deltas vs the *old* gated
+control were illusory; vs the *fresh* control rerun, the picture is sharper.
+
+| # | Val loss | Δ vs ctrl | Run | Summary | Date | Evidence |
+|---|---|---|---|---|---|---|
+| 0 | **4.7428** | -0.0556 | vq-embeddings | V+Q combo (`#32`) at natural end, 4,883 steps. **The natural-end winner.** Beats V-embed alone (row 1) by 0.0300, control (row 2) by 0.0556. The V+Q → V delta (0.0300) is inside the 0.06-0.16 noise band, so single-seed certainty is weak — but V+Q is better than V at every step from 500 onward and the direction matches the additive hypothesis. | 2026-06-02 | `runs/s_vqembed_full/metrics.json` · `logs/s_vqembed_full.log` |
+| 1 | 4.7728 | -0.0256 | value-embeddings | V-embed (`#29`) at natural end, 4,883 steps. Beats control by 0.0256, but **this delta is inside the noise band** — single-seed V-embed is at most ~1σ above control. Curve never crosses control after step 1000. | 2026-06-02 | `runs/s_valembed_full/metrics.json` · `logs/s_valembed_full.log` |
+| 2 | 4.7984 | 0 | control | Plain `Screen10M20MConfig` (no embed flags) at natural end, 4,883 steps. Fresh rerun, seed 42, bf16, batch 2, 19m on RTX 3050. The apples-to-apples baseline. Beats **Q/K/O-embed** at the natural end (they're slightly *worse* than control — 0.02-0.04 deltas, inside noise but the direction is the same as V's win direction). | 2026-06-02 | `runs/s_ctrl_full/metrics.json` · `logs/s_ctrl_full.log` |
+| 3 | 4.8159 | +0.0175 | query-embeddings | Q-embed (`#30`) at natural end. Q-embed at 4k is competitive (4.8607, 4th place), but loses to control at the end. **The "Q wins warmup" story is a warmup story, not an end-game story** — by step 4883 the Q projection learns to do something slightly worse than nothing. | 2026-06-02 | `runs/s_qembed_4k/metrics.json` · `logs/s_qembed_4k.log` |
+| 4 | 4.8228 | +0.0244 | key-embeddings | K-embed (`#31`) at natural end, 4,882 steps. Same pattern as Q-embed: K is essentially tied with Q (4.8228 vs 4.8159, inside noise), and slightly worse than control. K-embed is "Q's mirror" — both inject into score terms, both end up at the same operating point. | 2026-06-02 | `runs/s_kembed_full/metrics.json` · `logs/s_kembed_full.log` |
+| 5 | 4.8350 | +0.0366 | output-embeddings | O-embed (`#33`) at natural end, 4,883 steps. The "fundamentally different lever" probe: inject `e_j` into attention **output** (post-O), bypasses the score computation entirely. Worst of the embed family. The token-signal win is **inside attention** (V/Q/K), not in the residual — the signal needs to be inside the score computation to earn its keep. | 2026-06-02 | `runs/s_oembed_full/metrics.json` · `logs/s_oembed_full.log` |
 
 ## Screens — quick experimentation (not records)
 
