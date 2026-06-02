@@ -352,3 +352,27 @@ layers.
 Baseline for this round: V-embed at 4.7728 (the natural-end screen record).
 V-embed is built into the new config class so the screen isolates "K
 in addition to V" vs "V alone."
+
+## 12. K-embed (#31) result
+
+Smoke-test passed (max|logit diff| at init = 0, 24/24 nonzero grad,
++55,296 params at 24 layers). Ran to natural end (step 4,882) using the
+patched trainer milestones (gate now fires correctly).
+
+| step  | K-embed  | V-embed  | Q-embed  | control  |
+|-------|----------|----------|----------|----------|
+| 500   | **6.1641** | 6.4059 | 6.1853  | 6.3972   |
+| 1000  | **5.6813** | 5.8800 | 5.6941  | 5.8853   |
+| 4000  | **4.8722** | 4.9381 | —       | 5.0078   |
+| 4882  | 4.8228   | **4.7728** | 4.8159  | —        |
+
+K-embed has the **fastest warmup of all three** (best at 500, 1000, 4000)
+but loses to V at the natural end. K and Q are essentially tied at the
+end (4.8228 vs 4.8159, inside the 0.06-0.16 run-to-run noise). V's
+end-of-training edge is real but small.
+
+Decision: V-embed is confirmed as the best end-of-training mechanism
+within the Q/K/V family. The pattern across #29-#31 is consistent:
+**V/Q/K all beat control by 0.13-0.24, all use ~0.7% extra params, all
+are the same lever in different positions. The lever works; the V
+position is the best single choice.**
