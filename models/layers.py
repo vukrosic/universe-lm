@@ -30,6 +30,7 @@ class MultiHeadAttention(nn.Module):
         use_attn_output_gate: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
+        use_query_embed: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -77,6 +78,12 @@ class MultiHeadAttention(nn.Module):
         if self.use_value_embed:
             assert value_embed_rank is not None, "value_embed_rank required"
             self.value_embed_proj = nn.Parameter(torch.zeros(self.kv_size, value_embed_rank))
+        # #30 query embeddings: same trick on Q. Tests whether V's win is
+        # V-specific or generalizes to "token identity straight into attention."
+        self.use_query_embed = use_query_embed
+        if self.use_query_embed:
+            assert value_embed_rank is not None, "value_embed_rank required (used for Q too)"
+            self.query_embed_proj = nn.Parameter(torch.zeros(self.q_size, value_embed_rank))
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -93,6 +100,9 @@ class MultiHeadAttention(nn.Module):
         # (before head reshape). Zero-inited projection => exact baseline at step 0.
         if self.use_value_embed and ve is not None:
             V = V + F.linear(ve, self.value_embed_proj)
+        # #30 query embeddings: same trick, on Q.
+        if self.use_query_embed and ve is not None:
+            Q = Q + F.linear(ve, self.query_embed_proj)
         
         # Reshape to multi-head format
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
@@ -146,6 +156,7 @@ class TransformerBlock(nn.Module):
         use_layerscale: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
+        use_query_embed: bool = False,
     ):
         super().__init__()
 
@@ -157,6 +168,7 @@ class TransformerBlock(nn.Module):
             n_kv_heads,
             use_attn_output_gate=use_attn_output_gate,
             use_value_embed=use_value_embed,
+            use_query_embed=use_query_embed,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":

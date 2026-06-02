@@ -62,6 +62,9 @@ class LLMConfig:
     # zero-inited so step 0 == baseline. Reuses the existing rank-r table as the
     # source, so cost is only ~r*kv_size/layer (~56k total) — stays in budget.
     use_value_embed: bool = False
+    # #30 query embeddings: same trick on Q. Tests whether V's win was
+    # V-specific or generalizes to "token identity straight into attention."
+    use_query_embed: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -194,6 +197,12 @@ class Screen10M20MValueEmbedConfig(Screen10M20MConfig):
     use_value_embed: bool = True
 
 
+@dataclass
+class Screen10M20MQueryEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token query embeddings injected into attention Q."""
+    use_query_embed: bool = True
+
+
 # ============================================================================
 # FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
 # is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
@@ -261,6 +270,12 @@ class Full10M200MLayerScaleConfig(Full10M200MConfig):
 class Full10M200MValueEmbedConfig(Full10M200MConfig):
     """Full10M200M with token value embeddings injected into attention V."""
     use_value_embed: bool = True
+
+
+@dataclass
+class Full10M200MQueryEmbedConfig(Full10M200MConfig):
+    """Full10M200M with token query embeddings injected into attention Q."""
+    use_query_embed: bool = True
 
 
 @dataclass
