@@ -350,6 +350,48 @@ class Screen10M20MVOQGainConfig(Screen10M20MConfig):
     use_q_gain: bool = True
 
 
+@dataclass
+class Screen10M20MVQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + per-head Q-gain (no O-embed).
+
+    #39 — partial-ablation probe. Best arch (V+O+q_gain = 4.6789 mean
+    across 3 seeds) drops the O-embed. Tests whether O-embed is the
+    necessary addition or whether q_gain alone is enough to push
+    V-embed down. If V+q_gain ≈ V+O+q_gain, O is unnecessary. If
+    V+q_gain >> V but V+q_gain << V+O+q_gain, O is the load-bearing
+    piece.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+
+
+@dataclass
+class Screen10M20MVQQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with V+Q + per-head Q-gain (no O-embed).
+
+    #40 — V+Q+q_gain is an alternative to V+O+q_gain. Tests
+    whether V+O is the unique best embed combo, or whether V+Q
+    with q_gain also helps. If V+Q+q_gain ≈ V+O+q_gain, O and Q
+    are interchangeable (just a different place to put the embed).
+    If V+Q+q_gain > V+O+q_gain, Q is the better add-on.
+    """
+    use_value_embed: bool = True
+    use_query_embed: bool = True
+    use_q_gain: bool = True
+
+
+@dataclass
+class Screen10M20MQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with per-head Q-gain (no embeds).
+
+    #41 — pure non-embed lever. Tests whether q_gain is the
+    load-bearing piece (if so, this should land near V+O+q_gain).
+    If q_gain alone is in noise, q_gain is only additive WITH
+    the embeds.
+    """
+    use_q_gain: bool = True
+
+
 # ============================================================================
 # FULL ladder — 20x tokens (compute-optimal / Chinchilla). Transfer-valid: this
 # is where a mechanism's real optimum is locked. Ladder 10M→25M→50M→135M lets
