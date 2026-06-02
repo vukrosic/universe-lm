@@ -76,6 +76,11 @@ class LLMConfig:
     # embeddings" position — tests whether V-embed's win is V-specific or
     # is "any token-signal-to-residual" wins.
     use_output_embed: bool = False
+    # #37 per-head Q-gain: a learnable per-head scalar that multiplies
+    # the Q vector after norm+RoPE. Zero-init = baseline at step 0.
+    # Equivalent to a per-head temperature on attention scores.
+    # Non-embed lever: changes the attention math, not the inputs.
+    use_q_gain: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -295,6 +300,54 @@ class Screen10M20MVOEmbedConfig(Screen10M20MConfig):
     """
     use_value_embed: bool = True
     use_output_embed: bool = True
+
+
+@dataclass
+class Screen10M20MVOKEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with value + output + key embeddings.
+
+    #36 — K's role across contexts. K is anti-additive in V+Q (4.8250 vs
+    V+Q's 4.7428). Tests whether K is universally bad or just bad in
+    the V+Q context. With O replacing Q (since V+O = best so far at
+    4.7188), K has a different gradient environment. If V+O+K > V+O,
+    K helps when paired with O. If V+O+K < V+O, K is universally
+    bad in any embed combo.
+
+    Cost = 24 × (kv_size 48 + kv_size 48 + d_model 144) × emb_rank 48
+        = 24 × 240 × 48 = 276,480 extra params (~3.6% over baseline).
+    """
+    use_value_embed: bool = True
+    use_output_embed: bool = True
+    use_key_embed: bool = True
+
+
+@dataclass
+class Screen10M20MQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with per-head learnable Q-gain (post-RoPE).
+
+    #37 — first non-embed lever. Each attention head has a learnable
+    scalar that multiplies its Q vector after norm+RoPE. Zero-init so
+    step 0 is exact baseline. Equivalent to per-head temperature on
+    the attention scores. Known modded-nanogpt speedrun trick
+    (q_gain). Cost: 24 × 6 = 144 extra params (negligible).
+
+    If q_gain helps, the model benefits from per-head attention
+    temperature — a way for different heads to specialize. If
+    q_gain is in noise, the heads don't need to rescale their
+    attention patterns.
+    """
+    use_q_gain: bool = True
+
+
+@dataclass
+class Screen10M20MVOQGainConfig(Screen10M20MConfig):
+    """Screen10M20M with V+O + per-head Q-gain. Best embed (V+O 4.7188)
+    + non-embed lever (q_gain). Tests whether q_gain is additive
+    with V+O.
+    """
+    use_value_embed: bool = True
+    use_output_embed: bool = True
+    use_q_gain: bool = True
 
 
 # ============================================================================

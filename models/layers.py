@@ -33,6 +33,7 @@ class MultiHeadAttention(nn.Module):
         use_query_embed: bool = False,
         use_key_embed: bool = False,
         use_output_embed: bool = False,
+        use_q_gain: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -105,6 +106,16 @@ class MultiHeadAttention(nn.Module):
         if self.use_output_embed:
             assert value_embed_rank is not None, "value_embed_rank required (used for O too)"
             self.output_embed_proj = nn.Parameter(torch.zeros(self.d_model, value_embed_rank))
+        # #37 per-head Q-gain: a learnable per-head scalar that multiplies
+        # the Q vector after norm+RoPE. Zero-init so the model starts as
+        # exact baseline (1 + 0 = 1). Equivalent to a per-head
+        # temperature on the attention scores. Known modded-nanogpt
+        # speedrun trick (q_gain in the parameter-golf baseline). Cost:
+        # n_heads scalars per layer = 6 × 24 = 144 total extra params.
+        # Non-embed lever: changes the attention math, not the inputs.
+        self.use_q_gain = use_q_gain
+        if self.use_q_gain:
+            self.q_gain = nn.Parameter(torch.zeros(self.n_heads))
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -138,6 +149,10 @@ class MultiHeadAttention(nn.Module):
         # Apply RoPE
         Q = self.rotary(self.q_norm(Q))
         K = self.rotary(self.k_norm(K))
+        # #37 per-head Q-gain: multiply Q by (1 + q_gain) per head after
+        # RoPE. Zero-init, so step 0 == baseline.
+        if self.use_q_gain:
+            Q = Q * (1.0 + self.q_gain.view(1, 1, self.n_heads, 1))
         
         # Repeat K/V for GQA if needed
         if self.n_kv_heads != self.n_heads:
@@ -193,6 +208,7 @@ class TransformerBlock(nn.Module):
         use_query_embed: bool = False,
         use_key_embed: bool = False,
         use_output_embed: bool = False,
+        use_q_gain: bool = False,
     ):
         super().__init__()
 
@@ -207,6 +223,7 @@ class TransformerBlock(nn.Module):
             use_query_embed=use_query_embed,
             use_key_embed=use_key_embed,
             use_output_embed=use_output_embed,
+            use_q_gain=use_q_gain,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":
