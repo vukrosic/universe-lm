@@ -224,6 +224,8 @@ def main():
     parser.add_argument("--muon_lr", type=float, help="Override Muon learning rate")
     parser.add_argument("--adamw_lr", type=float, help="Override AdamW learning rate")
     parser.add_argument("--train_tokens", type=int, help="Override train_tokens")
+    parser.add_argument("--use_embed_residual", type=str, help="Re-inject token embedding each block, #20 (true/false)")
+    parser.add_argument("--zero_init_resid", type=str, help="Zero-init attn-O + ffn-down projections, #22 (true/false)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
         "--config",
@@ -292,6 +294,10 @@ def main():
         config.adamw_lr = args.adamw_lr
     if args.train_tokens is not None:
         config.train_tokens = args.train_tokens
+    if args.use_embed_residual is not None:
+        config.use_embed_residual = (args.use_embed_residual.lower() == "true")
+    if args.zero_init_resid is not None:
+        config.zero_init_resid = (args.zero_init_resid.lower() == "true")
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device

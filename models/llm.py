@@ -37,10 +37,17 @@ class MinimalLLM(nn.Module):
                     config.dropout,
                     n_kv_heads=config.n_kv_heads,
                     ffn_variant=config.ffn_variant,
+                    use_embed_residual=getattr(config, "use_embed_residual", False),
                 )
                 for i in range(config.n_layers)
             ]
         )
+
+        # #20 embedding residual: rms-norm the original embedding once at the top,
+        # re-injected into every block.
+        self.use_embed_residual = getattr(config, "use_embed_residual", False)
+        if self.use_embed_residual:
+            self.x0_norm = nn.RMSNorm(config.d_model)
 
         # Output layers
         self.norm = nn.RMSNorm(config.d_model)
@@ -58,6 +65,15 @@ class MinimalLLM(nn.Module):
 
         self.apply(self._init_weights)
 
+        # #22 zero-init residual projections: AFTER the global init, zero the
+        # attention output projection (O-slice of the fused qkvo tensor) and the
+        # FFN down-projection so every block is an exact identity at step 0.
+        if getattr(config, "zero_init_resid", False):
+            with torch.no_grad():
+                for block in self.transformer_blocks:
+                    block.attention.qkvo_proj[block.attention.qkv_size:].zero_()
+                    nn.init.zeros_(block.feed_forward.down_proj.weight)
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -74,9 +90,12 @@ class MinimalLLM(nn.Module):
             x = self.emb_proj(self.token_embedding(x)) * math.sqrt(self.config.d_model)
         x = self.position_dropout(x)
 
+        # #20 original embedding, normed once, re-injected into every block
+        x0 = self.x0_norm(x) if self.use_embed_residual else None
+
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x)
+            x = block(x, x0)
 
         # Output projection
         x = self.norm(x)

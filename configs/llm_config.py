@@ -31,6 +31,17 @@ class LLMConfig:
     # depth/width at a fixed total budget. lm_head stays tied to the factorization.
     emb_rank: Optional[int] = None
 
+    # Residual-stream levers (both default off; identity/baseline-initialized, so
+    # "off" reproduces the current model bit-for-bit).
+    # #20 embed residual: re-inject the token embedding x0 each block via a learnable
+    #   per-dim mix x = m0*x + m1*x0 (m0 init 1, m1 init 0). Fights representation
+    #   drift as depth grows. Costs 2*d_model params/block.
+    use_embed_residual: bool = False
+    # #22 zero-init resid: zero-init the attention O-projection + FFN down-projection
+    #   so each block is an exact identity at step 0 (clean signal propagation through
+    #   the deep stack). Zero extra params — purely an init change.
+    zero_init_resid: bool = False
+
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
     device: str = "auto"  # auto, cuda, mps, or cpu

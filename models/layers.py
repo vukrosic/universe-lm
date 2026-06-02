@@ -117,6 +117,7 @@ class TransformerBlock(nn.Module):
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
         ffn_variant: str = "squared_relu",
+        use_embed_residual: bool = False,
     ):
         super().__init__()
 
@@ -133,7 +134,18 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+        # #20 embedding residual: per-dim mix with the original token embedding x0,
+        # init [m0=1, m1=0] so it starts exactly at baseline.
+        self.use_embed_residual = use_embed_residual
+        if use_embed_residual:
+            self.resid_m0 = nn.Parameter(torch.ones(d_model))
+            self.resid_m1 = nn.Parameter(torch.zeros(d_model))
+
+    def forward(self, x, x0=None):
+        # Re-inject the original embedding before attention/MLP (#20)
+        if self.use_embed_residual:
+            x = self.resid_m0 * x + self.resid_m1 * x0
+
         # Self-attention
         attn_out = self.attention(self.norm1(x))
         x = x + self.dropout(attn_out)
