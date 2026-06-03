@@ -53,6 +53,10 @@ class MinimalLLM(nn.Module):
         # the rotary is bypassed.
         self.use_nope = getattr(config, "use_nope", False)
         self.rope_base = getattr(config, "rope_base", 10000)
+        self.use_tied_qk = getattr(config, "use_tied_qk", False)
+        self.use_mla = getattr(config, "use_mla", False)
+        self.mla_latent_dim = getattr(config, "mla_latent_dim", None)
+        self.attention_dilation = getattr(config, "attention_dilation", 1)
         # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
         # group of N consecutive blocks shares weights. We create only
         # n_layers // N unique blocks and the forward pass cycles through
@@ -91,6 +95,10 @@ class MinimalLLM(nn.Module):
                     sliding_window_size=self.sliding_window_size,
                     use_nope=self.use_nope,
                     rope_base=self.rope_base,
+                    use_tied_qk=self.use_tied_qk,
+                    use_mla=self.use_mla,
+                    mla_latent_dim=self.mla_latent_dim,
+                    attention_dilation=self.attention_dilation,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(n_unique)

@@ -42,6 +42,10 @@ class MultiHeadAttention(nn.Module):
         sliding_window_size: int = 512,
         use_nope: bool = False,
         rope_base: int = 10000,
+        use_tied_qk: bool = False,
+        use_mla: bool = False,
+        mla_latent_dim: int | None = None,
+        attention_dilation: int = 1,
     ):
         super().__init__()
         self.d_model = d_model
@@ -62,6 +66,21 @@ class MultiHeadAttention(nn.Module):
         
         # Single parameter tensor for all projections
         # Shape: [Q_size + K_size + V_size + O_size, d_model]
+        # #72 Tied QK: when set, Q and K share a single W (PaLM-style).
+        # We allocate a SEPARATE parameter and don't use the Q/K slices
+        # of the merged qkvo_proj in that case.
+        self.use_tied_qk = use_tied_qk
+        if use_tied_qk:
+            self.qk_proj = nn.Parameter(torch.empty(q_size + kv_size, d_model))
+        # #73 MLA: latent K,V with down/up projections. Separate
+        # parameters; the standard Q/K/V slices of qkvo_proj are unused
+        # when MLA is on.
+        self.use_mla = use_mla
+        self.mla_latent_dim = mla_latent_dim if mla_latent_dim is not None else max(8, d_model // 4)
+        if use_mla:
+            self.mla_dkv = nn.Parameter(torch.empty(self.mla_latent_dim, d_model))
+            self.mla_uk  = nn.Parameter(torch.empty(kv_size, self.mla_latent_dim))
+            self.mla_uv  = nn.Parameter(torch.empty(kv_size, self.mla_latent_dim))
         self.qkvo_proj = nn.Parameter(
             torch.empty(q_size + 2 * kv_size + o_size, d_model)
         )
@@ -69,6 +88,12 @@ class MultiHeadAttention(nn.Module):
         # Initialize all weights with std=0.02
         with torch.no_grad():
             torch.nn.init.normal_(self.qkvo_proj, mean=0.0, std=0.02)
+            if use_tied_qk:
+                torch.nn.init.normal_(self.qk_proj, mean=0.0, std=0.02)
+            if use_mla:
+                torch.nn.init.normal_(self.mla_dkv, mean=0.0, std=0.02)
+                torch.nn.init.normal_(self.mla_uk,  mean=0.0, std=0.02)
+                torch.nn.init.normal_(self.mla_uv,  mean=0.0, std=0.02)
         # ================================================
         
         self.q_norm = nn.RMSNorm(self.d_k)
@@ -169,17 +194,33 @@ class MultiHeadAttention(nn.Module):
         # the upper-left [seq_len, seq_len] submatrix. causal AND
         # local-window — both are required, otherwise the mask lets
         # each position attend to its future.
+        # #74 dilated attention: same as SWA but the window consists
+        # of every `attention_dilation`-th position (dilation=1 is
+        # the contiguous SWA case; dilation=2 takes every other
+        # position in the window range; etc.).
         self.use_sliding_window = use_sliding_window
         self.sliding_window_size = sliding_window_size
+        self.attention_dilation = max(1, int(attention_dilation))
         if self.use_sliding_window:
             idx = torch.arange(max_seq_len)
-            # causal-local: 0 <= (i - j) < window
-            self.register_buffer(
-                "_sliding_window_mask",
-                ((idx[:, None] - idx[None, :]) >= 0)
-                & ((idx[:, None] - idx[None, :]) < sliding_window_size),
-                persistent=False,
-            )
+            diff = idx[:, None] - idx[None, :]
+            if self.attention_dilation == 1:
+                # contiguous SWA — original mask
+                self.register_buffer(
+                    "_sliding_window_mask",
+                    (diff >= 0) & (diff < sliding_window_size),
+                    persistent=False,
+                )
+            else:
+                # dilated: keep positions j where diff is a multiple
+                # of dilation AND within the window
+                self.register_buffer(
+                    "_sliding_window_mask",
+                    (diff >= 0)
+                    & (diff < sliding_window_size)
+                    & ((diff % self.attention_dilation) == 0),
+                    persistent=False,
+                )
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -189,7 +230,23 @@ class MultiHeadAttention(nn.Module):
         qkv = F.linear(x, self.qkvo_proj[:self.qkv_size])
         
         # Split the result into Q, K, V
-        Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        # #72 Tied QK (PaLM): Q and K share the same W matrix. Use a
+        # separate qk_proj parameter; the Q/K slices of qkvo_proj are
+        # unused in this mode. V is still from its qkvo_proj slice.
+        # #73 MLA: K, V come from a low-rank latent. The latent is
+        # computed once per layer (down-project input), then
+        # up-projected per head to K, V.
+        if self.use_tied_qk:
+            qk = F.linear(x, self.qk_proj)
+            Q, K = qk.split([self.q_size, self.kv_size], dim=-1)
+            V = F.linear(x, self.qkvo_proj[self.qkv_size - self.kv_size:self.qkv_size])
+        elif self.use_mla:
+            latent = F.linear(x, self.mla_dkv)  # [B, T, mla_latent_dim]
+            K = F.linear(latent, self.mla_uk)    # [B, T, kv_size]
+            V = F.linear(latent, self.mla_uv)    # [B, T, kv_size]
+            Q = F.linear(x, self.qkvo_proj[:self.q_size])
+        else:
+            Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
 
         # #29 value embeddings: add the projected token embedding to the values
@@ -318,6 +375,10 @@ class TransformerBlock(nn.Module):
         sliding_window_size: int = 512,
         use_nope: bool = False,
         rope_base: int = 10000,
+        use_tied_qk: bool = False,
+        use_mla: bool = False,
+        mla_latent_dim: int | None = None,
+        attention_dilation: int = 1,
     ):
         super().__init__()
 
@@ -341,6 +402,10 @@ class TransformerBlock(nn.Module):
             sliding_window_size=sliding_window_size,
             use_nope=use_nope,
             rope_base=rope_base,
+            use_tied_qk=use_tied_qk,
+            use_mla=use_mla,
+            mla_latent_dim=mla_latent_dim,
+            attention_dilation=attention_dilation,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":

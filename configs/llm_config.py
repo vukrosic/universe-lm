@@ -145,6 +145,26 @@ class LLMConfig:
     # through the tanh. Real arch change — known stabilizer that
     # can change the loss landscape and unlock better minima.
     logit_softcap: float = 0.0
+    # #72 Tied QK (PaLM-style): Q and K share the same projection
+    # matrix. The merged QK is shape [q_size + kv_size, d_model],
+    # output is split into Q (q_size) and K (kv_size). Real arch
+    # change — PaLM's signature attention choice. The Q and K
+    # weights are no longer independent; this is a structural
+    # constraint, not a hyperparam.
+    use_tied_qk: bool = False
+    # #73 Multi-head Latent Attention (MLA, DeepSeek-V2): compress
+    # K, V into a low-rank latent of dim `mla_latent_dim`, then
+    # up-project per head. Different attention design from the
+    # standard projection-per-head. Real arch change.
+    use_mla: bool = False
+    mla_latent_dim: Optional[int] = None
+    # #74 Dilated attention: like SWA but the window consists of
+    # every `dilation`-th position (instead of contiguous). Tests
+    # whether strided/sparse patterns beat contiguous locality.
+    # dilation=1 (default) means contiguous (SWA). dilation=2 means
+    # every other position. The window still covers ~`window_size`
+    # positions by token count, but spread across a longer range.
+    attention_dilation: int = 1
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -897,6 +917,70 @@ class Screen10M20MVQGainSWAHighRoPELogitSoftcapConfig(Screen10M20MConfig):
     sliding_window_size: int = 512
     rope_base: int = 500000
     logit_softcap: float = 15.0
+
+
+@dataclass
+class Screen10M20MVQGainSWATiedQKConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA + Tied QK (PaLM-style).
+
+    #72 — Tied QK: Q and K share the same projection matrix.
+    Real arch change. PaLM uses this as the default attention
+    design. Tests whether tying QK weights is a real lever.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    use_tied_qk: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPETiedQKConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + Tied QK (PaLM-style).
+
+    #72b — same as #72 but on the V+q+SWA+HighRoPE best baseline.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    use_tied_qk: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEMLAConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + MLA (DeepSeek-V2-style).
+
+    #73 — Multi-head Latent Attention: K,V are computed via a
+    low-rank latent (d_c=mla_latent_dim, default d_model//4=36).
+    Real arch change. DeepSeek-V2 uses this. Tests whether
+    the latent bottleneck is a real lever on our small model.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    use_mla: bool = True
+    mla_latent_dim: int = 36
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEDilatedConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + Dilated Attention.
+
+    #74 — dilation=2. Same window_size=512 by token count, but
+    positions are spread (every other position in the window
+    range). Tests whether strided patterns beat contiguous
+    locality at this scale. Effective range: 2*512=1024 tokens.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    attention_dilation: int = 2
 
 
 @dataclass
