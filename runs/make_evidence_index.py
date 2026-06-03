@@ -52,7 +52,8 @@ DESC = {
     "s_ffnembed_full":      ("variant",       "FFN-embed injection"),
     "s_vqgffnembed_full":   ("variant",       "V+q_gain + FFN-embed"),
     "s_vqgain_swiglu_full": ("variant",       "V+q_gain + SWiGLU FFN"),
-    "s_vqgain_swa_gelu_full":("#62 NEW BEST",  "V+q+SWA + GELU FFN — current screen20m best 4.6608, single-seed"),
+    "s_vqgain_swa_gelu_full":("#62",  "V+q+SWA + GELU FFN — single-seed 4.6608 (was best until #64)"),
+    "s_vqgain_swa_highrope_full":("#64 NEW BEST",  "V+q+SWA + RoPE_base=500000 — current screen20m best 4.6364, single-seed"),
     "s_vqgainqkpostnorm_full":("variant",     "V+q_gain + QK post-norm"),
     # --- 4k gated screen tier ---
     "s_ctrl":  ("screen16m ctrl", "4k gated control (5.0078)"),

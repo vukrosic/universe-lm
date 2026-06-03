@@ -11,7 +11,8 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 
 | Run dir | Val loss | Steps | Gated | Commit | LB ref | What it is |
 |---|---|---|---|---|---|---|
-| `s_vqgain_swa_gelu_full` | 4.6608 | 4883 | False | `4be65bb6` | #62 NEW BEST | V+q+SWA + GELU FFN — current screen20m best 4.6608, single-seed |
+| `s_vqgain_swa_highrope_full` | 4.6364 | 4883 | False | `4be65bb6` | #64 NEW BEST | V+q+SWA + RoPE_base=500000 — current screen20m best 4.6364, single-seed |
+| `s_vqgain_swa_gelu_full` | 4.6608 | 4883 | False | `4be65bb6` | #62 | V+q+SWA + GELU FFN — single-seed 4.6608 (was best until #64) |
 | `s_vqgain_swa_s43` | 4.6652 | 4883 | False | `4be65bb6` | #51 s43 | V+q_gain + SWA, seed 43 (multi-seed confirm) |
 | `s_vqgain_swa_full` | 4.6700 | 4883 | False | `4be65bb6` | #51 s42 | V+q_gain + SWA(window=512), seed 42 (multi-seed mean 4.6676) |
 | `s_voqgain_full` | 4.6745 | 4883 | False | `4be65bb6` | #38 s42 | V+O + q_gain, seed 42 (O redundant with q_gain) |
@@ -59,4 +60,4 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `emb_resid` | 5.4875 | 1500 | None | `4be65bb6` | issue#20 §1 | Embedding residual (early kill) |
 | `s_outadapter` | 6.0775 | 1000 | None | `4be65bb6` | ablation §3 | Low-rank output adapter (collapsed) |
 
-_47 runs._
+_48 runs._
