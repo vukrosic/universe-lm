@@ -73,7 +73,49 @@ DESC = {
 def load(mp):
     d = json.load(open(mp))
     fm = d.get("final_metrics", {})
-    return fm.get("val_loss"), d.get("actual_steps"), d.get("gated"), (d.get("git_commit") or "")[:8]
+    return (
+        fm.get("val_loss"),
+        d.get("actual_steps"),
+        d.get("gated"),
+        (d.get("git_commit") or "")[:8],
+        # Forward-only identity fields (added 2026-06-03, post ef5a523).
+        # Old metrics.json won't have them — DESC is the fallback.
+        d.get("config_name"),
+        d.get("seed"),
+        d.get("flags") or {},
+        d.get("run_name"),
+    )
+
+
+def auto_label(config_name, seed, flags):
+    """Build a one-line self-description for a run that lacks a DESC entry.
+    Pulls the architecture-relevant flags out of the dict so a run that
+    has never been hand-curated still surfaces "what was on" in the
+    index. Pure presentation — does not modify the JSON.
+    """
+    if not config_name:
+        return "(undocumented — add to DESC in make_evidence_index.py)"
+    # Pick the most architecture-relevant flags
+    interesting = []
+    for k in ("use_value_embed", "use_query_embed", "use_key_embed",
+              "use_output_embed", "use_deep_value_embed", "use_ffn_embed",
+              "use_q_gain", "use_k_gain", "use_qk_norm_post_rope",
+              "use_sliding_window", "sliding_window_size", "use_nope",
+              "use_layerscale", "use_attn_output_gate", "use_embed_residual",
+              "tie_layer_groups", "ffn_variant", "rope_base",
+              "n_kv_heads"):
+        if k in flags and flags[k] not in (False, 0, 1, None, ""):
+            v = flags[k]
+            if v is True:
+                interesting.append(k.removeprefix("use_"))
+            else:
+                interesting.append(f"{k.removeprefix('use_')}={v}")
+    label = config_name
+    if seed is not None:
+        label += f" (seed {seed})"
+    if interesting:
+        label += " — flags: " + ", ".join(interesting)
+    return label
 
 
 def main():
@@ -81,11 +123,17 @@ def main():
     for mp in sorted(glob.glob(os.path.join(HERE, "*", "metrics.json"))):
         run = os.path.basename(os.path.dirname(mp))
         try:
-            vl, steps, gated, commit = load(mp)
+            vl, steps, gated, commit, config_name, seed, flags, run_name = load(mp)
         except Exception as e:
             vl, steps, gated, commit = f"ERR {e}", "", "", ""
-        ref, desc = DESC.get(run, ("—", "(undocumented — add to DESC in make_evidence_index.py)"))
-        rows.append((run, vl, steps, gated, commit, ref, desc))
+            config_name = seed = flags = run_name = None
+        # If run_name is set in the JSON, prefer it (it should match the
+        # dir name, but this catches moved JSONs).
+        effective_run = run_name or run
+        ref, desc = DESC.get(run, ("—", None))
+        if desc is None:
+            desc = auto_label(config_name, seed, flags)
+        rows.append((effective_run, vl, steps, gated, commit, ref, desc))
 
     rows.sort(key=lambda r: (r[1] if isinstance(r[1], (int, float)) else 1e9))
 

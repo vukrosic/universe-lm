@@ -172,6 +172,24 @@ class LLMConfig:
         self.d_k = self.d_model // self.n_heads
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
 
+    def active_flags(self) -> dict:
+        """Return {field_name: value} for every field whose value differs
+        from the LLMConfig default. Used by the metrics writer to dump
+        only the non-default knobs — the "what was on" summary of a
+        run. Forward-only: new runs emit this; old metrics.json
+        don't have it (DESC in runs/make_evidence_index.py is the
+        fallback for those).
+        """
+        import dataclasses
+        defaults = LLMConfig()
+        out = {}
+        for f in dataclasses.fields(self):
+            cur = getattr(self, f.name)
+            dflt = getattr(defaults, f.name, None)
+            if cur != dflt and not f.name.startswith("_"):
+                out[f.name] = cur
+        return out
+
 
 # ============================================================================
 # SCREEN tier — undertrained (NOT 20x). Cheap, fast filters to find a mechanism's
