@@ -79,6 +79,27 @@ confirmation** (seeds 42/43/44), with std 0.0057 and 0.0048 respectively. V+q+k_
 | 16 | 4.8250 | +0.0266 | vqk-embeddings | V+Q+K combo (`#34`) at natural end, 4,883 steps. **K is anti-additive** in the V+Q context. Adding K to V+Q drops val loss 0.0240 → 4.8250 (worse than V+Q alone by 0.0822, worse than V alone by 0.0522, worse than control by 0.0266). Hypothesis: the K projection creates a gradient conflict with V and Q, or with GQA the K signal is "too much" of the same identity. | 2026-06-02 | `runs/s_vqkembed_full/metrics.json` · `logs/s_vqkembed_full.log` |
 | 17 | 4.8350 | +0.0366 | output-embeddings | O-embed (`#33`) at natural end, 4,883 steps. O-embed alone is the worst of the embed family. **But O-embed is highly additive with V** — see row 1 (V+O = 4.7188). O is a bad position in isolation, a great position when paired with V. | 2026-06-02 | `runs/s_oembed_full/metrics.json` · `logs/s_oembed_full.log` |
 
+## Fresh axes (2026-06-03, this session)
+
+The embed/gain/FFN-activation family is closed. New axes tested in this session:
+**attention pattern (SWA), positional encoding (NoPE), layer tying (ALBERT-style),
+GQA ratio, MLP activation (GELU)**. All single-seed except where noted — multi-seed
+confirmation pending. Closed axes go to a separate section below.
+
+| # | Val loss | Δ vs ctrl | Run | Summary | Date | Evidence |
+|---|---|---|---|---|---|---|
+| 18 | **4.6700** | **-0.1284** | vq-gain+swa | V+q_gain + sliding-window attention (window=512) (`#51`) at natural end, 4,883 steps, seed 42. **NEW BEST screen20m single-seed result** (was V+q_gain 4.6797). -0.0097 vs V+q_gain, -0.0115 vs V+q_gain 3-seed mean. Flag-only, no extra params — SDPA's `is_causal=True` is replaced by an explicit causal-local boolean mask (density 0.2188 at window=512, seq=2048). Multi-seed confirmation in flight (seed 43 running). | 2026-06-03 | `runs/s_vqgain_swa_full/metrics.json` · `logs/s_vqgain_swa.log` |
+| 19 | 4.7419 | -0.0565 | vq-gain+tied2 | V+q_gain + layer tying (ALBERT-style, group_size=2) (`#56`) at natural end, 4,883 steps, seed 42. 12 unique blocks, 24 layer passes. -0.057 vs control, but +0.062 vs V+q_gain. **Layer tying is CLOSED on V+q** — still beats control (so depth uniqueness is not the *only* thing) but adding tying on top of V+q costs ~0.06. | 2026-06-03 | `runs/s_vqgain_tied2_full/metrics.json` · `logs/s_vqgain_tied2.log` |
+| 20 | 4.7552 ± 0.027 | -0.043 | swa-only | Sliding-window attention only (`#52`), no embeds, no gains, window=512, seeds 42+43. **Real standalone lever** — ~1.6σ below control, beats V alone (4.7728) by 0.018. 2-seed mean 4.7552, std 0.0273. SWA gives back ~half the V+q_gain win on its own. | 2026-06-03 | `runs/s_swa_only_full/metrics.json` · `runs/s_swa_only_s43/metrics.json` |
+| 21 | 4.7981 | -0.0003 | mha | Full multi-head attention (`#58`, n_kv_heads=6) at natural end, 4,883 steps, seed 42. **Effectively tied with control** (4.7984, -0.0003). GQA=2 is a wash at this scale — removing KV sharing (full MHA) gives nothing. **GQA is not a lever at this scale.** | 2026-06-03 | `runs/s_mha_full/metrics.json` · `logs/s_mha.log` |
+
+### Closed this session (do not retry)
+
+| Run | val | Verdict | Why closed |
+|---|---|---|---|
+| V+q+NoPE (`#54`) | 5.2406 | **CLOSED** | RoPE is load-bearing. -0.561 vs V+q_gain, +0.442 vs control. NoPE hurts V+q catastrophically — RoPE is a structural requirement, not a free lever. |
+| V+q+LayerTied2 (`#56`) | 4.7419 | **CLOSED on V+q** | +0.062 vs V+q_gain. Layer tying acts as a regularizer but conflicts with V+q — V+q already provides depth-anchored signal that tying disrupts. Still beats control, so depth uniqueness isn't the only thing, but the lever is anti-additive with V+q. |
+
 ## Screens — quick experimentation (not records)
 
 For finding promising mechanisms and reproducing baselines fast. Not ranked — only a `10m`

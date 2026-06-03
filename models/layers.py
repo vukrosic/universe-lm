@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward, SwiGLUFeedForward
+from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward
 
 
 class Rotary(nn.Module):
@@ -37,6 +37,10 @@ class MultiHeadAttention(nn.Module):
         use_k_gain: bool = False,
         use_deep_value_embed: bool = False,
         deep_value_embed_hidden: int | None = None,
+        use_qk_norm_post_rope: bool = False,
+        use_sliding_window: bool = False,
+        sliding_window_size: int = 512,
+        use_nope: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -144,6 +148,32 @@ class MultiHeadAttention(nn.Module):
         self.use_k_gain = use_k_gain
         if self.use_k_gain:
             self.k_gain = nn.Parameter(torch.zeros(self.n_heads))
+        # #49 QK-norm-post-RoPE: apply RMSNorm to Q,K AFTER RoPE (modded-
+        # nanogpt trick) instead of the default BEFORE RoPE. Different
+        # mathematical operating point. Flag-only, no extra params.
+        self.use_qk_norm_post_rope = use_qk_norm_post_rope
+        # #53 NoPE: skip the rotary positional embedding entirely. The
+        # Q,K tensors still go through RMSNorm (norm is the Q/K
+        # magnitude stabilizer, separate concern from position), but
+        # the rotary is bypassed.
+        self.use_nope = use_nope
+        # #51 sliding-window attention: build a [T, T] causal-local
+        # boolean mask once at init and reuse. True = attend,
+        # False = mask out. Built for max_seq_len; the SDPA call slices
+        # the upper-left [seq_len, seq_len] submatrix. causal AND
+        # local-window — both are required, otherwise the mask lets
+        # each position attend to its future.
+        self.use_sliding_window = use_sliding_window
+        self.sliding_window_size = sliding_window_size
+        if self.use_sliding_window:
+            idx = torch.arange(max_seq_len)
+            # causal-local: 0 <= (i - j) < window
+            self.register_buffer(
+                "_sliding_window_mask",
+                ((idx[:, None] - idx[None, :]) >= 0)
+                & ((idx[:, None] - idx[None, :]) < sliding_window_size),
+                persistent=False,
+            )
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -182,8 +212,23 @@ class MultiHeadAttention(nn.Module):
         V = V.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
         
         # Apply RoPE
-        Q = self.rotary(self.q_norm(Q))
-        K = self.rotary(self.k_norm(K))
+        # #49 QK-norm-post-RoPE: by default we apply RMSNorm to Q,K BEFORE
+        # RoPE (the pre-RoPE norm). The modded-nanogpt variant applies the
+        # norm AFTER RoPE. The two are mathematically different — post-RoPE
+        # norm constrains the post-RoPE Q,K magnitudes per head, which can
+        # help with attention score stability at scale.
+        # #53 NoPE: when use_nope is set, skip the rotary call entirely.
+        # RMSNorm still runs (it's a Q/K magnitude stabilizer, separate
+        # from position), but the rotation is bypassed.
+        if self.use_nope:
+            Q = self.q_norm(Q)
+            K = self.k_norm(K)
+        elif self.use_qk_norm_post_rope:
+            Q = self.q_norm(self.rotary(Q))
+            K = self.k_norm(self.rotary(K))
+        else:
+            Q = self.rotary(self.q_norm(Q))
+            K = self.rotary(self.k_norm(K))
         # #37 per-head Q-gain: multiply Q by (1 + q_gain) per head after
         # RoPE. Zero-init, so step 0 == baseline.
         if self.use_q_gain:
@@ -202,9 +247,19 @@ class MultiHeadAttention(nn.Module):
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
         # Compute attention
-        attn_output = F.scaled_dot_product_attention(
-            Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
-        )
+        # #51 sliding-window: when enabled, use a [T, T] causal-local
+        # boolean mask instead of SDPA's `is_causal=True` fast path.
+        # The mask is broadcast across batch and head dims.
+        if self.use_sliding_window:
+            attn_output = F.scaled_dot_product_attention(
+                Q, K, V,
+                attn_mask=self._sliding_window_mask[:seq_len, :seq_len],
+                dropout_p=self.dropout if self.training else 0.0,
+            )
+        else:
+            attn_output = F.scaled_dot_product_attention(
+                Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
+            )
         if self.use_attn_output_gate:
             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
             attn_output = attn_output * gate
@@ -251,6 +306,11 @@ class TransformerBlock(nn.Module):
         use_k_gain: bool = False,
         use_deep_value_embed: bool = False,
         deep_value_embed_hidden: int | None = None,
+        use_ffn_embed: bool = False,
+        use_qk_norm_post_rope: bool = False,
+        use_sliding_window: bool = False,
+        sliding_window_size: int = 512,
+        use_nope: bool = False,
     ):
         super().__init__()
 
@@ -269,12 +329,18 @@ class TransformerBlock(nn.Module):
             use_k_gain=use_k_gain,
             use_deep_value_embed=use_deep_value_embed,
             deep_value_embed_hidden=deep_value_embed_hidden,
+            use_qk_norm_post_rope=use_qk_norm_post_rope,
+            use_sliding_window=use_sliding_window,
+            sliding_window_size=sliding_window_size,
+            use_nope=use_nope,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":
             self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
         elif ffn_variant == "swiglu":
             self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
+        elif ffn_variant == "gelu":
+            self.feed_forward = GELUFeedForward(d_model, d_ff, dropout)
         else:
             raise ValueError(f"Unknown ffn_variant: {ffn_variant}")
 
@@ -293,6 +359,18 @@ class TransformerBlock(nn.Module):
         if self.use_layerscale:
             self.attn_layerscale = nn.Parameter(torch.zeros(d_model))
             self.ffn_layerscale = nn.Parameter(torch.zeros(d_model))
+        # #47 FFN embeddings: add a learned projection of the factorized
+        # token embedding to the FFN input. Different position from
+        # V-embed (#29, inside attention) and O-embed (#33, post-O).
+        # Tests whether the V-embed win is about attention content or
+        # about residual content. Zero-init, so step 0 = exact baseline.
+        # Cost: 24 × (d_model 144 × emb_rank 48) = 165,888 extra params.
+        self.use_ffn_embed = use_ffn_embed
+        if self.use_ffn_embed:
+            assert value_embed_rank is not None, "value_embed_rank required for FFN-embed"
+            self.ffn_embed_proj = nn.Parameter(
+                torch.zeros(d_model, value_embed_rank)
+            )
 
     def forward(self, x, x0=None, ve=None):
         # Re-inject the original embedding before attention/MLP (#20)
@@ -306,7 +384,14 @@ class TransformerBlock(nn.Module):
         x = x + self.dropout(attn_out)
 
         # Feed-forward
-        ff_out = self.feed_forward(self.norm2(x))
+        ffn_in = self.norm2(x)
+        # #47 FFN-embed: add token identity to FFN input (post-attention,
+        # pre-FFN, after norm2). Different path from V-embed (in attention)
+        # and O-embed (post-O residual). The FFN now has direct access to
+        # token identity without going through attention.
+        if self.use_ffn_embed and ve is not None:
+            ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
+        ff_out = self.feed_forward(ffn_in)
         if self.use_layerscale:
             ff_out = ff_out * (1.0 + self.ffn_layerscale)
         x = x + self.dropout(ff_out)

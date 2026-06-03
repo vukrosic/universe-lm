@@ -43,6 +43,24 @@ class MinimalLLM(nn.Module):
         self.use_q_gain = getattr(config, "use_q_gain", False)
         self.use_k_gain = getattr(config, "use_k_gain", False)
         self.use_deep_value_embed = getattr(config, "use_deep_value_embed", False)
+        self.use_ffn_embed = getattr(config, "use_ffn_embed", False)
+        self.use_qk_norm_post_rope = getattr(config, "use_qk_norm_post_rope", False)
+        self.use_sliding_window = getattr(config, "use_sliding_window", False)
+        self.sliding_window_size = getattr(config, "sliding_window_size", 512)
+        # #53 NoPE: skip the rotary positional embedding entirely. The
+        # Q,K tensors still go through RMSNorm (norm is the Q/K
+        # magnitude stabilizer, separate concern from position), but
+        # the rotary is bypassed.
+        self.use_nope = getattr(config, "use_nope", False)
+        # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
+        # group of N consecutive blocks shares weights. We create only
+        # n_layers // N unique blocks and the forward pass cycles through
+        # them. U-Net skips are disabled when tying is active (a skip
+        # from block 0 to block n_layers-1 would be a cycle).
+        self.tie_layer_groups = max(1, getattr(config, "tie_layer_groups", 1))
+        if self.tie_layer_groups > 1 and getattr(config, "use_unet_skips", False):
+            raise ValueError("tie_layer_groups > 1 is incompatible with use_unet_skips")
+        n_unique = config.n_layers // self.tie_layer_groups
         deep_value_embed_hidden = getattr(config, "deep_value_embed_hidden", None)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         self.transformer_blocks = nn.ModuleList(
@@ -66,9 +84,14 @@ class MinimalLLM(nn.Module):
                     use_k_gain=self.use_k_gain,
                     use_deep_value_embed=self.use_deep_value_embed,
                     deep_value_embed_hidden=deep_value_embed_hidden,
+                    use_ffn_embed=self.use_ffn_embed,
+                    use_qk_norm_post_rope=self.use_qk_norm_post_rope,
+                    use_sliding_window=self.use_sliding_window,
+                    sliding_window_size=self.sliding_window_size,
+                    use_nope=self.use_nope,
                     value_embed_rank=value_embed_rank,
                 )
-                for i in range(config.n_layers)
+                for i in range(n_unique)
             ]
         )
 
@@ -140,7 +163,7 @@ class MinimalLLM(nn.Module):
         # #31 key-embed source: same `tok` too.
         # #33 output-embed source: same `tok` (raw embedding). All four
         # share the same `ve` plumbing.
-        ve = tok if (self.use_value_embed or self.use_query_embed or self.use_key_embed or self.use_output_embed or self.use_deep_value_embed) else None
+        ve = tok if (self.use_value_embed or self.use_query_embed or self.use_key_embed or self.use_output_embed or self.use_deep_value_embed or self.use_ffn_embed) else None
         if self.use_smear_gate:
             prev = torch.zeros_like(x)
             prev[:, 1:] = x[:, :-1]
@@ -152,7 +175,8 @@ class MinimalLLM(nn.Module):
 
         # Pass through transformer blocks
         unet_skips = []
-        for i, block in enumerate(self.transformer_blocks):
+        for i in range(self.config.n_layers):
+            block = self.transformer_blocks[i // self.tie_layer_groups]
             if self.use_unet_skips and i >= self.config.n_layers - self.unet_skip_count:
                 skip_idx = self.config.n_layers - 1 - i
                 x = x + self.unet_skip_gates[skip_idx] * unet_skips[skip_idx]

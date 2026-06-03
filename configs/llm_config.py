@@ -93,6 +93,44 @@ class LLMConfig:
     # (default 96 = 2× emb_rank for Screen10M20M).
     use_deep_value_embed: bool = False
     deep_value_embed_hidden: Optional[int] = None
+    # #47 FFN embeddings: add a learned projection of the factorized
+    # token embedding to the FFN input. Different position from
+    # V-embed (in attention) and O-embed (post-O residual). Tests
+    # whether the V-embed win is about attention content or about
+    # residual content. The FFN now has direct access to token
+    # identity without going through attention. Cost: 24 × (d_model
+    # 144 × emb_rank 48) = 165,888 extra params (~2.1%).
+    use_ffn_embed: bool = False
+    # #49 QK-norm-post-RoPE: apply RMSNorm to Q,K AFTER RoPE (modded-
+    # nanogpt variant) instead of the default BEFORE RoPE. Flag-only,
+    # no extra params. The post-RoPE norm constrains post-RoPE Q,K
+    # magnitudes per head, which can help with attention score
+    # stability. Mathematically different from pre-RoPE norm.
+    use_qk_norm_post_rope: bool = False
+    # #51 sliding-window attention: replace the full causal mask with
+    # a local causal window of width `sliding_window_size`. Flag-only,
+    # no extra params. Tests whether the attention *pattern* (not just
+    # the inputs) has headroom at this scale — i.e. whether most of the
+    # useful long-range signal can be replaced by a short window. If
+    # window matches our 2k seq_len's natural coherence, this is a
+    # capacity-shaping lever. If not, it caps the model's context.
+    use_sliding_window: bool = False
+    sliding_window_size: int = 512
+    # #53 NoPE: skip RoPE entirely. Flag-only, no extra params. The
+    # purest test of whether positional information is load-bearing
+    # at this scale. If NoPE ≈ baseline, position is mostly conveyed
+    # by the causal mask + token identity (and our token identity
+    # injection via V-embed may be partially substituting for RoPE).
+    # If NoPE << baseline, RoPE is critical and there's no slack.
+    use_nope: bool = False
+    # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
+    # group of N consecutive blocks shares weights. The model creates
+    # n_layers // N unique blocks and the forward pass cycles through
+    # them. group_size=1 (default) is the standard non-tied baseline.
+    # group_size=2 means 12 unique blocks for 24 layers — half the
+    # unique depth params, with each block seeing two distinct
+    # positions. Incompatible with U-Net skips.
+    tie_layer_groups: int = 1
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -182,6 +220,7 @@ class Screen10M5MConfig(Screen10M20MConfig):
 class Screen10M20MSwiGLUConfig(Screen10M20MConfig):
     """Screen10M20M with SwiGLU feed-forward blocks."""
     ffn_variant: str = "swiglu"
+    d_ff: int = 384  # Parameter-matched to squared-ReLU d_ff=576.
 
 
 @dataclass
@@ -429,6 +468,262 @@ class Screen10M20MDeepVQGainConfig(Screen10M20MConfig):
     use_deep_value_embed: bool = True
     deep_value_embed_hidden: int = 96
     use_q_gain: bool = True
+
+
+@dataclass
+class Screen10M20MFFNEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with token embeddings injected into FFN input.
+
+    #47 — new position probe. The FFN-embed adds a learned projection
+    of the factorized token embedding to the FFN input (post-attention,
+    pre-FFN, after norm2). Different path from V-embed (in attention)
+    and O-embed (post-O residual). The FFN now has direct access to
+    token identity without going through attention.
+
+    Cost = 24 × (d_model 144 × emb_rank 48) = 165,888 extra params
+    (~2.1% over baseline).
+
+    Tests:
+    - If FFN-embed ≈ V-embed (4.7728), the lever is "token identity
+      into residual content" regardless of position.
+    - If FFN-embed > V-embed, the FFN is a more useful position than
+      attention's V (because it's a more direct path).
+    - If FFN-embed < V-embed, the position matters — V-embed's win is
+      specifically about attention content, not residual content.
+    """
+    use_ffn_embed: bool = True
+
+
+@dataclass
+class Screen10M20MVQGFFNEmbedConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + FFN-embed.
+
+    #48 — combines #29 (V-embed), #37 (q_gain), and #47 (FFN-embed).
+    Tests whether the FFN-embed lever is also additive with V+q_gain.
+    If V+q_gain+ffn_embed < V+q_gain (4.6815), FFN-embed conflicts
+    with V+q_gain. If V+q_gain+ffn_embed > V+q_gain, FFN-embed adds
+    a new dimension to the win.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_ffn_embed: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainQKPostNormConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + QK-norm-post-RoPE.
+
+    #49 — applies the modded-nanogpt QK-norm-post-RoPE variant on top
+    of V+q_gain. Different mathematical operating point: the post-RoPE
+    norm constrains post-RoPE Q,K magnitudes per head. Flag-only, no
+    extra params. Tests whether the normalization story (where the
+    norm is applied) breaks the V+q_gain plateau.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_qk_norm_post_rope: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainSwiGLUConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + SwiGLU FFN.
+
+    #50 — combines V+q_gain with SwiGLU FFN (instead of squared_relu).
+    SwiGLU is a different FFN activation. Tests whether the FFN
+    activation is part of the V+q_gain plateau. Uses d_ff=384 so the
+    3-matrix SwiGLU FFN is parameter-matched to squared-ReLU d_ff=576:
+    3 * d_model * 384 == 2 * d_model * 576.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    ffn_variant: str = "swiglu"
+    d_ff: int = 384
+
+
+@dataclass
+class Screen10M20MVQGainSlidingWindowConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + sliding-window attention.
+
+    #51 — first attention-pattern axis in the ladder. V+q_gain (the
+    plateau) plus a local causal window of 512 tokens. Flag-only, no
+    extra params. Tests whether the attention *pattern* (not just the
+    inputs) has headroom at this scale. Window 512 = quarter of
+    seq_len 2048, a clean first probe. If this beats V+q_gain
+    (4.6815), the attention matrix itself was a hidden lever; if it
+    ties, long-range is a wash; if it loses, long-range is load-
+    bearing and SWA is closed.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+
+
+@dataclass
+class Screen10M20MSlidingWindowConfig(Screen10M20MConfig):
+    """Screen10M20M with sliding-window attention ONLY (no embeds, no gains).
+
+    #52 — clean ablation. Same window (512) as #51, but the V-embed and
+    q_gain levers are off. Tests whether sliding-window attention is a
+    standalone lever (in which case this should land near V+q+SWA's
+    4.6700) or just a small add-on to V+q_gain (in which case this
+    should land near control 4.7984, or even worse if long-range is
+    load-bearing). The most informative single screen for deciding
+    whether the architecture change is "use SWA" or "use V+q_gain".
+    """
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+
+
+@dataclass
+class Screen10M20MNoPEConfig(Screen10M20MConfig):
+    """Screen10M20M with no positional encoding (NoPE).
+
+    #53 — fresh axis: positional encoding. Skips the rotary call
+    entirely while keeping the Q/K RMSNorm. Flag-only, no extra
+    params. Tests whether RoPE is load-bearing at this scale. If
+    NoPE ≈ control (4.7984), position is mostly conveyed by the
+    causal mask + token identity injection (and our V-embed lever
+    is partially substituting for RoPE). If NoPE << control, RoPE
+    is critical and there's no slack there. If NoPE < control,
+    position is hurting — surprising but worth measuring.
+    """
+    use_nope: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainNoPEConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + NoPE.
+
+    #54 — tests whether NoPE is additive with the V+q_gain plateau
+    (3-seed mean 4.6815). If V+q+NoPE < 4.6815, NoPE is a real lever
+    on the best baseline. If V+q+NoPE > 4.6815, RoPE is load-bearing
+    for V+q and NoPE is closed. If V+q+NoPE ≈ 4.6815, position is a
+    wash when paired with V+q_gain.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_nope: bool = True
+
+
+@dataclass
+class Screen10M20MLayerTied2Config(Screen10M20MConfig):
+    """Screen10M20M with layer tying (ALBERT-style, group_size=2).
+
+    #55 — fresh axis: weight sharing across depth. 24 layers, every
+    group of 2 consecutive blocks shares weights, so 12 unique
+    TransformerBlock modules are used twice each. Drops unique
+    depth params by ~50% (qkvo+FFN per block). Tests whether depth
+    uniqueness or depth *re-use* matters more at this scale. If
+    layer_tied ≈ control (4.7984), unique depth is critical. If
+    layer_tied < control, weight sharing acts as cheap
+    regularization.
+    """
+    tie_layer_groups: int = 2
+
+
+@dataclass
+class Screen10M20MVQGainLayerTied2Config(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + layer tying (group_size=2).
+
+    #56 — combines V+q_gain (the plateau, 3-seed mean 4.6815) with
+    layer tying (group_size=2, 12 unique blocks). Tests whether the
+    V+q lever still works when each block is used twice — i.e.
+    whether V-embed projections and q_gain scalars can survive the
+    weight-sharing constraint. If V+q+tied < V+q, layer tying is
+    additive with V+q; otherwise it conflicts.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    tie_layer_groups: int = 2
+
+
+@dataclass
+class Screen10M20MGQA1Config(Screen10M20MConfig):
+    """Screen10M20M with aggressive GQA (n_kv_heads=1).
+
+    #57 — fresh axis: GQA ratio. The base config has n_kv_heads=2
+    (each KV head shared across 3 Q heads). This drops it to 1 (6:1
+    GQA — every Q head reads from the same K/V). Fewer KV params,
+    more aggressive sharing. Tests whether the GQA ratio is a real
+    architecture lever at this scale. If GQA1 < base, the model
+    benefits from more attention-head sharing; if GQA1 > base, KV
+    diversity is load-bearing.
+    """
+    n_kv_heads: int = 1
+
+
+@dataclass
+class Screen10M20MMHAConfig(Screen10M20MConfig):
+    """Screen10M20M with full multi-head attention (n_kv_heads=n_heads).
+
+    #58 — the other end of the GQA axis: no sharing at all.
+    n_kv_heads=6 means each Q head has its own K and V projection.
+    More KV params, no information sharing between heads. Tests
+    whether the current 3:1 GQA is a wash (in which case MHA ≈ GQA)
+    or whether more KV capacity helps. This is the "no GQA" point.
+    """
+    n_kv_heads: int = 6
+
+
+@dataclass
+class Screen10M20MVQGainMHAConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + full MHA (n_kv_heads=6).
+
+    #59 — combines V+q_gain (the plateau, 3-seed mean 4.6815) with
+    full MHA. Tests whether the GQA ratio is additive with V+q_gain
+    on the best baseline. If V+q+MHA < V+q, full MHA is a real lever
+    on top of the plateau; otherwise GQA is sufficient.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    n_kv_heads: int = 6
+
+
+@dataclass
+class Screen10M20MGELUConfig(Screen10M20MConfig):
+    """Screen10M20M with GELU FFN activation (no gating, no squaring).
+
+    #60 — fresh axis: MLP activation. The base config uses
+    squared_relu (Primer-style); SwiGLU was tried and washed (#50).
+    This is plain GELU, the most common transformer activation.
+    Single up-projection, no gating, parameter-matched to
+    squared_relu d_ff=576. Tests whether the activation is itself
+    a real architecture lever — a cleaner test than SwiGLU, which
+    differs in BOTH activation AND number of projections.
+    """
+    ffn_variant: str = "gelu"
+
+
+@dataclass
+class Screen10M20MVQGainGELUConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + GELU FFN.
+
+    #61 — combines V+q_gain (the plateau, 3-seed mean 4.6815) with
+    GELU FFN. Tests whether the activation swap is additive with
+    V+q. If V+q+GELU < V+q, GELU is a real lever; otherwise the
+    activation is a wash when V+q is in play.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    ffn_variant: str = "gelu"
+
+
+@dataclass
+class Screen10M20MVQGainSWAGELUConfig(Screen10M20MConfig):
+    """Screen10M20M with V-embed + Q-gain + sliding-window + GELU FFN.
+
+    #62 — combines the current best screen20m levers (V+q+SWA at
+    4.6700 single-seed) with the only untried MLP activation
+    (GELU). Tests whether GELU is additive with the V+q+SWA
+    plateau. If V+q+SWA+GELU < 4.6700, GELU is the new best add-on.
+    If V+q+SWA+GELU > V+q+SWA, GELU conflicts.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    ffn_variant: str = "gelu"
 
 
 @dataclass
