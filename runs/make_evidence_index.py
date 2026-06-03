@@ -57,6 +57,13 @@ DESC = {
     "s_vqgain_swa_highrope_gelu_full":("#65",  "V+q+SWA+HighRoPE + GELU — 4.6527, GELU anti-additive on HighRoPE (closed)"),
     "s_vqgain_swa_highrope_tied2_full":("#66",  "V+q+SWA+HighRoPE + layer tying(2) — 4.7133, tying anti-additive (closed)"),
     "s_vqgain_swa_highrope_mha_full":("#67",  "V+q+SWA+HighRoPE + full MHA — 4.6384, GQA ratio is a wash (closed)"),
+    "s_vqgain_swa_highrope_tiedqk_full": ("#72",  "V+q+SWA+HighRoPE + Tied QK (PaLM) — 4.6500, closed"),
+    "s_vqgain_swa_highrope_mla_full":     ("#73",  "V+q+SWA+HighRoPE + MLA (DeepSeek-V2) — 4.7269, closed"),
+    "s_vqgain_swa_highrope_dilated_full": ("#74",  "V+q+SWA+HighRoPE + dilated (d=2) — 5.2494, closed"),
+    "s_vqgain_swa_highrope_softcap_full": ("#71",  "V+q+SWA+HighRoPE + logit softcap=15 — 4.6777, closed"),
+    "s_vqgain_highrope_swa256_full":     ("#68",  "V+q+HighRoPE + SWA(window=256) — 4.6672, closed"),
+    "s_vqgain_highrope_swa1024_full":    ("#69",  "V+q+HighRoPE + SWA(window=1024) — 4.6517, closed"),
+    "s_vqgain_highrope_noswa_full":      ("#70",  "V+q+HighRoPE + NO SWA — 4.6841, closed"),
     "s_vqgainqkpostnorm_full":("variant",     "V+q_gain + QK post-norm"),
     # --- 4k gated screen tier ---
     "s_ctrl":  ("screen16m ctrl", "4k gated control (5.0078)"),

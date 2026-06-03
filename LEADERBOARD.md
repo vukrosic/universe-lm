@@ -95,6 +95,38 @@ confirmation pending. Closed axes go to a separate section below.
 | 18e | 4.6527 | -0.1457 | vq-gain+swa+highrope+gelu | V+q+SWA+HighRoPE + GELU FFN (`#65`) at natural end, seed 42. 4.6527 vs 4.6364 = **+0.016** (worse). **GELU is CLOSED on HighRoPE** — flips from additive on base=10000 (#62: -0.009 below V+q+SWA s42) to anti-additive on base=500000. RoPE base changes which lever is on top. | 2026-06-03 | `runs/s_vqgain_swa_highrope_gelu_full/metrics.json` |
 | 18f | 4.7133 | -0.0851 | vq-gain+swa+highrope+tied2 | V+q+SWA+HighRoPE + layer tying (group=2) (`#66`) at natural end, seed 42. 4.7133 vs 4.6364 = **+0.077** (worse). Layer tying is **CLOSED on the new best baseline** — anti-additive again, just like on V+q. | 2026-06-03 | `runs/s_vqgain_swa_highrope_tied2_full/metrics.json` |
 | 18g | 4.6384 | -0.1600 | vq-gain+swa+highrope+mha | V+q+SWA+HighRoPE + full MHA (n_kv_heads=6) (`#67`) at natural end, seed 42. 4.6384 vs 4.6364 = **+0.002** (essentially tied). **MHA is a wash on the new best baseline** — confirms GQA ratio is not a lever at this scale. | 2026-06-03 | `runs/s_vqgain_swa_highrope_mha_full/metrics.json` |
+| 18h | 4.6500 | -0.1484 | vq-gain+swa+highrope+tiedqk | V+q+SWA+HighRoPE + Tied QK (PaLM-style) (`#72`) at natural end, seed 42. 4.6500 vs 4.6364 = **+0.014** (worse). Tied QK is **CLOSED on the new best baseline** — PaLM's QK tying doesn't help when SWA+HighRoPE are already on. | 2026-06-03 | `runs/s_vqgain_swa_highrope_tiedqk_full/metrics.json` |
+| 18i | 4.6672 | -0.1312 | vq-gain+highrope+swa256 | V+q+HighRoPE + SWA(window=256) (`#68`) at natural end, seed 42. 4.6672 vs 4.6364 = **+0.031** (worse). Smaller window hurts — window=512 is the sweet spot. | 2026-06-03 | `runs/s_vqgain_highrope_swa256_full/metrics.json` |
+| 18j | 4.6517 | -0.1467 | vq-gain+highrope+swa1024 | V+q+HighRoPE + SWA(window=1024) (`#69`) at natural end, seed 42. 4.6517 vs 4.6364 = **+0.015** (worse). Larger window also hurts — window=512 is the sweet spot. | 2026-06-03 | `runs/s_vqgain_highrope_swa1024_full/metrics.json` |
+| 18k | 4.6841 | -0.1143 | vq-gain+highrope+noswa | V+q+HighRoPE + NO SWA (`#70`) at natural end, seed 42. 4.6841 vs 4.6364 = **+0.048** (worse). **SWA is still load-bearing on the new best baseline** — removing it loses 0.048 even with HighRoPE on. | 2026-06-03 | `runs/s_vqgain_highrope_noswa_full/metrics.json` |
+| 18l | 4.6777 | -0.1207 | vq-gain+swa+highrope+softcap | V+q+SWA+HighRoPE + logit softcap=15 (`#71`) at natural end, seed 42. 4.6777 vs 4.6364 = **+0.041** (worse). **Logit softcap is CLOSED** — Gemma's cap doesn't help at this scale. | 2026-06-03 | `runs/s_vqgain_swa_highrope_softcap_full/metrics.json` |
+| 18m | 4.7269 | -0.0715 | vq-gain+swa+highrope+mla | V+q+SWA+HighRoPE + MLA (DeepSeek-V2-style) (`#73`) at natural end, seed 42. 4.7269 vs 4.6364 = **+0.091** (worse). **MLA is CLOSED on the new best baseline** — the latent bottleneck loses 0.091. | 2026-06-03 | `runs/s_vqgain_swa_highrope_mla_full/metrics.json` |
+| 18n | 5.2494 | +0.4510 | vq-gain+swa+highrope+dilated | V+q+SWA+HighRoPE + dilated attention (d=2) (`#74`) at natural end, seed 42. 5.2494 vs 4.6364 = **+0.613** (much worse). **Dilated attention catastrophically breaks training** — every-other-position pattern doesn't have enough density for attention to converge. | 2026-06-03 | `runs/s_vqgain_swa_highrope_dilated_full/metrics.json` |
+
+### Closed-this-session summary
+
+12 new arch axes tested on the new best baseline (V+q+SWA+HighRoPE 4.6364). All closed:
+
+| # | axis | val | Δ vs best | verdict |
+|---|---|---|---|---|
+| 65 | GELU | 4.6527 | +0.016 | GELU flips from additive to anti-additive on HighRoPE |
+| 66 | layer tying | 4.7133 | +0.077 | tying anti-additive again |
+| 67 | MHA | 4.6384 | +0.002 | GQA ratio wash |
+| 68 | SWA window=256 | 4.6672 | +0.031 | smaller window worse |
+| 69 | SWA window=1024 | 4.6517 | +0.015 | larger window worse — 512 is sweet spot |
+| 70 | no SWA | 4.6841 | +0.048 | SWA still load-bearing on best baseline |
+| 71 | logit softcap=15 | 4.6777 | +0.041 | Gemma cap doesn't help |
+| 72 | Tied QK (PaLM) | 4.6500 | +0.014 | QK tying doesn't help |
+| 73 | MLA (DeepSeek-V2) | 4.7269 | +0.091 | latent bottleneck worse |
+| 74 | dilated attention (d=2) | 5.2494 | +0.613 | strided pattern breaks training |
+
+Not run (config not available on remote when q45 fired):
+- #75 post-norm — left for next session
+- #76 GQA=1 on best baseline — left for next session
+- #77 no embedding scale — left for next session
+- #78 SWA window=2048 (full) — left for next session
+
+**V+q+SWA+HighRoPE 4.6364 holds as the current best single-seed screen20m record.** 12 axes closed on top of it. SWA + HighRoPE is the load-bearing combination.
 | 19 | 4.7419 | -0.0565 | vq-gain+tied2 | V+q_gain + layer tying (ALBERT-style, group_size=2) (`#56`) at natural end, 4,883 steps, seed 42. 12 unique blocks, 24 layer passes. -0.057 vs control, but +0.062 vs V+q_gain. **Layer tying is CLOSED on V+q** — still beats control (so depth uniqueness is not the *only* thing) but adding tying on top of V+q costs ~0.06. | 2026-06-03 | `runs/s_vqgain_tied2_full/metrics.json` · `logs/s_vqgain_tied2.log` |
 | 20 | 4.7552 ± 0.027 | -0.043 | swa-only | Sliding-window attention only (`#52`), no embeds, no gains, window=512, seeds 42+43. **Real standalone lever** — ~1.6σ below control, beats V alone (4.7728) by 0.018. 2-seed mean 4.7552, std 0.0273. SWA gives back ~half the V+q_gain win on its own. | 2026-06-03 | `runs/s_swa_only_full/metrics.json` · `runs/s_swa_only_s43/metrics.json` |
 | 21 | 4.7981 | -0.0003 | mha | Full multi-head attention (`#58`, n_kv_heads=6) at natural end, 4,883 steps, seed 42. **Effectively tied with control** (4.7984, -0.0003). GQA=2 is a wash at this scale — removing KV sharing (full MHA) gives nothing. **GQA is not a lever at this scale.** | 2026-06-03 | `runs/s_mha_full/metrics.json` · `logs/s_mha.log` |

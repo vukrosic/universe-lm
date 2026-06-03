@@ -13,14 +13,18 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 |---|---|---|---|---|---|---|
 | `s_vqgain_swa_highrope_full` | 4.6364 | 4883 | False | `4be65bb6` | #64 | V+q+SWA + RoPE_base=500000 — current screen20m best 4.6364, single-seed |
 | `s_vqgain_swa_highrope_mha_full` | 4.6384 | 4883 | False | `4be65bb6` | #67 | V+q+SWA+HighRoPE + full MHA — 4.6384, GQA ratio is a wash (closed) |
+| `s_vqgain_swa_highrope_tiedqk_full` | 4.6500 | 4883 | False | `4be65bb6` | #72 | V+q+SWA+HighRoPE + Tied QK (PaLM) — 4.6500, closed |
+| `s_vqgain_highrope_swa1024_full` | 4.6517 | 4883 | False | `4be65bb6` | #69 | V+q+HighRoPE + SWA(window=1024) — 4.6517, closed |
 | `s_vqgain_swa_highrope_gelu_full` | 4.6527 | 4883 | False | `4be65bb6` | #65 | V+q+SWA+HighRoPE + GELU — 4.6527, GELU anti-additive on HighRoPE (closed) |
 | `s_vqgain_swa_gelu_full` | 4.6608 | 4883 | False | `4be65bb6` | #62 | V+q+SWA + GELU FFN — single-seed 4.6608 (was best until #64) |
 | `s_vqgain_swa_s43` | 4.6652 | 4883 | False | `4be65bb6` | #51 s43 | V+q_gain + SWA, seed 43 (multi-seed confirm) |
+| `s_vqgain_highrope_swa256_full` | 4.6672 | 4883 | False | `4be65bb6` | #68 | V+q+HighRoPE + SWA(window=256) — 4.6672, closed |
 | `s_vqgain_swa_full` | 4.6700 | 4883 | False | `4be65bb6` | #51 s42 | V+q_gain + SWA(window=512), seed 42 (multi-seed mean 4.6676) |
 | `s_voqgain_full` | 4.6745 | 4883 | False | `4be65bb6` | #38 s42 | V+O + q_gain, seed 42 (O redundant with q_gain) |
 | `s_vqkgain_full` | 4.6750 | 4883 | False | `4be65bb6` | #43 s42 | V+q_gain+k_gain, seed 42 (k_gain anti-additive on V+q) |
 | `s_vqgain_s44` | 4.6758 | 4883 | False | `4be65bb6` | #39 s44 | V+q_gain, seed 44 (3-seed mean 4.6815, std 0.0057) |
 | `s_voqgain_s43` | 4.6766 | 4883 | False | `4be65bb6` | #38 s43 | V+O+q_gain, seed 43 |
+| `s_vqgain_swa_highrope_softcap_full` | 4.6777 | 4883 | False | `4be65bb6` | #71 | V+q+SWA+HighRoPE + logit softcap=15 — 4.6777, closed |
 | `s_vqgain_full` | 4.6797 | 4883 | False | `4be65bb6` | #39 s42 | V-embed + per-head q_gain, seed 42 |
 | `s_vqgainqkpostnorm_full` | 4.6803 | 4883 | False | `4be65bb6` | variant | V+q_gain + QK post-norm |
 | `s_voqgain_s44` | 4.6855 | 4883 | False | `4be65bb6` | #38 s44 | V+O+q_gain, seed 44 |
@@ -28,12 +32,14 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_vqgain_swiglu_full` | 4.6944 | 4883 | False | `4be65bb6` | variant | V+q_gain + SWiGLU FFN |
 | `s_vqkgain_s44` | 4.6956 | 4883 | False | `4be65bb6` | #43 s44 | V+q+k_gain, seed 44 (3-seed mean 4.6949) |
 | `s_vqgffnembed_full` | 4.6988 | 4883 | False | `4be65bb6` | variant | V+q_gain + FFN-embed |
+| `s_vqgain_gelu_full` | 4.6998 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
 | `s_vqgain_swa_highrope_tied2_full` | 4.7133 | 4883 | False | `4be65bb6` | #66 | V+q+SWA+HighRoPE + layer tying(2) — 4.7133, tying anti-additive (closed) |
 | `s_vqkgain_s43` | 4.7141 | 4883 | False | `4be65bb6` | #43 s43 | V+q+k_gain, seed 43 |
 | `s_vqqgain_full` | 4.7169 | 4883 | False | `4be65bb6` | #40 | V+Q embed + q_gain (Q-embed redundant with q_gain) |
 | `s_voembed_full` | 4.7188 | 4883 | False | `4be65bb6` | #35 | V+O embed combo |
 | `s_qgain_full` | 4.7200 | 4883 | False | `4be65bb6` | #41 | q_gain alone, no embeds — standalone lever |
 | `s_qkgain_full` | 4.7259 | 4883 | False | `4be65bb6` | #44 | q_gain + k_gain, no embeds |
+| `s_vqgain_swa_highrope_mla_full` | 4.7269 | 4883 | False | `4be65bb6` | #73 | V+q+SWA+HighRoPE + MLA (DeepSeek-V2) — 4.7269, closed |
 | `s_vokembed_full` | 4.7294 | 4883 | False | `4be65bb6` | #36 | V+O+K embed combo (K neutral here) |
 | `s_swa_only_full` | 4.7359 | 4883 | False | `4be65bb6` | #52 s42 | SWA(window=512) only, no embeds/gains, seed 42 |
 | `s_vqgain_tied2_full` | 4.7419 | 4883 | False | `4be65bb6` | #56 CLOSED | V+q_gain + ALBERT layer-tying(group=2) — anti-additive |
@@ -50,17 +56,21 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_kembed_full` | 4.8228 | 4883 | False | `4be65bb6` | #31 | K-embed, natural end |
 | `s_vqkembed_full` | 4.8250 | 4883 | False | `4be65bb6` | #34 | V+Q+K embed (K anti-additive) |
 | `s_oembed_full` | 4.8350 | 4883 | False | `4be65bb6` | #33 | O-embed alone |
+| `s_gelu_full` | 4.8647 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
 | `s_qembed` | 4.8753 | 4883 | False | `4be65bb6` | #30 alt-seed | Q-embed, alt seed |
+| `s_highrope_full` | 4.8759 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
+| `s_gqa1_full` | 4.8875 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
 | `s_kembed` | 4.9009 | 4000 | True | `4be65bb6` | #31 4k | K-embed, 4k gated |
 | `s_layerscale` | 4.9972 | 4000 | True | `4be65bb6` | issue#21 §7 | LayerScale (+0.0106, below bar) |
 | `s_smeargate` | 5.0025 | 4000 | True | `4be65bb6` | issue#27 §4 | SmearGate (weak +0.0053, below bar) |
 | `s_ctrl` | 5.0078 | 4000 | True | `4be65bb6` | screen16m ctrl | 4k gated control (5.0078) |
 | `s_unetskip` | 5.0081 | 4000 | True | `4be65bb6` | issue#23 §5 | U-Net skip connections (-0.0003) |
 | `s_vqgain_nope_full` | 5.2406 | 4883 | False | `4be65bb6` | #54 CLOSED | V+q_gain + NoPE — catastrophic, RoPE is load-bearing |
+| `s_vqgain_swa_highrope_dilated_full` | 5.2494 | 4883 | False | `4be65bb6` | #74 | V+q+SWA+HighRoPE + dilated (d=2) — 5.2494, closed |
 | `s_zeroinit` | 5.3856 | 2000 | None | `4be65bb6` | issue#22 §2 | Zero-init residual projections (null) |
 | `s_attngate` | 5.3894 | 2000 | None | `4be65bb6` | issue#28 §6 | Attention output gate (killed @2k) |
 | `s_embresid` | 5.4544 | 2000 | None | `4be65bb6` | issue#20 §1 | Embedding residual (early kill, -0.069) |
 | `emb_resid` | 5.4875 | 1500 | None | `4be65bb6` | issue#20 §1 | Embedding residual (early kill) |
 | `s_outadapter` | 6.0775 | 1000 | None | `4be65bb6` | ablation §3 | Low-rank output adapter (collapsed) |
 
-_51 runs._
+_61 runs._
