@@ -46,8 +46,14 @@ class MultiHeadAttention(nn.Module):
         use_mla: bool = False,
         mla_latent_dim: int | None = None,
         attention_dilation: int = 1,
+        use_post_norm: bool = False,
     ):
         super().__init__()
+        # #75 Post-norm: when set, the norm is applied AFTER the
+        # residual addition instead of before. Implementation:
+        # compute (norm, residual) inside the function but apply
+        # the norm to (x + sublayer_out) before returning.
+        self.use_post_norm = use_post_norm
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_heads
@@ -379,8 +385,14 @@ class TransformerBlock(nn.Module):
         use_mla: bool = False,
         mla_latent_dim: int | None = None,
         attention_dilation: int = 1,
+        use_post_norm: bool = False,
     ):
         super().__init__()
+        # #75 Post-norm: when set, the norm is applied AFTER the
+        # residual addition instead of before. Implementation:
+        # compute (norm, residual) inside the function but apply
+        # the norm to (x + sublayer_out) before returning.
+        self.use_post_norm = use_post_norm
 
         self.attention = MultiHeadAttention(
             d_model,
@@ -450,22 +462,35 @@ class TransformerBlock(nn.Module):
         if self.use_embed_residual:
             x = self.resid_m0 * x + self.resid_m1 * x0
 
-        # Self-attention
-        attn_out = self.attention(self.norm1(x), ve)
-        if self.use_layerscale:
-            attn_out = attn_out * (1.0 + self.attn_layerscale)
-        x = x + self.dropout(attn_out)
+        if self.use_post_norm:
+            # #75 Post-norm: apply norm AFTER the residual addition.
+            # x = norm(x + sublayer(x_or_norm_x))
+            # We use the un-normalized x as the sublayer input (the
+            # original Transformer design — sometimes called "post-norm").
+            attn_out = self.attention(x, ve)
+            if self.use_layerscale:
+                attn_out = attn_out * (1.0 + self.attn_layerscale)
+            x = self.norm1(x + self.dropout(attn_out))
 
-        # Feed-forward
-        ffn_in = self.norm2(x)
-        # #47 FFN-embed: add token identity to FFN input (post-attention,
-        # pre-FFN, after norm2). Different path from V-embed (in attention)
-        # and O-embed (post-O residual). The FFN now has direct access to
-        # token identity without going through attention.
-        if self.use_ffn_embed and ve is not None:
-            ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
-        ff_out = self.feed_forward(ffn_in)
-        if self.use_layerscale:
-            ff_out = ff_out * (1.0 + self.ffn_layerscale)
-        x = x + self.dropout(ff_out)
+            ffn_in = x
+            if self.use_ffn_embed and ve is not None:
+                ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
+            ff_out = self.feed_forward(ffn_in)
+            if self.use_layerscale:
+                ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            x = self.norm2(x + self.dropout(ff_out))
+        else:
+            # Pre-norm (default): norm before sublayer, residual after.
+            attn_out = self.attention(self.norm1(x), ve)
+            if self.use_layerscale:
+                attn_out = attn_out * (1.0 + self.attn_layerscale)
+            x = x + self.dropout(attn_out)
+
+            ffn_in = self.norm2(x)
+            if self.use_ffn_embed and ve is not None:
+                ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
+            ff_out = self.feed_forward(ffn_in)
+            if self.use_layerscale:
+                ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            x = x + self.dropout(ff_out)
         return x

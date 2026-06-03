@@ -57,6 +57,7 @@ class MinimalLLM(nn.Module):
         self.use_mla = getattr(config, "use_mla", False)
         self.mla_latent_dim = getattr(config, "mla_latent_dim", None)
         self.attention_dilation = getattr(config, "attention_dilation", 1)
+        self.use_post_norm = getattr(config, "use_post_norm", False)
         # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
         # group of N consecutive blocks shares weights. We create only
         # n_layers // N unique blocks and the forward pass cycles through
@@ -99,6 +100,7 @@ class MinimalLLM(nn.Module):
                     use_mla=self.use_mla,
                     mla_latent_dim=self.mla_latent_dim,
                     attention_dilation=self.attention_dilation,
+                    use_post_norm=self.use_post_norm,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(n_unique)
@@ -163,10 +165,15 @@ class MinimalLLM(nn.Module):
     def forward(self, x):
         # Token embeddings
         tok = self.token_embedding(x)  # rank-r (or d_model) lookup, reused as value-embed source
+        # #76 embedding scale: -1.0 (default) = use sqrt(d_model).
+        # Any other value overrides the scaling.
+        emb_scale = getattr(self.config, 'embedding_scale', -1.0)
+        if emb_scale < 0:
+            emb_scale = math.sqrt(self.config.d_model)
         if self.emb_rank is None:
-            x = tok * math.sqrt(self.config.d_model)
+            x = tok * emb_scale
         else:
-            x = self.emb_proj(tok) * math.sqrt(self.config.d_model)
+            x = self.emb_proj(tok) * emb_scale
         # #29 value-embed source: the raw token embedding, injected into each V
         # #30 query-embed source: same `tok` (raw embedding). Both Q-embed and
         # V-embed can read from the same source, so we only branch once.

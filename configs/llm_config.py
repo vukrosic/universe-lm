@@ -165,6 +165,21 @@ class LLMConfig:
     # every other position. The window still covers ~`window_size`
     # positions by token count, but spread across a longer range.
     attention_dilation: int = 1
+    # #75 Post-norm: instead of pre-norm (norm before attn/ffn),
+    # place the norm AFTER the residual addition. The original
+    # Transformer used post-norm; pre-norm is the modern default.
+    # Tests whether post-norm is a real lever at our depth=24.
+    use_post_norm: bool = False
+    # #76 embedding scale: the standard code multiplies the
+    # token embedding by sqrt(d_model). When set to a value
+    # other than -1.0, that value is used instead. -1.0 = use
+    # the standard sqrt(d_model). Tests whether the standard
+    # scaling is a hidden knob.
+    embedding_scale: float = -1.0
+    # #77 Q/K dim ratio: by default Q and K have the same dim
+    # (d_k). When set != 1.0, K is widened to d_k * qk_k_ratio.
+    # Tests whether asymmetric Q/K dims change dynamics.
+    qk_k_ratio: float = 1.0
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -981,6 +996,71 @@ class Screen10M20MVQGainSWAHighRoPEDilatedConfig(Screen10M20MConfig):
     sliding_window_size: int = 512
     rope_base: int = 500000
     attention_dilation: int = 2
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEPostNormConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + post-norm.
+
+    #75 — fundamental arch change: norm goes AFTER the residual
+    addition (original Transformer) instead of before (modern
+    pre-norm). Tests whether post-norm is a real lever at
+    our depth=24.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    use_post_norm: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEGQA1Config(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + GQA=1 (max GQA).
+
+    #76 — n_kv_heads=1 means every Q head reads from the same
+    K,V. On the best baseline — does max GQA add or hurt?
+    GQA1 standalone (#76) was bad; the question is whether
+    the best baseline changes that.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    n_kv_heads: int = 1
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPENoEmbScaleConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + no embedding scale.
+
+    #77 — the standard code multiplies the token embedding by
+    sqrt(d_model). Set to 1.0 (no scaling). Tests whether the
+    standard scaling is a hidden knob at this scale.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    embedding_scale: float = 1.0
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPESWAFullConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + SWA=seq_len (full).
+
+    #78 — window=2048 = seq_len. Effectively full causal attention
+    but with the SWA code path. The cleanest "is SWA helping at
+    all" test on the best baseline.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 2048
+    rope_base: int = 500000
 
 
 @dataclass
