@@ -779,6 +779,55 @@ class Screen10M20MVQGainSWAHighRoPEConfig(Screen10M20MConfig):
 
 
 @dataclass
+class Screen10M20MVQGainSWAHighRoPEGELUConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA + High RoPE + GELU FFN.
+
+    #65 — combines the new best screen20m levers (V+q+SWA+
+    HighRoPE at 4.6364) with GELU FFN. Tests whether GELU is
+    additive with the V+q+SWA+HighRoPE plateau.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    ffn_variant: str = "gelu"
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPETied2Config(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA + High RoPE + layer tying (group=2).
+
+    #66 — V+q+LayerTied2 was anti-additive (4.7419 vs V+q 4.6797),
+    but on the new best baseline (V+q+SWA+HighRoPE 4.6364) the
+    question is whether SWA+RoPE-base have changed the
+    regularization story enough that tying now adds value.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    tie_layer_groups: int = 2
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEMHAConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA + High RoPE + full MHA (n_kv_heads=6).
+
+    #67 — MHA alone was a wash on control (4.7981 vs 4.7984).
+    On the new best baseline the question is whether the GQA
+    ratio becomes a lever when paired with the other wins.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    n_kv_heads: int = 6
+
+
+@dataclass
 class Screen10M20MVOQGainConfig(Screen10M20MConfig):
     """Screen10M20M with V+O + per-head Q-gain. Best embed (V+O 4.7188)
     + non-embed lever (q_gain). Tests whether q_gain is additive
