@@ -1,0 +1,47 @@
+{
+  "final_metrics": {
+    "val_loss": 6.0775,
+    "val_accuracy": 0.15344650708353688,
+    "val_perplexity": 435.9379863104429,
+    "train_loss": 6.0083465576171875
+  },
+  "total_time_minutes": 4.086882201830546,
+  "stopped_early": false,
+  "actual_steps": 1000,
+  "tokens_seen": 4100096,
+  "history": {
+    "steps": [
+      0,
+      500,
+      1000
+    ],
+    "val_losses": [
+      10.8125,
+      6.3575,
+      6.0775
+    ],
+    "val_accuracies": [
+      2.442598925256473e-05,
+      0.15198583292623352,
+      0.15344650708353688
+    ],
+    "val_perplexities": [
+      49637.40690795877,
+      576.8025460176966,
+      435.9379863104429
+    ],
+    "elapsed_times": [
+      0.21553962628046672,
+      2.147102646032969,
+      4.08688188791275
+    ],
+    "learning_rates": [
+      2.459016393442623e-05,
+      0.01231967213114754,
+      0.023987461339128983
+    ]
+  },
+  "git_commit": "4be65bb65771507ac2923bd1802b90b3b6234986",
+  "git_branch": "exp/resid-levers",
+  "git_dirty": true
+}
