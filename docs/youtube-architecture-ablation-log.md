@@ -649,3 +649,68 @@ extra cost.
   path that doesn't go through attention. Tests if the V-embed win
   is specifically about attention content, or about residual
   content too.
+
+## 16. Tiny1M fast screen
+
+Run family: `tiny1m_*` in `runs/`.
+
+This is the new fast filter tier:
+
+- ~0.94M params
+- 3M tokens
+- ~733 steps
+- ~1.8-2.5 minutes per run on the RTX 3050 remote
+- the follow-up architecture sweep runs here are ~2.9-3.2 minutes each on the same box
+
+Current best tiny recipe:
+
+```text
+V-embed + q_gain + RoPE base 250k + SWA(window=384) + tied QK
+val loss: 6.3041
+```
+
+Baseline sanity check under the new tiny architecture sweep code:
+
+```text
+same recipe, rerun in tiny1m_arch_base
+val loss: 6.3350
+```
+
+That is still the same basin, but it is a hair worse than the MHA rerun.
+
+First architecture sweep result:
+
+- tied QK (`n_heads=4`, `n_kv_heads=4`) finished at `6.3041`
+- it beats full MHA by `0.0028`
+- full MHA (`n_kv_heads=4`) finished at `6.3069`
+- it beats the earlier tiny winner by `0.0172`
+- LayerNorm finished at `6.3109`, better than MLA but still behind the top two
+- MLA (`latent dim=16`) finished at `6.3253`, almost matching the old tiny winner but still behind the top two
+- the tiny1m3m baseline rerun landed at `6.3350`
+- GQA1 (`n_kv_heads=1`) finished at `6.3447`, so max KV sharing is worse than both the baseline rerun and MHA
+- post-norm finished at `7.6209`, a hard collapse relative to every other run and to control
+
+So the working tiny leader is now tied QK, not the earlier
+`n_kv_heads=2` recipe.
+
+What the tiny screen already showed:
+
+- RoPE base `250k` beat `125k`, `375k`, `500k`, and `750k`.
+- SWA window `384` beat `256`, `512`, and `768` on this tiny tier.
+- V-embed is still load-bearing: removing it worsened the result.
+- q_gain alone still helps, but not as much as the full V+q combo.
+
+Current promotion rule:
+
+- Use tiny runs to rank ideas cheaply.
+- Promote only the tiny winners to `screen20m`.
+- Treat this tier as a sign-and-basin filter, not claim-grade evidence.
+
+Remaining queued axes:
+
+- GELU FFN
+- SwiGLU FFN
+- linear attention
+- QK norm after RoPE
+
+Live status: the queue has moved on to `tiny1m_arch_gelu`.

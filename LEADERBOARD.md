@@ -4,9 +4,53 @@ Race to the **lowest val loss on the `10m` model** (Full10M200M — ~10M params,
 Pinned: `seed=42` · bf16. Beat the standing record by **≥0.01** to take it.
 
 **Acceptance rule:** `10m` is the target — only a win here is a real record. Smaller configs
-(`screen16m`, `screen10m`) are just for quick experimentation: use them to find promising
+(`tiny1m3m`, `screen16m`, `screen10m`) are just for quick experimentation: use them to find promising
 mechanisms, but nothing counts until it beats the `10m` record. Hyperparameters go in the
 **Run**/**Summary** text — no per-mechanism columns ([Parameter Golf](https://github.com/openai/parameter-golf) style).
+
+## `tiny1m3m` — 0.94M · 3M tokens · **fast idea screen**
+
+Fastest architecture-ranking tier. This is for iteration speed, not claims. Use it to kill
+bad ideas and select what deserves a `screen20m` rerun. Shape: `d_model=64`, `n_layers=12`,
+`n_heads=4`, `n_kv_heads=2`, `d_ff=256`, `emb_rank=8`, `batch=2`, `seed=42`.
+Each run is ~733 steps / ~3.0M tokens and took ~1.8-2.5 minutes on the RTX 3050 remote.
+
+Reproduce with `--config tiny1m --seed 42`.
+
+| # | Val loss | Δ vs ctrl | Run | Summary | Date | Evidence |
+|---|---|---|---|---|---|---|
+| 0 | **6.3241** | **-0.1066** | vq-gain+rope250k+swa384 | V-embed + per-head Q-gain + RoPE base=250k + SWA(window=384). Historical winner of the original tiny1m3m idea screen. Superseded by the tiny1m arch sweep below. | 2026-06-04 | `runs/tiny1m_vqgain_rope250k_swa384_full/metrics.json` |
+| 1 | 6.3506 | -0.0800 | vq-gain+rope250k+swa512 | V+q + RoPE base=250k + SWA(window=512). First tiny winner, later beaten by SWA384. | 2026-06-04 | `runs/tiny1m_vqgain_swa_rope250k_full/metrics.json` |
+| 2 | 6.3522 | -0.0784 | vq-gain+rope250k+swa256 | V+q + RoPE base=250k + SWA(window=256). Competitive but worse than 384. | 2026-06-04 | `runs/tiny1m_vqgain_rope250k_swa256_full/metrics.json` |
+| 3 | 6.3584 | -0.0722 | vq-gain+highrope+swa384 | V+q + RoPE base=500k + SWA(window=384). Confirms tighter SWA window is useful, but 250k base is better at tiny scale. | 2026-06-04 | `runs/tiny1m_vqgain_highrope_swa384_full/metrics.json` |
+| 4 | 6.3650 | -0.0656 | vq-gain+rope125k+swa512 | V+q + RoPE base=125k + SWA(window=512). Too low a RoPE base loses vs 250k. | 2026-06-04 | `runs/tiny1m_vqgain_swa_rope125k_full/metrics.json` |
+| 5 | 6.3656 | -0.0650 | vq-gain+rope375k+swa512 | V+q + RoPE base=375k + SWA(window=512). Worse than 250k. | 2026-06-04 | `runs/tiny1m_vqgain_swa_rope375k_full/metrics.json` |
+| 6 | 6.3666 | -0.0641 | swa+rope250k | SWA(window=512) + RoPE base=250k, no V-embed/q-gain. Strong, but full V+q remains load-bearing. | 2026-06-04 | `runs/tiny1m_swa_rope250k_full/metrics.json` |
+| 7 | 6.3694 | -0.0613 | vq-gain+swa+highrope | V+q + SWA(window=512) + RoPE base=500k. Mirrors the current screen20m best recipe but is not the tiny optimum. | 2026-06-04 | `runs/tiny1m_vqgain_swa_highrope_full/metrics.json` |
+| 8 | 6.3750 | -0.0556 | swa-only | SWA(window=512) only. Surprisingly strong at tiny scale; attention pattern matters more than plain gain/embedding tweaks here. | 2026-06-04 | `runs/tiny1m_swa_full/metrics.json` |
+| 9 | 6.3769 | -0.0538 | vq-gain+rope750k+swa512 | V+q + RoPE base=750k + SWA(window=512). Too high a RoPE base loses at tiny scale. | 2026-06-04 | `runs/tiny1m_vqgain_swa_rope750k_full/metrics.json` |
+| 10 | 6.3831 | -0.0475 | q-gain+rope250k+swa512 | Q-gain + RoPE base=250k + SWA(window=512), no V-embed. V-embed still matters. | 2026-06-04 | `runs/tiny1m_qgain_swa_rope250k_full/metrics.json` |
+| 11 | 6.3916 | -0.0391 | vq-gain | V-embed + per-head Q-gain. Keeps the same direction as screen20m, but SWA/RoPE give larger tiny wins. | 2026-06-04 | `runs/tiny1m_vqgain_full/metrics.json` |
+| 12 | 6.3984 | -0.0322 | vq-gain+rope250k+swa768 | V+q + RoPE base=250k + SWA(window=768). Too wide. | 2026-06-04 | `runs/tiny1m_vqgain_rope250k_swa768_full/metrics.json` |
+| 13 | 6.4025 | -0.0281 | q-gain | Per-head Q-gain only. Cheap standalone improvement. | 2026-06-04 | `runs/tiny1m_qgain_full/metrics.json` |
+| 14 | 6.4306 | 0 | control | Tiny1M3M baseline. | 2026-06-04 | `runs/tiny1m_ctrl_full/metrics.json` |
+
+## `tiny1m arch` — 0.91M · 3M tokens · **architecture sweep on the tiny winner**
+
+Same data budget as `tiny1m3m`, but this batch asks which architecture changes still
+help once the tiny recipe is already strong. First batch complete: tied QK wins, GQA1 loses.
+
+| # | Val loss | Δ vs ctrl | Run | Summary | Date | Evidence |
+|---|---|---|---|---|---|---|
+| 0 | **6.3041** | **-0.1265** | vq-gain+rope250k+swa384+tiedqk | V-embed + q_gain + RoPE base=250k + SWA(window=384) + tied QK (`n_heads=4, n_kv_heads=4`). New tiny leader. Beats full MHA by 0.0028 and the earlier tiny winner by 0.0200. | 2026-06-04 | `runs/tiny1m_arch_tiedqk_full/metrics.json` |
+| 1 | 6.3069 | -0.1237 | vq-gain+rope250k+swa384+mha | Same recipe with full MHA (`n_kv_heads=4`). Strong runner-up; beats the baseline rerun by 0.0281. | 2026-06-04 | `runs/tiny1m_arch_mha_full/metrics.json` |
+| 2 | 6.3109 | -0.1197 | vq-gain+rope250k+swa384+layernorm | Same recipe with LayerNorm. Solid runner-up; better than MLA by 0.0144, but still behind tied QK and MHA. | 2026-06-04 | `runs/tiny1m_arch_layernorm_full/metrics.json` |
+| 3 | 6.3253 | -0.1053 | vq-gain+rope250k+swa384+mla | Same recipe with MLA (`latent dim=16`). Near miss: just 0.0012 worse than the earlier tiny winner, but still behind tied QK, MHA, and LayerNorm. | 2026-06-04 | `runs/tiny1m_arch_mla_full/metrics.json` |
+| 4 | 6.3350 | -0.0956 | vq-gain+rope250k+swa384 | Same recipe with the current tiny arch baseline (`n_kv_heads=2`). Sanity rerun under the updated code; still better than control, but worse than tied QK, MHA, LayerNorm, and MLA. | 2026-06-04 | `runs/tiny1m_arch_base_full/metrics.json` |
+| 5 | 6.3447 | -0.0859 | vq-gain+rope250k+swa384+gqa1 | Same recipe with max KV sharing (`n_kv_heads=1`). Worse than the baseline rerun by 0.0097 and well behind the four top variants. | 2026-06-04 | `runs/tiny1m_arch_gqa1_full/metrics.json` |
+| 6 | 7.6209 | +1.1903 | vq-gain+rope250k+swa384+postnorm | Same recipe with post-norm. Hard collapse: catastrophically worse than control and every other run in the batch. | 2026-06-04 | `runs/tiny1m_arch_postnorm_full/metrics.json` |
+
+Tied QK is the current tiny leader. Post-norm is the catastrophic collapse of the batch.
 
 ## `10m` — Full10M200M · 10M · 200M tokens  ·  **the target**
 
@@ -119,12 +163,14 @@ confirmation pending. Closed axes go to a separate section below.
 | 72 | Tied QK (PaLM) | 4.6500 | +0.014 | QK tying doesn't help |
 | 73 | MLA (DeepSeek-V2) | 4.7269 | +0.091 | latent bottleneck worse |
 | 74 | dilated attention (d=2) | 5.2494 | +0.613 | strided pattern breaks training |
+| 75 | post-norm | 5.3816 | +0.746 | post-norm badly destabilizes the 24-layer screen model |
+| 76 | GQA=1 | 4.6761 | +0.040 | max KV sharing hurts on the best baseline |
 
-Not run (config not available on remote when q45 fired):
-- #75 post-norm — left for next session
-- #76 GQA=1 on best baseline — left for next session
-- #77 no embedding scale — left for next session
-- #78 SWA window=2048 (full) — left for next session
+Still running / pending in q6:
+- #77 no embedding scale
+- #78 SWA window=2048 (full-window control)
+- #79 LayerNorm
+- #80 LinearAttn (Performer-style positive-feature attention)
 
 **V+q+SWA+HighRoPE 4.6364 holds as the current best single-seed screen20m record.** 12 axes closed on top of it. SWA + HighRoPE is the load-bearing combination.
 | 19 | 4.7419 | -0.0565 | vq-gain+tied2 | V+q_gain + layer tying (ALBERT-style, group_size=2) (`#56`) at natural end, 4,883 steps, seed 42. 12 unique blocks, 24 layer passes. -0.057 vs control, but +0.062 vs V+q_gain. **Layer tying is CLOSED on V+q** — still beats control (so depth uniqueness is not the *only* thing) but adding tying on top of V+q costs ~0.06. | 2026-06-03 | `runs/s_vqgain_tied2_full/metrics.json` · `logs/s_vqgain_tied2.log` |

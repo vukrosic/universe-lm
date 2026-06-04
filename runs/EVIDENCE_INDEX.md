@@ -23,6 +23,7 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_voqgain_full` | 4.6745 | 4883 | False | `4be65bb6` | #38 s42 | V+O + q_gain, seed 42 (O redundant with q_gain) |
 | `s_vqkgain_full` | 4.6750 | 4883 | False | `4be65bb6` | #43 s42 | V+q_gain+k_gain, seed 42 (k_gain anti-additive on V+q) |
 | `s_vqgain_s44` | 4.6758 | 4883 | False | `4be65bb6` | #39 s44 | V+q_gain, seed 44 (3-seed mean 4.6815, std 0.0057) |
+| `s_vqgain_swa_highrope_gqa1_full` | 4.6761 | 4883 | False | `4be65bb6` | #76 | V+q+SWA+HighRoPE + GQA=1 — 4.6761, max KV sharing hurts (closed) |
 | `s_voqgain_s43` | 4.6766 | 4883 | False | `4be65bb6` | #38 s43 | V+O+q_gain, seed 43 |
 | `s_vqgain_swa_highrope_softcap_full` | 4.6777 | 4883 | False | `4be65bb6` | #71 | V+q+SWA+HighRoPE + logit softcap=15 — 4.6777, closed |
 | `s_vqgain_full` | 4.6797 | 4883 | False | `4be65bb6` | #39 s42 | V-embed + per-head q_gain, seed 42 |
@@ -32,7 +33,7 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_vqgain_swiglu_full` | 4.6944 | 4883 | False | `4be65bb6` | variant | V+q_gain + SWiGLU FFN |
 | `s_vqkgain_s44` | 4.6956 | 4883 | False | `4be65bb6` | #43 s44 | V+q+k_gain, seed 44 (3-seed mean 4.6949) |
 | `s_vqgffnembed_full` | 4.6988 | 4883 | False | `4be65bb6` | variant | V+q_gain + FFN-embed |
-| `s_vqgain_gelu_full` | 4.6998 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
+| `s_vqgain_gelu_full` | 4.6998 | 4883 | False | `4be65bb6` | standalone | V+q_gain + GELU FFN, no SWA/HighRoPE |
 | `s_vqgain_swa_highrope_tied2_full` | 4.7133 | 4883 | False | `4be65bb6` | #66 | V+q+SWA+HighRoPE + layer tying(2) — 4.7133, tying anti-additive (closed) |
 | `s_vqkgain_s43` | 4.7141 | 4883 | False | `4be65bb6` | #43 s43 | V+q+k_gain, seed 43 |
 | `s_vqqgain_full` | 4.7169 | 4883 | False | `4be65bb6` | #40 | V+Q embed + q_gain (Q-embed redundant with q_gain) |
@@ -56,10 +57,10 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_kembed_full` | 4.8228 | 4883 | False | `4be65bb6` | #31 | K-embed, natural end |
 | `s_vqkembed_full` | 4.8250 | 4883 | False | `4be65bb6` | #34 | V+Q+K embed (K anti-additive) |
 | `s_oembed_full` | 4.8350 | 4883 | False | `4be65bb6` | #33 | O-embed alone |
-| `s_gelu_full` | 4.8647 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
+| `s_gelu_full` | 4.8647 | 4883 | False | `4be65bb6` | standalone | GELU FFN only |
 | `s_qembed` | 4.8753 | 4883 | False | `4be65bb6` | #30 alt-seed | Q-embed, alt seed |
-| `s_highrope_full` | 4.8759 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
-| `s_gqa1_full` | 4.8875 | 4883 | False | `4be65bb6` | — | (undocumented — add to DESC in make_evidence_index.py) |
+| `s_highrope_full` | 4.8759 | 4883 | False | `4be65bb6` | standalone | RoPE_base=500000 only |
+| `s_gqa1_full` | 4.8875 | 4883 | False | `4be65bb6` | standalone | GQA=1 only |
 | `s_kembed` | 4.9009 | 4000 | True | `4be65bb6` | #31 4k | K-embed, 4k gated |
 | `s_layerscale` | 4.9972 | 4000 | True | `4be65bb6` | issue#21 §7 | LayerScale (+0.0106, below bar) |
 | `s_smeargate` | 5.0025 | 4000 | True | `4be65bb6` | issue#27 §4 | SmearGate (weak +0.0053, below bar) |
@@ -67,10 +68,33 @@ Sorted by val_loss (best first). All numbers read live from the JSON.
 | `s_unetskip` | 5.0081 | 4000 | True | `4be65bb6` | issue#23 §5 | U-Net skip connections (-0.0003) |
 | `s_vqgain_nope_full` | 5.2406 | 4883 | False | `4be65bb6` | #54 CLOSED | V+q_gain + NoPE — catastrophic, RoPE is load-bearing |
 | `s_vqgain_swa_highrope_dilated_full` | 5.2494 | 4883 | False | `4be65bb6` | #74 | V+q+SWA+HighRoPE + dilated (d=2) — 5.2494, closed |
+| `s_vqgain_swa_highrope_postnorm_full` | 5.3816 | 4883 | False | `4be65bb6` | #75 | V+q+SWA+HighRoPE + post-norm — 5.3816, destabilizes training (closed) |
 | `s_zeroinit` | 5.3856 | 2000 | None | `4be65bb6` | issue#22 §2 | Zero-init residual projections (null) |
 | `s_attngate` | 5.3894 | 2000 | None | `4be65bb6` | issue#28 §6 | Attention output gate (killed @2k) |
 | `s_embresid` | 5.4544 | 2000 | None | `4be65bb6` | issue#20 §1 | Embedding residual (early kill, -0.069) |
 | `emb_resid` | 5.4875 | 1500 | None | `4be65bb6` | issue#20 §1 | Embedding residual (early kill) |
 | `s_outadapter` | 6.0775 | 1000 | None | `4be65bb6` | ablation §3 | Low-rank output adapter (collapsed) |
+| `tiny1m_arch_tiedqk_full` | 6.3041 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + tied QK |
+| `tiny1m_arch_mha_full` | 6.3069 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + full MHA (n_kv_heads=4) |
+| `tiny1m_arch_layernorm_full` | 6.3109 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + LayerNorm |
+| `tiny1m_vqgain_rope250k_swa384_full` | 6.3241 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+RoPE base 250k + SWA384 |
+| `tiny1m_arch_mla_full` | 6.3253 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + MLA latent K/V |
+| `tiny1m_arch_base_full` | 6.3350 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M current best baseline: V+q+SWA384+RoPE250k |
+| `tiny1m_arch_gqa1_full` | 6.3447 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + GQA1 (n_kv_heads=1) |
+| `tiny1m_vqgain_swa_rope250k_full` | 6.3506 | 733 | False | `4be65bb6` | tiny1m | Tiny1M3M + V+q+SWA+RoPE base 250k |
+| `tiny1m_vqgain_rope250k_swa256_full` | 6.3522 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+RoPE base 250k + SWA256 |
+| `tiny1m_vqgain_highrope_swa384_full` | 6.3584 | 733 | False | `4be65bb6` | tiny1m | Tiny1M3M + V+q+HighRoPE+SWA384 |
+| `tiny1m_vqgain_swa_rope125k_full` | 6.3650 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+SWA + RoPE base 125k |
+| `tiny1m_vqgain_swa_rope375k_full` | 6.3656 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+SWA + RoPE base 375k |
+| `tiny1m_swa_rope250k_full` | 6.3666 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + SWA512 + RoPE base 250k, no V/q |
+| `tiny1m_vqgain_swa_highrope_full` | 6.3694 | 733 | False | `4be65bb6` | tiny1m | Tiny1M3M + V+q+SWA+HighRoPE |
+| `tiny1m_swa_full` | 6.3750 | 733 | False | `4be65bb6` | tiny1m | Tiny1M3M + SWA(window=512) only |
+| `tiny1m_vqgain_swa_rope750k_full` | 6.3769 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+SWA + RoPE base 750k |
+| `tiny1m_qgain_swa_rope250k_full` | 6.3831 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + q_gain + SWA512 + RoPE base 250k, no V-embed |
+| `tiny1m_vqgain_full` | 6.3916 | 733 | None | `4be65bb6` | tiny1m | Tiny1M3M + V-embed + q_gain |
+| `tiny1m_vqgain_rope250k_swa768_full` | 6.3984 | 733 | False | `4be65bb6` | tiny1m refine | Tiny1M3M + V+q+RoPE base 250k + SWA768 |
+| `tiny1m_qgain_full` | 6.4025 | 733 | None | `4be65bb6` | tiny1m | Tiny1M3M + q_gain |
+| `tiny1m_ctrl_full` | 6.4306 | 733 | None | `4be65bb6` | tiny1m ctrl | Tiny1M3M control |
+| `tiny1m_arch_postnorm_full` | 7.6209 | 733 | False | `4be65bb6` | tiny1m arch | Tiny1M3M + post-norm |
 
-_61 runs._
+_85 runs._
