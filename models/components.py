@@ -17,6 +17,27 @@ class SquaredReLUFeedForward(nn.Module):
         return self.down_proj(self.dropout(torch.square(F.relu(self.up_proj(x)))))
 
 
+class SaturatingReLUFeedForward(nn.Module):
+    """#93 Anti-outlier FFN. squared_relu AMPLIFIES large activations (x^2),
+    manufacturing the massive-activation channels that hurt L2 normalization.
+    This replaces the square with a smooth soft-cap: c * tanh(relu(x) / c).
+    Linear for small activations (preserves signal), saturating at +c for
+    large ones (compresses outliers at their source). c is a learnable scalar
+    (init 4). Same 2-projection shape/param-count as squared_relu."""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+        super().__init__()
+        self.up_proj = nn.Linear(d_model, d_ff, bias=False)
+        self.down_proj = nn.Linear(d_ff, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+        self.cap = nn.Parameter(torch.tensor(4.0))
+
+    def forward(self, x):
+        h = F.relu(self.up_proj(x))
+        c = self.cap.abs() + 1e-4
+        h = c * torch.tanh(h / c)
+        return self.down_proj(self.dropout(h))
+
+
 class SwiGLUFeedForward(nn.Module):
     """SwiGLU FeedForward layer."""
     def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):

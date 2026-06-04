@@ -729,6 +729,7 @@ def train_minimal_llm(
     base_filename = f"{config.train_tokens}_{timestamp}"
     metrics_file = plot_dir / f"metrics_{base_filename}.json"
     plot_file = plot_dir / f"val_loss_{base_filename}.png"
+    output_path = Path(output_dir) if output_dir else None
     
     # Save comprehensive metrics to plots/
     metrics_data = {

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward
+from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward
 
 
 class Rotary(nn.Module):
@@ -17,6 +17,187 @@ class Rotary(nn.Module):
         # torchtune expects [batch, seq_len, num_heads, head_dim]
         # Our input is already [B, T, H, D] which matches torchtune's expectation
         return self.rope(x_BTHD)
+
+
+# ============================================================================
+# #90 Invented residual-stream normalizations. Drop-in for RMSNorm; all are
+# O(d) per token with a learnable per-channel gain `g`. Selected via the
+# `norm_type` config flag; the internal Q/K norms are left untouched.
+# ============================================================================
+class PeakNorm(nn.Module):
+    """L-infinity norm: divide by the largest-magnitude activation (no sqrt)."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        denom = x.abs().amax(dim=-1, keepdim=True) + self.eps
+        return self.weight * (x / denom)
+
+
+class ManhattanNorm(nn.Module):
+    """L1 / mean-absolute-deviation norm (no square, no sqrt)."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        denom = x.abs().mean(dim=-1, keepdim=True) + self.eps
+        return self.weight * (x / denom)
+
+
+class SquashNorm(nn.Module):
+    """DyT-style reduction-free 'norm': g * tanh(alpha * x). No cross-feature
+    reduction at all (fully element-wise), so it's the cheapest of the set."""
+    def __init__(self, dim: int, alpha_init: float = 1.0):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.alpha = nn.Parameter(torch.full((dim,), float(alpha_init)))
+
+    def forward(self, x):
+        return self.weight * torch.tanh(self.alpha * x)
+
+
+class CenterNorm(nn.Module):
+    """Mean-only norm: subtract the feature mean, scale by g (no variance)."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        return self.weight * (x - x.mean(dim=-1, keepdim=True))
+
+
+class ManifoldNorm(nn.Module):
+    """Fractional-power RMS: x / rms(x)**rho, with rho = sigmoid(raw) in (0,1)
+    learnable. rho=1 -> RMSNorm (full unit-sphere projection); rho=0 -> no
+    normalization (g*x). Inits at rho~=0.98 so it starts as RMSNorm and learns
+    HOW MUCH to normalize the residual stream."""
+    def __init__(self, dim: int, eps: float = 1e-6, rho_init: float = 4.0):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.rho_raw = nn.Parameter(torch.tensor(float(rho_init)))
+        self.eps = eps
+
+    def forward(self, x):
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        rho = torch.sigmoid(self.rho_raw)
+        return self.weight * (x / rms.pow(rho))
+
+
+class PNorm(nn.Module):
+    """Generalized Lp norm: x / (mean(|x|^p))^(1/p) * g. Unifies the family —
+    p=1 is ManhattanNorm, p=2 is RMSNorm, p->inf approaches PeakNorm. Lets us
+    sweep the single 'p' knob to find the best aggregate. Scale-invariant and
+    all-dimensions by construction (the two properties that mattered)."""
+    def __init__(self, dim: int, p: float = 2.0, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.p = float(p)
+        self.eps = eps
+
+    def forward(self, x):
+        denom = (x.abs().pow(self.p).mean(dim=-1, keepdim=True) + self.eps).pow(1.0 / self.p)
+        return self.weight * (x / denom)
+
+
+class CenteredL1Norm(nn.Module):
+    """L1 analogue of LayerNorm: subtract the mean, then divide by the mean
+    absolute deviation. Robust (L1) scale + centering. Scale-invariant."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        xc = x - x.mean(dim=-1, keepdim=True)
+        denom = xc.abs().mean(dim=-1, keepdim=True) + self.eps
+        return self.weight * (xc / denom)
+
+
+class ClipNorm(nn.Module):
+    """#94 Winsorized RMSNorm: clip |x| to k*mean|x| per token (removing the
+    massive-activation outliers DIRECTLY), then RMS-normalize the clipped
+    vector. Tests whether the outliers are harmful (clip helps) or functional
+    (clip hurts). k via 'clipnorm<k>' in the norm_type string (default 3)."""
+    def __init__(self, dim: int, k: float = 3.0, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.k = float(k)
+        self.eps = eps
+
+    def forward(self, x):
+        lim = self.k * x.abs().mean(dim=-1, keepdim=True) + self.eps
+        xc = torch.maximum(torch.minimum(x, lim), -lim)
+        rms = torch.sqrt(xc.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return self.weight * (xc / rms)
+
+
+class ChannelScaleNorm(nn.Module):
+    """#95 Learnable per-channel PRE-scale, then RMSNorm. The pre-scale lets
+    the model down-weight specific outlier channels BEFORE they dominate the
+    denominator (the post-norm gain cannot — it acts after the division).
+    Init identity, so it starts exactly as RMSNorm."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.pre = nn.Parameter(torch.ones(dim))
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        x = x * self.pre
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return self.weight * (x / rms)
+
+
+class MedianNorm(nn.Module):
+    """#96 Divide by the MEDIAN absolute activation — the maximally outlier-
+    robust scale (50% breakdown point). Probes the robustness ceiling past L1."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        med = x.abs().median(dim=-1, keepdim=True).values
+        return self.weight * (x / (med + self.eps))
+
+
+_NORM_REGISTRY = {
+    "peak": PeakNorm,
+    "manhattan": ManhattanNorm,
+    "squash": SquashNorm,
+    "center": CenterNorm,
+    "manifold": ManifoldNorm,
+    "centeredl1": CenteredL1Norm,
+    "channelscale": ChannelScaleNorm,
+    "median": MedianNorm,
+}
+
+
+def make_norm(dim: int, norm_type: str = "rmsnorm", use_layernorm: bool = False):
+    """Factory for residual-stream norms. Custom names win; otherwise fall back
+    to LayerNorm (if use_layernorm) or RMSNorm."""
+    nt = (norm_type or "rmsnorm").lower()
+    if nt.startswith("pnorm"):
+        try:
+            p = float(nt[len("pnorm"):])
+        except ValueError:
+            p = 2.0
+        return PNorm(dim, p)
+    if nt.startswith("clipnorm"):
+        try:
+            k = float(nt[len("clipnorm"):])
+        except ValueError:
+            k = 3.0
+        return ClipNorm(dim, k)
+    if nt in _NORM_REGISTRY:
+        return _NORM_REGISTRY[nt](dim)
+    if nt == "layernorm" or use_layernorm:
+        return nn.LayerNorm(dim, elementwise_affine=True)
+    return nn.RMSNorm(dim)
 
 
 class MultiHeadAttention(nn.Module):
@@ -49,6 +230,16 @@ class MultiHeadAttention(nn.Module):
         attention_dilation: int = 1,
         use_post_norm: bool = False,
         use_linear_attn: bool = False,
+        use_diff_attn: bool = False,
+        use_nsa_global: bool = False,
+        nsa_block: int = 64,
+        use_hybrid_heads: bool = False,
+        norm_type: str = "rmsnorm",
+        qk_norm_type: str = "rmsnorm",
+        v_norm_type: str = "",
+        use_multiscale_heads: bool = False,
+        use_parallel_block: bool = False,
+        use_attn_sink: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -61,12 +252,9 @@ class MultiHeadAttention(nn.Module):
         # scale + bias). Tests whether the choice of norm is a
         # real architecture lever.
         self.use_layernorm = use_layernorm
-        # #80 Linear attention (Performer-style): when set, the
-        # softmax attention is replaced with kernel-approximated
-        # attention using phi(x) = elu(x) + 1. The SDPA path
-        # still runs (with the mask), but on phi(Q) and phi(K).
-        # Tests whether the kernel approximation unlocks a new
-        # operating point.
+        # #80 Linear attention (Performer-style): when set, replace
+        # softmax attention with positive-feature kernel attention
+        # using phi(x) = elu(x) + 1.
         self.use_linear_attn = use_linear_attn
         self.d_model = d_model
         self.n_heads = n_heads
@@ -116,10 +304,16 @@ class MultiHeadAttention(nn.Module):
                 torch.nn.init.normal_(self.mla_uv,  mean=0.0, std=0.02)
         # ================================================
         
-        self.q_norm = (nn.LayerNorm(self.d_k, elementwise_affine=True) if self.use_layernorm
-                       else nn.RMSNorm(self.d_k))
-        self.k_norm = (nn.LayerNorm(self.d_k, elementwise_affine=True) if self.use_layernorm
-                       else nn.RMSNorm(self.d_k))
+        # #91 Robust QK-norm: q_norm/k_norm can use any invented norm (e.g.
+        # pnorm1.5) so the attention-logit dot product is outlier-robust.
+        self.q_norm = make_norm(self.d_k, qk_norm_type, self.use_layernorm)
+        self.k_norm = make_norm(self.d_k, qk_norm_type, self.use_layernorm)
+        # #92 Robust V-norm: optionally normalize V (per head) before the
+        # softmax-weighted sum, so outlier value channels don't dominate the
+        # aggregated output. Off by default ("" / "none").
+        self.use_v_norm = v_norm_type not in ("", "none", None)
+        if self.use_v_norm:
+            self.v_norm = make_norm(self.d_k, v_norm_type, self.use_layernorm)
 
         self.rotary = Rotary(self.d_k, max_seq_len, base=rope_base)
         self.dropout = dropout
@@ -244,6 +438,74 @@ class MultiHeadAttention(nn.Module):
                     persistent=False,
                 )
 
+        # #87 Differential Attention (Microsoft DIFF Transformer, adapted):
+        # split each head's d_k in half and compute TWO softmax maps; the
+        # output is map1 - lambda * map2, which cancels common-mode
+        # attention noise. We exploit SDPA's linearity in V:
+        #   (softmax1 - lam*softmax2) @ V == sdpa(Q1,K1,V) - lam*sdpa(Q2,K2,V)
+        # so two flash-attn calls suffice (no [T,T] materialization). lambda
+        # is a learnable per-head scalar (paper init 0.5); a per-head RMSNorm
+        # + (1-lam_init) scale stabilizes the subtracted output. Requires an
+        # even d_k. Not identity-init (it's a genuinely different operator).
+        self.use_diff_attn = use_diff_attn
+        if self.use_diff_attn:
+            assert self.d_k % 2 == 0, "diff-attn needs even d_k"
+            self._diff_lambda_init = 0.5
+            self.diff_lambda = nn.Parameter(
+                torch.full((self.n_heads,), self._diff_lambda_init)
+            )
+            self.diff_norm = nn.RMSNorm(self.d_k)
+        # #88 NSA-style compressed-global branch (DeepSeek Native Sparse
+        # Attention, adapted): keep the cheap local window, and ADD a global
+        # branch where each query attends to block-mean-pooled K/V summaries
+        # (block size nsa_block). Gives every token full-context reach at
+        # O(T * T/block) cost. The per-head gate is ZERO-INIT, so step 0 is
+        # exactly the local-attention baseline and the global branch earns
+        # its weight during training. Block-causal: a query only sees blocks
+        # that ended at or before its position (no intra-block future leak).
+        self.use_nsa_global = use_nsa_global
+        self.nsa_block = max(1, int(nsa_block))
+        if self.use_nsa_global:
+            self.nsa_gate = nn.Parameter(torch.zeros(self.n_heads))
+        # #89 Hybrid heads (DeepSeek-V4 hybrid attention at head granularity):
+        # the first half of the heads attend within a local window, the second
+        # half attend over the full causal context — in EVERY layer. Zero extra
+        # params; a single SDPA call with a per-head [H,T,T] boolean mask. The
+        # window reuses sliding_window_size (default 512).
+        self.use_hybrid_heads = use_hybrid_heads
+        if self.use_hybrid_heads:
+            idx = torch.arange(max_seq_len)
+            diff = idx[:, None] - idx[None, :]
+            causal = diff >= 0
+            local = causal & (diff < sliding_window_size)
+            n_local = self.n_heads // 2
+            per_head = torch.stack(
+                [local if h < n_local else causal for h in range(self.n_heads)],
+                dim=0,
+            )  # [H, T, T] — True = attend
+            self.register_buffer("_hybrid_head_mask", per_head, persistent=False)
+        # #97 Multi-scale heads: each head gets a DIFFERENT sliding-window size,
+        # geometrically spread around sliding_window_size (head h window =
+        # w * 2^(h - H//2), e.g. for w=384/4 heads -> 96/192/384/768). Tests
+        # whether receptive-field DIVERSITY beats a single uniform window
+        # (SWA384 won uniformly; full attention was flat). Zero extra params.
+        self.use_multiscale_heads = use_multiscale_heads
+        if self.use_multiscale_heads:
+            idx = torch.arange(max_seq_len)
+            diff = idx[:, None] - idx[None, :]
+            causal = diff >= 0
+            masks = []
+            for h in range(self.n_heads):
+                wh = max(1, int(sliding_window_size * (2.0 ** (h - self.n_heads // 2))))
+                masks.append(causal & (diff < wh))
+            self.register_buffer("_multiscale_mask", torch.stack(masks, dim=0), persistent=False)
+        # #99 Attention sink slot (softmax-off-by-one): append a zero key/value
+        # so a query can attend to "nothing" (denominator gets a +1 term)
+        # instead of being forced to dump probability mass on a real token.
+        # Attention sinks are where massive activations originate, so this
+        # attacks the outlier problem at its source. Zero extra params.
+        self.use_attn_sink = use_attn_sink
+
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
         
@@ -331,19 +593,126 @@ class MultiHeadAttention(nn.Module):
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
+        # #92 Robust V-norm: normalize the value vectors per head before they
+        # are mixed by attention (last dim = d_k).
+        if self.use_v_norm:
+            V = self.v_norm(V)
+
         # Compute attention
         # #51 sliding-window: when enabled, use a [T, T] causal-local
         # boolean mask instead of SDPA's `is_causal=True` fast path.
         # The mask is broadcast across batch and head dims.
-        # #80 linear attention (Performer-style): when set, apply
-        # phi(x) = elu(x) + 1 to Q, K, then run SDPA on the
-        # feature-mapped values. The softmax path still runs (with
-        # the mask), but the kernel is approximated. This is the
-        # cheap way to test the linear-attn feature map lever.
-        if self.use_linear_attn:
-            Q = F.elu(Q) + 1.0
-            K = F.elu(K) + 1.0
-        if self.use_sliding_window:
+        if self.use_diff_attn:
+            # #87 Differential Attention: two sub-attentions on the split
+            # head_dim, combined as a1 - lambda * a2 (SDPA is linear in V).
+            d_half = self.d_k // 2
+            Q1, Q2 = Q[..., :d_half], Q[..., d_half:]
+            K1, K2 = K[..., :d_half], K[..., d_half:]
+            drop = self.dropout if self.training else 0.0
+            if self.use_sliding_window:
+                m = self._sliding_window_mask[:seq_len, :seq_len]
+                a1 = F.scaled_dot_product_attention(Q1, K1, V, attn_mask=m, dropout_p=drop)
+                a2 = F.scaled_dot_product_attention(Q2, K2, V, attn_mask=m, dropout_p=drop)
+            else:
+                a1 = F.scaled_dot_product_attention(Q1, K1, V, is_causal=True, dropout_p=drop)
+                a2 = F.scaled_dot_product_attention(Q2, K2, V, is_causal=True, dropout_p=drop)
+            lam = self.diff_lambda.view(1, self.n_heads, 1, 1)
+            attn_output = a1 - lam * a2
+            attn_output = self.diff_norm(attn_output) * (1.0 - self._diff_lambda_init)
+        elif self.use_hybrid_heads:
+            # #89 Hybrid heads: per-head local/global mask, one SDPA call.
+            attn_output = F.scaled_dot_product_attention(
+                Q, K, V,
+                attn_mask=self._hybrid_head_mask[:, :seq_len, :seq_len],
+                dropout_p=self.dropout if self.training else 0.0,
+            )
+        elif self.use_multiscale_heads:
+            # #97 Multi-scale heads: per-head graded-window mask, one SDPA call.
+            attn_output = F.scaled_dot_product_attention(
+                Q, K, V,
+                attn_mask=self._multiscale_mask[:, :seq_len, :seq_len],
+                dropout_p=self.dropout if self.training else 0.0,
+            )
+        elif self.use_attn_sink:
+            # #99 Attention sink: append a zero K/V slot every query may attend
+            # to (softmax-off-by-one). Standard causal/SWA mask over the real
+            # tokens, plus an always-on sink column.
+            sink = torch.zeros(Q.size(0), Q.size(1), 1, Q.size(3), dtype=Q.dtype, device=Q.device)
+            Kp = torch.cat([K, sink], dim=2)
+            Vp = torch.cat([V, sink], dim=2)
+            if self.use_sliding_window:
+                base = self._sliding_window_mask[:seq_len, :seq_len]
+            else:
+                ar = torch.arange(seq_len, device=Q.device)
+                base = ar[:, None] >= ar[None, :]
+            sink_col = torch.ones(seq_len, 1, dtype=torch.bool, device=Q.device)
+            mask = torch.cat([base, sink_col], dim=1)
+            attn_output = F.scaled_dot_product_attention(
+                Q, Kp, Vp, attn_mask=mask,
+                dropout_p=self.dropout if self.training else 0.0,
+            )
+        elif self.use_nsa_global:
+            # #88 NSA-style: local window + block-compressed global branch.
+            drop = self.dropout if self.training else 0.0
+            if self.use_sliding_window:
+                local = F.scaled_dot_product_attention(
+                    Q, K, V, attn_mask=self._sliding_window_mask[:seq_len, :seq_len],
+                    dropout_p=drop,
+                )
+            else:
+                local = F.scaled_dot_product_attention(
+                    Q, K, V, is_causal=True, dropout_p=drop,
+                )
+            Bsz = self.nsa_block
+            n_blk = (seq_len + Bsz - 1) // Bsz
+            pad = n_blk * Bsz - seq_len
+            Kp = F.pad(K, (0, 0, 0, pad)) if pad else K
+            Vp = F.pad(V, (0, 0, 0, pad)) if pad else V
+            Kb = Kp.reshape(batch_size, self.n_heads, n_blk, Bsz, self.d_k).mean(dim=3)
+            Vb = Vp.reshape(batch_size, self.n_heads, n_blk, Bsz, self.d_k).mean(dim=3)
+            scores = torch.matmul(Q, Kb.transpose(-1, -2)) / (float(self.d_k) ** 0.5)
+            pos = torch.arange(seq_len, device=Q.device)
+            blk_end = (torch.arange(n_blk, device=Q.device) + 1) * Bsz
+            allow = blk_end[None, :] <= (pos[:, None] + 1)  # [T, n_blk], strictly-past blocks
+            scores = scores.masked_fill(~allow[None, None], -1e9)
+            w = torch.softmax(scores, dim=-1)
+            any_blk = allow.any(dim=-1).view(1, 1, seq_len, 1).to(w.dtype)
+            glob = torch.matmul(w, Vb) * any_blk
+            gate = self.nsa_gate.view(1, self.n_heads, 1, 1)
+            attn_output = local + gate * glob
+        elif self.use_linear_attn:
+            q_phi = (F.elu(Q) + 1.0).float()
+            k_phi = (F.elu(K) + 1.0).float()
+            v_float = V.float()
+
+            if self.use_sliding_window and self.attention_dilation != 1:
+                scores = torch.einsum("bhtd,bhsd->bhts", q_phi, k_phi)
+                mask = self._sliding_window_mask[:seq_len, :seq_len]
+                scores = scores.masked_fill(~mask, 0.0)
+                denom = scores.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+                weights = scores / denom
+                attn_output = torch.einsum("bhts,bhsd->bhtd", weights, v_float)
+            else:
+                window = self.sliding_window_size if self.use_sliding_window else seq_len
+                kv = k_phi.unsqueeze(-1) * v_float.unsqueeze(-2)
+                prefix_kv = torch.cat(
+                    [torch.zeros_like(kv[:, :, :1]), kv.cumsum(dim=2)],
+                    dim=2,
+                )
+                prefix_k = torch.cat(
+                    [torch.zeros_like(k_phi[:, :, :1]), k_phi.cumsum(dim=2)],
+                    dim=2,
+                )
+                end_idx = torch.arange(1, seq_len + 1, device=Q.device)
+                start_idx = (end_idx - window).clamp_min(0)
+                kv_sum = prefix_kv[:, :, end_idx] - prefix_kv[:, :, start_idx]
+                k_sum = prefix_k[:, :, end_idx] - prefix_k[:, :, start_idx]
+                numerator = torch.einsum("bhtd,bhtde->bhte", q_phi, kv_sum)
+                denom = torch.einsum("bhtd,bhtd->bht", q_phi, k_sum).clamp_min(1e-6)
+                attn_output = numerator / denom.unsqueeze(-1)
+
+            attn_output = attn_output.to(V.dtype)
+        elif self.use_sliding_window:
             attn_output = F.scaled_dot_product_attention(
                 Q, K, V,
                 attn_mask=self._sliding_window_mask[:seq_len, :seq_len],
@@ -412,6 +781,16 @@ class TransformerBlock(nn.Module):
         attention_dilation: int = 1,
         use_post_norm: bool = False,
         use_linear_attn: bool = False,
+        use_diff_attn: bool = False,
+        use_nsa_global: bool = False,
+        nsa_block: int = 64,
+        use_hybrid_heads: bool = False,
+        norm_type: str = "rmsnorm",
+        qk_norm_type: str = "rmsnorm",
+        v_norm_type: str = "",
+        use_multiscale_heads: bool = False,
+        use_parallel_block: bool = False,
+        use_attn_sink: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -419,6 +798,10 @@ class TransformerBlock(nn.Module):
         # compute (norm, residual) inside the function but apply
         # the norm to (x + sublayer_out) before returning.
         self.use_post_norm = use_post_norm
+        # #98 Parallel block (PaLM / GPT-J): attention and FFN both read the
+        # SAME normed input and their outputs are summed into the residual,
+        # instead of running sequentially. Halves the per-layer serial depth.
+        self.use_parallel_block = use_parallel_block
 
         self.attention = MultiHeadAttention(
             d_model,
@@ -446,6 +829,14 @@ class TransformerBlock(nn.Module):
             attention_dilation=attention_dilation,
             use_layernorm=use_layernorm,
             use_linear_attn=use_linear_attn,
+            use_diff_attn=use_diff_attn,
+            use_nsa_global=use_nsa_global,
+            nsa_block=nsa_block,
+            use_hybrid_heads=use_hybrid_heads,
+            use_multiscale_heads=use_multiscale_heads,
+            use_attn_sink=use_attn_sink,
+            qk_norm_type=qk_norm_type,
+            v_norm_type=v_norm_type,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":
@@ -454,13 +845,14 @@ class TransformerBlock(nn.Module):
             self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
         elif ffn_variant == "gelu":
             self.feed_forward = GELUFeedForward(d_model, d_ff, dropout)
+        elif ffn_variant == "satrelu":
+            self.feed_forward = SaturatingReLUFeedForward(d_model, d_ff, dropout)
         else:
             raise ValueError(f"Unknown ffn_variant: {ffn_variant}")
 
         # Normalization layers
-        _Norm = (nn.LayerNorm if use_layernorm else nn.RMSNorm)
-        self.norm1 = _Norm(d_model)
-        self.norm2 = _Norm(d_model)
+        self.norm1 = make_norm(d_model, norm_type, use_layernorm)
+        self.norm2 = make_norm(d_model, norm_type, use_layernorm)
         self.dropout = nn.Dropout(dropout)
 
         # #20 embedding residual: per-dim mix with the original token embedding x0,
@@ -490,6 +882,21 @@ class TransformerBlock(nn.Module):
         # Re-inject the original embedding before attention/MLP (#20)
         if self.use_embed_residual:
             x = self.resid_m0 * x + self.resid_m1 * x0
+
+        if self.use_parallel_block:
+            # #98 Parallel block: attn and FFN both read one shared normed
+            # input; their outputs are summed into the residual together.
+            n = self.norm1(x)
+            attn_out = self.attention(n, ve)
+            if self.use_layerscale:
+                attn_out = attn_out * (1.0 + self.attn_layerscale)
+            ffn_in = n
+            if self.use_ffn_embed and ve is not None:
+                ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
+            ff_out = self.feed_forward(ffn_in)
+            if self.use_layerscale:
+                ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            return x + self.dropout(attn_out) + self.dropout(ff_out)
 
         if self.use_post_norm:
             # #75 Post-norm: apply norm AFTER the residual addition.

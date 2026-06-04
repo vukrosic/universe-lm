@@ -12,6 +12,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from configs.llm_config import (
     LLMConfig,
+    Tiny1M3MConfig,
     Screen10M20MConfig,
     Full10M200MConfig,
     Full135M2700MConfig,
@@ -236,12 +237,42 @@ def main():
     parser.add_argument("--deep_value_embed_hidden", type=int, help="Hidden dim for deep V-embed (default 96)")
     parser.add_argument("--use_ffn_embed", type=str, help="Token identity into FFN input, #47 (true/false)")
     parser.add_argument("--use_qk_norm_post_rope", type=str, help="QK-RMSNorm after RoPE (modded-nanogpt variant), #49 (true/false)")
+    parser.add_argument("--use_sliding_window", type=str, help="Use local causal sliding-window attention (true/false)")
+    parser.add_argument("--sliding_window_size", type=int, help="Override sliding-window attention size")
+    parser.add_argument("--rope_base", type=int, help="Override RoPE base")
+    parser.add_argument("--n_kv_heads", type=int, help="Override KV head count for GQA/MHA sweeps")
+    parser.add_argument("--ffn_variant", type=str, choices=["squared_relu", "swiglu", "gelu", "satrelu"], help="Override FFN activation variant")
+    parser.add_argument("--use_layernorm", type=str, help="Use LayerNorm instead of RMSNorm (true/false)")
+    parser.add_argument("--norm_type", type=str, help="Residual-stream norm, #90: rmsnorm/layernorm/peak/manhattan/squash/center/manifold/pnorm<p>")
+    parser.add_argument("--qk_norm_type", type=str, help="Norm on Q,K before attention dot product, #91 (e.g. pnorm1.5)")
+    parser.add_argument("--v_norm_type", type=str, help="Norm on V before the attention weighted sum, #92 (e.g. pnorm1.5; ''=off)")
+    parser.add_argument("--use_multiscale_heads", type=str, help="Per-head graded sliding-window sizes, #97 (true/false)")
+    parser.add_argument("--use_parallel_block", type=str, help="Parallel attention+FFN block (PaLM/GPT-J), #98 (true/false)")
+    parser.add_argument("--use_attn_sink", type=str, help="Attention sink slot / softmax-off-by-one, #99 (true/false)")
+    parser.add_argument("--use_unet_skips", type=str, help="U-net cross-layer skip connections (true/false)")
+    parser.add_argument("--unet_skip_count", type=int, help="Number of U-net skip pairs")
+    parser.add_argument("--use_smear_gate", type=str, help="Token-smear gate (mix previous token) (true/false)")
+    parser.add_argument("--use_attn_output_gate", type=str, help="Gated attention output (true/false)")
+    parser.add_argument("--use_layerscale", type=str, help="Learnable per-channel residual gate (LayerScale), (true/false)")
+    parser.add_argument("--use_post_norm", type=str, help="Use post-norm transformer blocks (true/false)")
+    parser.add_argument("--use_tied_qk", type=str, help="Use tied-QK attention projections (true/false)")
+    parser.add_argument("--use_mla", type=str, help="Use MLA-style latent K/V projections (true/false)")
+    parser.add_argument("--mla_latent_dim", type=int, help="Override MLA latent dimension")
+    parser.add_argument("--use_linear_attn", type=str, help="Use positive-feature linear attention (true/false)")
+    parser.add_argument("--logit_softcap", type=float, help="Override final-logit softcap; 0 disables")
+    parser.add_argument("--attention_dilation", type=int, help="Override attention dilation inside the local window")
+    parser.add_argument("--global_attn_every_k", type=int, help="Every k-th layer uses full attention instead of SWA, #86 (0=off)")
+    parser.add_argument("--use_diff_attn", type=str, help="Differential Attention (DIFF Transformer), #87 (true/false)")
+    parser.add_argument("--use_nsa_global", type=str, help="NSA-style local + block-compressed global attention, #88 (true/false)")
+    parser.add_argument("--nsa_block", type=int, help="Block size for NSA compressed-global pooling, #88 (default 64)")
+    parser.add_argument("--use_hybrid_heads", type=str, help="Half heads local / half global, every layer, #89 (true/false)")
+    parser.add_argument("--d_ff", type=int, help="Override FFN hidden dim (for param-matched comparisons)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
         "--config",
         type=str,
         default="default",
-        choices=["default", "screen10m", "10m", "135m"],
+        choices=["default", "tiny1m", "screen10m", "10m", "135m"],
         help="Preset config to load",
     )
     parser.add_argument("--config_class", type=str, help="Python path to config class (e.g., configs.llm_config.LLMConfig)")
@@ -276,6 +307,7 @@ def main():
     # Load Config
     preset_map = {
         "default": LLMConfig,
+        "tiny1m": Tiny1M3MConfig,
         "screen10m": Screen10M20MConfig,
         "10m": Full10M200MConfig,
         "135m": Full135M2700MConfig,
@@ -328,6 +360,66 @@ def main():
         config.use_ffn_embed = (args.use_ffn_embed.lower() == "true")
     if args.use_qk_norm_post_rope is not None:
         config.use_qk_norm_post_rope = (args.use_qk_norm_post_rope.lower() == "true")
+    if args.use_sliding_window is not None:
+        config.use_sliding_window = (args.use_sliding_window.lower() == "true")
+    if args.sliding_window_size is not None:
+        config.sliding_window_size = args.sliding_window_size
+    if args.rope_base is not None:
+        config.rope_base = args.rope_base
+    if args.n_kv_heads is not None:
+        config.n_kv_heads = args.n_kv_heads
+    if args.ffn_variant is not None:
+        config.ffn_variant = args.ffn_variant
+    if args.use_layernorm is not None:
+        config.use_layernorm = (args.use_layernorm.lower() == "true")
+    if args.use_post_norm is not None:
+        config.use_post_norm = (args.use_post_norm.lower() == "true")
+    if args.use_tied_qk is not None:
+        config.use_tied_qk = (args.use_tied_qk.lower() == "true")
+    if args.use_mla is not None:
+        config.use_mla = (args.use_mla.lower() == "true")
+    if args.mla_latent_dim is not None:
+        config.mla_latent_dim = args.mla_latent_dim
+    if args.use_linear_attn is not None:
+        config.use_linear_attn = (args.use_linear_attn.lower() == "true")
+    if args.logit_softcap is not None:
+        config.logit_softcap = args.logit_softcap
+    if args.attention_dilation is not None:
+        config.attention_dilation = args.attention_dilation
+    if args.global_attn_every_k is not None:
+        config.global_attn_every_k = args.global_attn_every_k
+    if args.use_diff_attn is not None:
+        config.use_diff_attn = (args.use_diff_attn.lower() == "true")
+    if args.use_nsa_global is not None:
+        config.use_nsa_global = (args.use_nsa_global.lower() == "true")
+    if args.nsa_block is not None:
+        config.nsa_block = args.nsa_block
+    if args.use_hybrid_heads is not None:
+        config.use_hybrid_heads = (args.use_hybrid_heads.lower() == "true")
+    if args.d_ff is not None:
+        config.d_ff = args.d_ff
+    if args.norm_type is not None:
+        config.norm_type = args.norm_type.lower()
+    if args.qk_norm_type is not None:
+        config.qk_norm_type = args.qk_norm_type.lower()
+    if args.v_norm_type is not None:
+        config.v_norm_type = args.v_norm_type.lower()
+    if args.use_multiscale_heads is not None:
+        config.use_multiscale_heads = (args.use_multiscale_heads.lower() == "true")
+    if args.use_parallel_block is not None:
+        config.use_parallel_block = (args.use_parallel_block.lower() == "true")
+    if args.use_attn_sink is not None:
+        config.use_attn_sink = (args.use_attn_sink.lower() == "true")
+    if args.use_unet_skips is not None:
+        config.use_unet_skips = (args.use_unet_skips.lower() == "true")
+    if args.unet_skip_count is not None:
+        config.unet_skip_count = args.unet_skip_count
+    if args.use_smear_gate is not None:
+        config.use_smear_gate = (args.use_smear_gate.lower() == "true")
+    if args.use_attn_output_gate is not None:
+        config.use_attn_output_gate = (args.use_attn_output_gate.lower() == "true")
+    if args.use_layerscale is not None:
+        config.use_layerscale = (args.use_layerscale.lower() == "true")
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device
@@ -443,7 +535,7 @@ def main():
         val_loader,
         output_dir=output_dir,
         load_weights_path=args.load_checkpoint,
-        config_name=args.config_class,
+        config_name=args.config_class or args.config,
         run_seed=args.seed,
     )
 

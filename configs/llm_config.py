@@ -194,6 +194,52 @@ class LLMConfig:
     # case. Tests whether linear-attention math unlocks a new
     # operating point on the best baseline.
     use_linear_attn: bool = False
+    # #86 Interleaved global attention (DeepSeek-V4 hybrid-attention
+    # analog): the model is otherwise all-SWA (cheap local context
+    # everywhere, like V4's compressed/sparse path). When
+    # global_attn_every_k > 0, every k-th layer (1-indexed) drops the
+    # sliding window and runs full causal attention instead — a cheap
+    # periodic "global" layer (V4's HCA-style global context). 0 = off
+    # (every layer uses whatever use_sliding_window says). Requires
+    # use_sliding_window=True to have any effect; on a full-attention
+    # baseline every layer is already global. Flag-only, no extra
+    # params — it only changes which layers see the window mask.
+    global_attn_every_k: int = 0
+    # #87 Differential Attention (Microsoft DIFF Transformer, adapted for
+    # small heads): split each head's d_k in half, compute two softmax
+    # attention maps, output map1 - lambda*map2 (learnable per-head
+    # lambda). Cancels common-mode attention noise. Needs even d_k.
+    use_diff_attn: bool = False
+    # #88 NSA-style compressed-global attention (DeepSeek Native Sparse
+    # Attention, adapted): local sliding window PLUS a global branch over
+    # block-mean-pooled K/V summaries (block size nsa_block). Zero-init
+    # per-head gate, so step 0 == the local-attention baseline.
+    use_nsa_global: bool = False
+    nsa_block: int = 64
+    # #89 Hybrid heads (DeepSeek-V4 hybrid attention at head granularity):
+    # first half of heads attend locally (sliding_window_size), second half
+    # attend over full causal context, every layer. Zero extra params.
+    use_hybrid_heads: bool = False
+    # #90 Residual-stream normalization type. "rmsnorm" (default) / "layernorm"
+    # / invented variants: "peak" (L-inf), "manhattan" (L1), "squash" (DyT-style
+    # tanh, reduction-free), "center" (mean-only), "manifold" (fractional-power
+    # RMS with learnable strength rho). See models/layers.make_norm.
+    norm_type: str = "rmsnorm"
+    # #91 Robust QK-norm: norm applied to Q,K before the attention dot product
+    # (default "rmsnorm" == current behaviour; e.g. "pnorm1.5" for outlier-
+    # robust attention logits). #92 Robust V-norm: norm applied to V before the
+    # softmax-weighted sum ("" / "none" = off; e.g. "pnorm1.5").
+    qk_norm_type: str = "rmsnorm"
+    v_norm_type: str = ""
+    # #97 Multi-scale heads: each head a different sliding-window size
+    # (geometric spread around sliding_window_size). #98 Parallel block
+    # (PaLM/GPT-J): attention + FFN read one shared norm and sum into the
+    # residual, instead of running sequentially.
+    use_multiscale_heads: bool = False
+    use_parallel_block: bool = False
+    # #99 Attention sink slot (softmax-off-by-one): append a zero K/V the query
+    # can attend to, so it isn't forced to dump probability on a real token.
+    use_attn_sink: bool = False
 
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
@@ -295,6 +341,94 @@ class Screen10M5MConfig(Screen10M20MConfig):
     Kept for checkpoint compatibility and short transfer checks.
     """
     train_tokens: int = 5_000_000
+
+
+@dataclass
+class Tiny1M3MConfig(LLMConfig):
+    """Tiny screen — ~0.94M params · 3M tokens.
+
+    Fast idea filter. This is a separate tier from screen20m:
+    use it to rank ideas cheaply, then re-test winners on screen20m
+    before making stronger claims.
+    """
+    d_model: int = 64
+    n_heads: int = 4
+    n_layers: int = 12
+    d_ff: int = 256
+    n_kv_heads: int = 2
+    emb_rank: int = 8
+    max_seq_len: int = 2048
+    batch_size: int = 2
+    train_tokens: int = 3_000_000
+    compile_model: bool = False
+    warmup_ratio: float = 0.02
+    schedule_type: str = "warmup_decay_to_zero"
+    eval_milestones: Optional[Tuple[int, ...]] = (
+        0, 25, 50, 75, 100, 150, 200, 300, 400, 500, 600, 700
+    )
+
+
+@dataclass
+class Tiny1M5MConfig(Tiny1M3MConfig):
+    """Tiny screen — ~0.94M params · 5M tokens.
+
+    Same architecture as Tiny1M3MConfig, longer only when a 3M result
+    looks promising but too undertrained.
+    """
+    train_tokens: int = 5_000_000
+    eval_milestones: Optional[Tuple[int, ...]] = (
+        0, 50, 100, 150, 200, 300, 400, 500, 600, 750, 900, 1100, 1200
+    )
+
+
+@dataclass
+class Tiny1M3MQGainConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head Q-gain."""
+    use_q_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MVQGainConfig(Tiny1M3MConfig):
+    """Tiny1M3M with V-embed + per-head Q-gain."""
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MSWAConfig(Tiny1M3MConfig):
+    """Tiny1M3M with SWA(window=512) only."""
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+
+
+@dataclass
+class Tiny1M3MVQGainSWAHighRoPEConfig(Tiny1M3MConfig):
+    """Tiny1M3M with the current screen20m best recipe."""
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+
+
+@dataclass
+class Tiny1M3MVQGainHighRoPESWA384Config(Tiny1M3MConfig):
+    """Tiny1M3M with V+q+HighRoPE + SWA(window=384)."""
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 384
+    rope_base: int = 500000
+
+
+@dataclass
+class Tiny1M3MVQGainSWAHighRoPE250KConfig(Tiny1M3MConfig):
+    """Tiny1M3M with V+q+SWA(window=512) + RoPE base 250k."""
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 250000
 
 
 @dataclass
@@ -1110,6 +1244,77 @@ class Screen10M20MVQGainSWAHighRoPELinearAttnConfig(Screen10M20MConfig):
     sliding_window_size: int = 512
     rope_base: int = 500000
     use_linear_attn: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPEQKPostNormConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA+HighRoPE + QK norm after RoPE.
+
+    #81 — modded-nanogpt style Q/K normalization position, but on
+    the current best baseline. V+q alone tied with this knob; the
+    question is whether SWA+HighRoPE changes the operating point.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 500000
+    use_qk_norm_post_rope: bool = True
+
+
+@dataclass
+class Screen10M20MVQGainHighRoPESWA384Config(Screen10M20MConfig):
+    """Screen10M20M with V+q + HighRoPE + SWA(window=384).
+
+    #82 — finer locality sweep between the losing 256 window and
+    the current best 512 window.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 384
+    rope_base: int = 500000
+
+
+@dataclass
+class Screen10M20MVQGainHighRoPESWA768Config(Screen10M20MConfig):
+    """Screen10M20M with V+q + HighRoPE + SWA(window=768).
+
+    #83 — finer locality sweep between the current best 512 window
+    and the losing 1024 window.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 768
+    rope_base: int = 500000
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPE250KConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA(window=512) + RoPE base 250k.
+
+    #84 — finer RoPE-base sweep. Default 10k lost, 500k won; this
+    checks whether the optimum sits below 500k.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 250000
+
+
+@dataclass
+class Screen10M20MVQGainSWAHighRoPE1MConfig(Screen10M20MConfig):
+    """Screen10M20M with V+q+SWA(window=512) + RoPE base 1M.
+
+    #85 — finer RoPE-base sweep above the current 500k winner.
+    """
+    use_value_embed: bool = True
+    use_q_gain: bool = True
+    use_sliding_window: bool = True
+    sliding_window_size: int = 512
+    rope_base: int = 1000000
 
 
 @dataclass

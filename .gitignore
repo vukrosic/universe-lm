@@ -266,3 +266,15 @@ BUDGET.md
 
 # remote box config (per-rental, secret-ish)
 .remote
+
+# Pulled archives and rendered PDF page screenshots stay local.
+*.tgz
+*.tar.gz
+*.zip
+docs/**/pdf-images/
+docs/**/pdf-images-*/
+
+# Committed experiment results (override the broad *.json and runs/ rules above)
+!results/
+!results/**/*.json
+!results/**/*.md

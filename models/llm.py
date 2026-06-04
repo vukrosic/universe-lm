@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from typing import Optional
 from configs.llm_config import LLMConfig
-from models.layers import TransformerBlock
+from models.layers import TransformerBlock, make_norm
 
 
 class MinimalLLM(nn.Module):
@@ -60,6 +60,16 @@ class MinimalLLM(nn.Module):
         self.use_post_norm = getattr(config, "use_post_norm", False)
         self.use_layernorm = getattr(config, "use_layernorm", False)
         self.use_linear_attn = getattr(config, "use_linear_attn", False)
+        self.use_diff_attn = getattr(config, "use_diff_attn", False)
+        self.use_nsa_global = getattr(config, "use_nsa_global", False)
+        self.nsa_block = getattr(config, "nsa_block", 64)
+        self.use_hybrid_heads = getattr(config, "use_hybrid_heads", False)
+        self.norm_type = getattr(config, "norm_type", "rmsnorm")
+        self.qk_norm_type = getattr(config, "qk_norm_type", "rmsnorm")
+        self.v_norm_type = getattr(config, "v_norm_type", "")
+        self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
+        self.use_parallel_block = getattr(config, "use_parallel_block", False)
+        self.use_attn_sink = getattr(config, "use_attn_sink", False)
         # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
         # group of N consecutive blocks shares weights. We create only
         # n_layers // N unique blocks and the forward pass cycles through
@@ -71,6 +81,20 @@ class MinimalLLM(nn.Module):
         n_unique = config.n_layers // self.tie_layer_groups
         deep_value_embed_hidden = getattr(config, "deep_value_embed_hidden", None)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
+        # #86 Interleaved global attention: when global_attn_every_k > 0,
+        # every k-th block (1-indexed) drops the sliding window and runs
+        # full causal attention — a periodic global layer on top of the
+        # otherwise-local stack. Only meaningful when use_sliding_window
+        # is on; with it off, every block is already full attention.
+        self.global_attn_every_k = max(0, getattr(config, "global_attn_every_k", 0))
+
+        def _block_uses_swa(i: int) -> bool:
+            if not self.use_sliding_window:
+                return False
+            if self.global_attn_every_k > 0 and ((i + 1) % self.global_attn_every_k == 0):
+                return False  # this is a global (full-attention) layer
+            return True
+
         self.transformer_blocks = nn.ModuleList(
             [
                 TransformerBlock(
@@ -94,7 +118,7 @@ class MinimalLLM(nn.Module):
                     deep_value_embed_hidden=deep_value_embed_hidden,
                     use_ffn_embed=self.use_ffn_embed,
                     use_qk_norm_post_rope=self.use_qk_norm_post_rope,
-                    use_sliding_window=self.use_sliding_window,
+                    use_sliding_window=_block_uses_swa(i),
                     sliding_window_size=self.sliding_window_size,
                     use_nope=self.use_nope,
                     rope_base=self.rope_base,
@@ -105,6 +129,16 @@ class MinimalLLM(nn.Module):
                     use_post_norm=self.use_post_norm,
                     use_layernorm=self.use_layernorm,
                     use_linear_attn=self.use_linear_attn,
+                    use_diff_attn=self.use_diff_attn,
+                    use_nsa_global=self.use_nsa_global,
+                    nsa_block=self.nsa_block,
+                    use_hybrid_heads=self.use_hybrid_heads,
+                    norm_type=self.norm_type,
+                    qk_norm_type=self.qk_norm_type,
+                    v_norm_type=self.v_norm_type,
+                    use_multiscale_heads=self.use_multiscale_heads,
+                    use_parallel_block=self.use_parallel_block,
+                    use_attn_sink=self.use_attn_sink,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(n_unique)
@@ -118,9 +152,7 @@ class MinimalLLM(nn.Module):
             self.x0_norm = nn.RMSNorm(config.d_model)
 
         # Output layers
-        self.norm = (nn.LayerNorm(config.d_model, elementwise_affine=True)
-                     if getattr(config, 'use_layernorm', False)
-                     else nn.RMSNorm(config.d_model))
+        self.norm = make_norm(config.d_model, self.norm_type, self.use_layernorm)
         self.output_dropout = nn.Dropout(config.dropout)
 
         # Language modeling head (tied with embeddings).
