@@ -16,7 +16,7 @@ import sys
 
 # ----------------------------- CONFIG -------------------------------------
 REPO   = "https://github.com/vukrosic/universe-lm.git"
-BRANCH = "kaggle-query-tiny"
+BRANCH = "main"
 # Which research folders to sweep, and seeds. Mirrors run_research.py flags.
 # Query research at the Tiny tier: ~0.94M params · 3M tokens, 1 seed.
 FOLDERS = ["query_tiny"]
