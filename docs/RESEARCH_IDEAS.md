@@ -30,6 +30,11 @@ Each has a GitHub issue (AI-generated, idea-only until a human signs off). Confi
 |---|---|---|---|
 | Embedding factorization + depth | low-rank embedding (vocab×r @ r×d_model, r=48) frees ~4.7M params at the 10M budget, spent on depth 3→24 layers | **wins at 10m** (in validation, 200M run) | Crosses baseline by step 2000; −0.176 nats by step 20k; already under the 4.5486 record at ~40% of the run. **Transfer caveat:** the win comes from embedding being 91% of params at 10M; at 135M (d_model 576) embedding is only ~21%, so the gain should shrink sharply with scale. Strong 10m record, weak 135M bet. Branch `exp/emb-factor-depth`. |
 
+## Planned (own folders, drafted, not yet issues)
+- **RMSNorm micro-tweaks** → [research-plans/rmsnorm-tweaks/plan.md](research-plans/rmsnorm-tweaks/plan.md)
+- **Query / W_Q micro-tweaks** → [research-plans/query-tweaks/plan.md](research-plans/query-tweaks/plan.md)
+- **Tied output MLP vs. embedding residual** → [research-plans/tied-output-mlp/plan.md](research-plans/tied-output-mlp/plan.md) — structural boundary coupling (tied autoencoder MLP) vs. #20's layer-by-layer `x0` injection; head-to-head + stack test
+
 ## Explicitly excluded (objective-specific or tuning)
 - Test-time training (TTT, Legal/Phased/Score-First) — adapts on the eval stream; we score frozen weights
 - Quantization: GPTQ/AWQ/QAT, int6/int7/FP8, ternary/binary, GPTQ-embeddings — wins a byte-size budget we don't have
