@@ -55,7 +55,14 @@ class DataConfig:
     # Sequence processing
     seq_length: int = 512
     # stride: removed (unused)
-    
+
+    # Data / sequence-packing lever (D1, see docs/research/data_packing/plan.md).
+    # When True, the loader emits a per-token `doc_id` column marking which
+    # document each token came from. Default False = byte-identical to the
+    # implicit-doc-pack baseline (group_texts still concatenates and chunks
+    # at seq_length; this flag only adds the boundary info column).
+    use_doc_pack: bool = False
+
     # Limits
     num_samples: Optional[int] = None  # Limit number of documents
     
@@ -102,7 +109,11 @@ class DataConfig:
             raise TypeError(f"seq_length must be an integer, got {type(self.seq_length).__name__}")
         if self.seq_length <= 0:
             raise ValueError(f"seq_length must be positive, got {self.seq_length}")
-        
+
+        # Validate use_doc_pack
+        if not isinstance(self.use_doc_pack, bool):
+            raise TypeError(f"use_doc_pack must be a bool, got {type(self.use_doc_pack).__name__}")
+
         # Validate num_samples
         if self.num_samples is not None:
             if not isinstance(self.num_samples, int):

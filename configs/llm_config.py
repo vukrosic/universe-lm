@@ -145,6 +145,15 @@ class LLMConfig:
     # through the tanh. Real arch change — known stabilizer that
     # can change the loss landscape and unlock better minima.
     logit_softcap: float = 0.0
+    # OH4 OutputTemp (OutputHead Batch 2 — see docs/research/output_head/plan.md):
+    # divides logits by a learnable scalar τ. τ=1 init = no-op at step 0.
+    # 1-D parameter, routes to AdamW. Logit op — flows into eval CE legitimately.
+    use_output_temp: bool = False
+    # OH5 VocabBias (OutputHead Batch 2 — see docs/research/output_head/plan.md):
+    # adds a learnable per-vocab bias b_v to the logits (logits += b_v). b=0
+    # init = no-op at step 0. 1-D parameter of size vocab_size, routes to AdamW.
+    # Logit op — flows into eval CE legitimately. Re-learns token frequency.
+    use_vocab_bias: bool = False
     # #72 Tied QK (PaLM-style): Q and K share the same projection
     # matrix. The merged QK is shape [q_size + kv_size, d_model],
     # output is split into Q (q_size) and K (kv_size). Real arch
@@ -1537,3 +1546,169 @@ class Full135M2700MConfig(LLMConfig):
     n_kv_heads: int = 3       # 3:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 2_700_000_000  # ~20x params (Chinchilla-optimal)
+
+
+# ============================================================================
+# Query-tweaks plan — 29 Screen10M20M<Name>Config recipes (Batches 1-6).
+# See docs/research-plans/query-tweaks/plan.md and manifest.md.
+# ============================================================================
+
+# ---- Batch 1: high-signal levers (Q1-Q4) ----
+
+@dataclass
+class Screen10M20MAlibiBiasConfig(Screen10M20MConfig):
+    """Q1 — ALiBi-style per-head distance bias. scores += -m_h·(i-j)."""
+    use_alibi_bias: bool = True
+
+@dataclass
+class Screen10M20MQTempTokenConfig(Screen10M20MConfig):
+    """Q2 — Token-conditioned per-head Q temperature. Q *= (1 + tanh(x·w_h))."""
+    use_q_temp_token: bool = True
+
+@dataclass
+class Screen10M20MCosineAttnConfig(Screen10M20MConfig):
+    """Q3 — Cosine attention. L2-normalize Q,K; per-head learnable τ."""
+    use_cosine_attn: bool = True
+
+@dataclass
+class Screen10M20MQKBilinearConfig(Screen10M20MConfig):
+    """Q4 — Per-channel relevance. score = Q^T diag(d_h) K (d_h init 1)."""
+    use_qk_bilinear: bool = True
+
+# ---- Batch 2: flagship + positional (Q5-Q7) ----
+
+@dataclass
+class Screen10M20MTalkingHeadsQConfig(Screen10M20MConfig):
+    """Q5 — Talking-heads on Q. learned n_h×n_h M on attention logits pre-softmax."""
+    use_talking_heads_q: bool = True
+
+@dataclass
+class Screen10M20MPerHeadRopeBaseConfig(Screen10M20MConfig):
+    """Q6 — Per-head learnable RoPE base. θ_h init = global base."""
+    use_per_head_rope_base: bool = True
+
+@dataclass
+class Screen10M20MPartialRotaryConfig(Screen10M20MConfig):
+    """Q7 — Partial rotary. Rotate only 50% of Q/K dims."""
+    partial_rotary_p: float = 0.5
+
+# ---- Batch 3: exotic (Q8-Q10) ----
+
+@dataclass
+class Screen10M20MQExpansionConfig(Screen10M20MConfig):
+    """Q8 — Multi-query expansion. Q += W·x (zero-init W; step-0 baseline)."""
+    use_q_expansion: bool = True
+
+@dataclass
+class Screen10M20MDecoupledContentPosConfig(Screen10M20MConfig):
+    """Q9 — Decoupled content/position attention (DeBERTa-style)."""
+    use_decoupled_content_pos: bool = True
+
+@dataclass
+class Screen10M20MAntisymQKConfig(Screen10M20MConfig):
+    """Q10 — Antisymmetric Q·K coupling. +Q^T S K with skew S (init 0)."""
+    use_antisym_qk: bool = True
+
+# ---- Batch 4: query-norm zoo (Q11-Q16) ----
+
+@dataclass
+class Screen10M20MNormPNormConfig(Screen10M20MConfig):
+    """Q11 — Q-side pnorm p=1.5 (Lp norm, outlier-robust)."""
+    q_norm_type: str = "pnorm1.5"
+
+@dataclass
+class Screen10M20MNormClipConfig(Screen10M20MConfig):
+    """Q12 — Q-side Winsorized RMSNorm (clip k=3)."""
+    q_norm_type: str = "clipnorm3"
+
+@dataclass
+class Screen10M20MNormChannelScaleConfig(Screen10M20MConfig):
+    """Q13 — Q-side ChannelScale (learnable pre-scale)."""
+    q_norm_type: str = "channelscale"
+
+@dataclass
+class Screen10M20MNormManhattanConfig(Screen10M20MConfig):
+    """Q14 — Q-side Manhattan (L1 MAD) norm."""
+    q_norm_type: str = "manhattan"
+
+@dataclass
+class Screen10M20MNormCenterConfig(Screen10M20MConfig):
+    """Q15 — Q-side Center norm (mean-only, no variance)."""
+    q_norm_type: str = "center"
+
+@dataclass
+class Screen10M20MNormNoneConfig(Screen10M20MConfig):
+    """Q16 — Q-side norm disabled. K still normed."""
+    q_norm_type: str = "none"
+
+# ---- Batch 5: learnable-param zoo (Q17-Q23) ----
+
+@dataclass
+class Screen10M20MQPerHeadBiasConfig(Screen10M20MConfig):
+    """Q17 — Per-head bias. Q += b_h (per-head×channel) post-RoPE."""
+    use_q_per_head_bias: bool = True
+
+@dataclass
+class Screen10M20MQPerChannelGainConfig(Screen10M20MConfig):
+    """Q18 — Per-channel gain. Q *= g_d post-RoPE."""
+    use_q_per_channel_gain: bool = True
+
+@dataclass
+class Screen10M20MQHDGainConfig(Screen10M20MConfig):
+    """Q19 — Head×channel gain. Q *= g_hd post-RoPE."""
+    use_q_hd_gain: bool = True
+
+@dataclass
+class Screen10M20MQNormGateConfig(Screen10M20MConfig):
+    """Q20 — Norm-gate. per-head scalar σ(a_h·‖x‖+b_h) on Q."""
+    use_q_norm_gate: bool = True
+
+@dataclass
+class Screen10M20MQLowRankRefineConfig(Screen10M20MConfig):
+    """Q21 — Low-rank refine. Q += (W1·x)@W2 (zero-init)."""
+    use_q_lowrank_refine: bool = True
+
+@dataclass
+class Screen10M20MQLayerScaleConfig(Screen10M20MConfig):
+    """Q22 — LayerScale on Q. Q *= (1 + ls_d) per-channel post-RoPE."""
+    use_q_layerscale: bool = True
+
+@dataclass
+class Screen10M20MQSoftplusGainConfig(Screen10M20MConfig):
+    """Q23 — Softplus gain. Q *= softplus(g_h) per-head — always ≥ 0."""
+    use_q_softplus_gain: bool = True
+
+# ---- Batch 6: architecture/mixing (Q24-Q29) ----
+
+@dataclass
+class Screen10M20MQHeadMixConfig(Screen10M20MConfig):
+    """Q24 — Head-mix. Q ← Q + Q @ M (M−I init 0) pre-attention."""
+    use_q_head_mix: bool = True
+
+@dataclass
+class Screen10M20MQTimeConvConfig(Screen10M20MConfig):
+    """Q25 — Time-conv. 1D conv k=3 over position axis, zero-init."""
+    use_q_time_conv: bool = True
+
+@dataclass
+class Screen10M20MQEMASmoothConfig(Screen10M20MConfig):
+    """Q26 — EMA-smooth over position. Q ← α·Q + (1−α)·Q_{t-1}."""
+    use_q_ema_smooth: bool = True
+
+@dataclass
+class Screen10M20MQFeatureMapConfig(Screen10M20MConfig):
+    """Q27 — Feature-map attention. NOT identity-init — needs own control."""
+    use_q_feature_map: bool = True
+
+@dataclass
+class Screen10M20MQPerTokenRopeConfig(Screen10M20MConfig):
+    """Q28 — Per-token RoPE. Each token's θ via small MLP on x."""
+    use_q_per_token_rope: bool = True
+
+@dataclass
+class Screen10M20MQNoiseRegConfig(Screen10M20MConfig):
+    """Q29 — Noise reg. Q += N(0, σ²) training only (learnable σ)."""
+    use_q_noise_reg: bool = True
+
+
+# =====================================================================

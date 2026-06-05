@@ -177,10 +177,190 @@ _NORM_REGISTRY = {
 }
 
 
+class RMSNorm(nn.Module):
+    """RMSNorm with a family of cheap, mostly identity-init levers
+    (docs/research/rmsnorm/plan.md). Base op: y = g · x / √(mean(x²) + eps).
+
+    Default kwargs == plain learnable RMSNorm (per-channel `weight`, init 1) so
+    existing configs/checkpoints are byte-identical. Each lever below adds ONE
+    param or ONE free trick; all are no-ops at their init value (so step-0 == the
+    plain-RMSNorm baseline) except the ones flagged `# own control`.
+
+    Levers (one `norm_type` string each, parsed in `make_norm`):
+      N1 reparam_gain  g = 1 + g0           (g0=0)
+      N2 bias          + b                  (b=0, d_model)
+      N3 temp          / τ                  (τ=1 scalar)
+      N4 partial_mix   + λ·x                 (λ=0 scalar)
+      N5 floor         √(mean+eps+c²)        (c=0 scalar)
+      N6 gain_init     weight init 0.5       (# own control)
+      N7 softplus_gain g = softplus(w)       (w≈0.5413 → g≈1)
+      N8 partial_vec   + λ⊙x                 (λ=0 vector)
+      N9 groups        per-group rms         (~identity)
+      N10 stopgrad     detach(rms)
+      N11 asym         g₊ / g₋ by sign       (both 1)
+      N12 clamp_a      g ∈ [1−a, 1+a]
+      N14 learnable_eps eps is a param       (init eps)
+      N15 dyntanh      g·tanh(α·x), no stats (# own control)
+      N16 double_norm  rms(rms(x))
+      N17 centermix    (x − μ·x̄)/rms         (μ=0 scalar; RMS↔LayerNorm knob)
+    """
+    def __init__(self, dim: int, eps: float = 1e-6, use_reparam_gain: bool = False,
+                 use_bias: bool = False, use_temp: bool = False,
+                 use_partial_mix: bool = False, use_partial_vec: bool = False,
+                 use_floor: bool = False, gain_init: float = 1.0,
+                 use_softplus_gain: bool = False, groups: int = 0,
+                 stopgrad: bool = False, use_asym: bool = False,
+                 clamp_a: float = 0.0, learnable_eps: bool = False,
+                 use_dyntanh: bool = False, double_norm: bool = False,
+                 use_centermix: bool = False):
+        super().__init__()
+        self.eps = eps
+        self.use_reparam_gain = use_reparam_gain
+        self.use_softplus_gain = use_softplus_gain
+        self.use_asym = use_asym
+        self.use_bias = use_bias
+        self.use_temp = use_temp
+        self.use_partial_mix = use_partial_mix
+        self.use_partial_vec = use_partial_vec
+        self.use_floor = use_floor
+        self.groups = groups
+        self.stopgrad = stopgrad
+        self.clamp_a = clamp_a
+        self.learnable_eps = learnable_eps
+        self.use_dyntanh = use_dyntanh
+        self.double_norm = double_norm
+        self.use_centermix = use_centermix
+
+        # ---- gain parameterization (mutually exclusive) ----
+        if use_asym:  # N11: separate gain for x>0 and x<=0
+            self.g_pos = nn.Parameter(torch.ones(dim))
+            self.g_neg = nn.Parameter(torch.ones(dim))
+        elif use_softplus_gain:  # N7: g = softplus(w), w s.t. g≈1
+            w0 = float(torch.log(torch.expm1(torch.tensor(1.0))))  # ≈0.5413
+            self.weight = nn.Parameter(torch.full((dim,), w0))
+        elif use_reparam_gain:  # N1: g = 1 + g0
+            self.g0 = nn.Parameter(torch.zeros(dim))
+        else:  # standard / N6 scaled init
+            self.weight = nn.Parameter(torch.full((dim,), float(gain_init)))
+
+        # ---- extra per-lever params (identity-init) ----
+        if use_bias:
+            self.bias = nn.Parameter(torch.zeros(dim))          # N2
+        if use_temp:
+            self.log_tau = nn.Parameter(torch.zeros(1))         # N3, τ=exp(0)=1
+        if use_partial_mix:
+            self.mix_lambda = nn.Parameter(torch.zeros(1))      # N4
+        if use_partial_vec:
+            self.mix_lambda_vec = nn.Parameter(torch.zeros(dim))  # N8
+        if use_floor:
+            self.floor_c = nn.Parameter(torch.zeros(1))         # N5
+        if learnable_eps:
+            self.eps_param = nn.Parameter(torch.tensor(float(eps)))  # N14
+        if use_dyntanh:
+            self.dyt_alpha = nn.Parameter(torch.ones(1))        # N15
+        if use_centermix:
+            self.center_mu = nn.Parameter(torch.zeros(1))       # N17
+
+    def _gain(self, x):
+        if self.use_asym:
+            g = torch.where(x > 0, self.g_pos, self.g_neg)
+        elif self.use_softplus_gain:
+            g = F.softplus(self.weight)
+        elif self.use_reparam_gain:
+            g = 1.0 + self.g0
+        else:
+            g = self.weight
+        if self.clamp_a > 0:  # N12
+            g = g.clamp(1.0 - self.clamp_a, 1.0 + self.clamp_a)
+        return g
+
+    def _rms(self, x):
+        eps = self.eps_param.clamp_min(0.0) if self.learnable_eps else self.eps
+        ms = x.pow(2).mean(dim=-1, keepdim=True)
+        if self.use_floor:
+            ms = ms + self.floor_c.pow(2)
+        rms = torch.sqrt(ms + eps)
+        if self.stopgrad:
+            rms = rms.detach()
+        return rms
+
+    def forward(self, x):
+        if self.use_dyntanh:  # N15: normless elementwise op (own control)
+            return self._gain(x) * torch.tanh(self.dyt_alpha * x)
+
+        num = x
+        if self.use_centermix:  # N17: continuous RMS→LayerNorm
+            num = x - self.center_mu * x.mean(dim=-1, keepdim=True)
+
+        if self.groups and self.groups > 1:  # N9: per-group rms
+            *lead, d = x.shape
+            g = self.groups
+            xg = num.reshape(*lead, g, d // g)
+            rms = torch.sqrt(xg.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            if self.stopgrad:
+                rms = rms.detach()
+            x_norm = (xg / rms).reshape(*lead, d)
+        else:
+            rms = self._rms(x)
+            x_norm = num / rms
+            if self.double_norm:  # N16: normalize twice
+                rms2 = torch.sqrt(x_norm.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+                x_norm = x_norm / rms2
+
+        if self.use_temp:  # N3
+            x_norm = x_norm / torch.exp(self.log_tau)
+
+        y = self._gain(x) * x_norm
+        if self.use_partial_mix:  # N4
+            y = y + self.mix_lambda * x
+        if self.use_partial_vec:  # N8
+            y = y + self.mix_lambda_vec * x
+        if self.use_bias:  # N2
+            y = y + self.bias
+        return y
+
+
 def make_norm(dim: int, norm_type: str = "rmsnorm", use_layernorm: bool = False):
     """Factory for residual-stream norms. Custom names win; otherwise fall back
-    to LayerNorm (if use_layernorm) or RMSNorm."""
+    to LayerNorm (if use_layernorm) or RMSNorm. The string suffix
+    "rmsnorm_reparam_gain" activates the N1 lever on the new RMSNorm."""
     nt = (norm_type or "rmsnorm").lower()
+    # RMSNorm lever family (docs/research/rmsnorm/plan.md): "rmsnorm_<lever>"
+    # strings map to RMSNorm kwargs. Each is identity-init unless flagged.
+    rms_kw = {}
+    if nt.startswith("rmsnorm_"):
+        lever = nt[len("rmsnorm_"):]
+        _RMS_LEVERS = {
+            "reparam_gain": dict(use_reparam_gain=True),     # N1
+            "bias": dict(use_bias=True),                     # N2
+            "temp": dict(use_temp=True),                     # N3
+            "partial_mix": dict(use_partial_mix=True),       # N4
+            "floor": dict(use_floor=True),                   # N5
+            "scaled_init": dict(gain_init=0.5),              # N6 (own control)
+            "softplus_gain": dict(use_softplus_gain=True),   # N7
+            "partial_vec": dict(use_partial_vec=True),       # N8
+            "stopgrad": dict(stopgrad=True),                 # N10
+            "asym": dict(use_asym=True),                     # N11
+            "learnable_eps": dict(learnable_eps=True),       # N14
+            "dyntanh": dict(use_dyntanh=True),               # N15 (own control)
+            "double": dict(double_norm=True),                # N16
+            "centermix": dict(use_centermix=True),           # N17
+        }
+        if lever in _RMS_LEVERS:
+            rms_kw = _RMS_LEVERS[lever]
+            nt = "rmsnorm"
+        elif lever.startswith("group"):  # N9: rmsnorm_group<G>
+            try:
+                rms_kw = dict(groups=int(lever[len("group"):]))
+            except ValueError:
+                rms_kw = dict(groups=4)
+            nt = "rmsnorm"
+        elif lever.startswith("clamp"):  # N12: rmsnorm_clamp<a*100>, e.g. clamp50→a=0.5
+            try:
+                rms_kw = dict(clamp_a=float(lever[len("clamp"):]) / 100.0)
+            except ValueError:
+                rms_kw = dict(clamp_a=0.5)
+            nt = "rmsnorm"
     if nt.startswith("pnorm"):
         try:
             p = float(nt[len("pnorm"):])
@@ -197,6 +377,10 @@ def make_norm(dim: int, norm_type: str = "rmsnorm", use_layernorm: bool = False)
         return _NORM_REGISTRY[nt](dim)
     if nt == "layernorm" or use_layernorm:
         return nn.LayerNorm(dim, elementwise_affine=True)
+    if nt == "rmsnorm":
+        # Custom RMSNorm with optional lever kwargs. With rms_kw empty it is
+        # mathematically equivalent to nn.RMSNorm (state_dict 'weight' key).
+        return RMSNorm(dim, **rms_kw)
     return nn.RMSNorm(dim)
 
 
@@ -269,6 +453,16 @@ class MultiHeadAttention(nn.Module):
         use_q_per_token_rope: bool = False,
         q_per_token_rope_hidden: int = 32,
         use_q_noise_reg: bool = False,
+        # O1 TalkingHeadsOut (docs/research/attention_output/plan.md,
+        # Batch 1). Cross-head mix on the *post-softmax* attention
+        # output (sibling of Q5 talking_heads_q, but on the output
+        # side of softmax). M init I → einsum is a no-op at step 0.
+        use_talking_heads_out: bool = False,
+        # O-family: a single cheap op on the post-softmax attention output
+        # [B,H,T,D] (pre head-merge). One string selects the lever; params are
+        # built in _init_output_op and applied at the [B,H,T,D] choke point.
+        # See docs/research/attention_output/plan.md.
+        out_op: str = "",
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -586,14 +780,14 @@ class MultiHeadAttention(nn.Module):
             self.q_expand = nn.Parameter(torch.zeros(q_size, d_model))
         # Q9 Decoupled content/position attention (DeBERTa-style).
         # Two small projections (content + position), both zero-init so
-        # step-0 is exact baseline. Cost: 2 × (d_model × r + r × d_k).
+        # step-0 is exact baseline. Cost: 2 × (d_model × r + r × q_size).
         self.use_decoupled_content_pos = use_decoupled_content_pos
         if use_decoupled_content_pos:
             r = max(8, self.d_k // 2)
             self.dcp_qc = nn.Parameter(torch.zeros(r, d_model))
-            self.dcp_kc = nn.Parameter(torch.zeros(self.d_k, r))
+            self.dcp_kc = nn.Parameter(torch.zeros(q_size, r))
             self.dcp_qp = nn.Parameter(torch.zeros(r, d_model))
-            self.dcp_kp = nn.Parameter(torch.zeros(self.d_k, r))
+            self.dcp_kp = nn.Parameter(torch.zeros(q_size, r))
         # Q10 Antisymmetric Q·K coupling. add Q^T S K, S skew-init 0.
         # S is stored as a full d_k×d_k; we enforce skew in forward.
         self.use_antisym_qk = use_antisym_qk
@@ -657,11 +851,13 @@ class MultiHeadAttention(nn.Module):
                 torch.zeros(self.n_heads, self.n_heads)
             )
         # Q25 Time-conv. 1D conv k=3 over position axis, zero-init.
+        # Depthwise: each d_k channel has its own 1-in/1-out conv.
         self.use_q_time_conv = use_q_time_conv
         if use_q_time_conv:
-            # depthwise over (heads × d_k) channels → simple 1D conv.
+            # weight shape [out_channels, in_channels/groups, kernel]
+            # = [D, 1, 3] with groups=D below.
             self.q_time_conv_w = nn.Parameter(
-                torch.zeros(self.d_k, 1, 3)  # [out, in/groups, k]
+                torch.zeros(self.d_k, 1, 3)
             )
             self.q_time_conv_b = nn.Parameter(torch.zeros(self.d_k))
         # Q26 EMA-smooth over position. Q ← α·Q + (1−α)·Q_prev.
@@ -698,6 +894,203 @@ class MultiHeadAttention(nn.Module):
         self.use_q_noise_reg = use_q_noise_reg
         if use_q_noise_reg:
             self.q_noise_log = nn.Parameter(torch.tensor(-10.0))
+        # O1 TalkingHeadsOut (docs/research/attention_output/plan.md,
+        # Batch 1). Cross-head mix on the *post-softmax* attention
+        # output (sibling of Q5 talking_heads_q, but on the output
+        # side of softmax). M init I → einsum is a no-op at step 0.
+        self.use_talking_heads_out = use_talking_heads_out
+        if use_talking_heads_out:
+            self.talking_heads_out_M = nn.Parameter(
+                torch.eye(self.n_heads, self.n_heads)
+            )
+        self._init_output_op(out_op)
+
+    def _init_output_op(self, out_op: str):
+        """Build params for the selected post-softmax output lever (O-family).
+        attn_out is [B, H, T, D]. Every lever is identity-init unless its name
+        is in the 'own control' set (saturating/normalizing ops). See
+        docs/research/attention_output/plan.md."""
+        self.out_op = out_op or ""
+        H, D = self.n_heads, self.d_k
+        if out_op == "head_gate":            # O2: per-head gain, init 1
+            self.o_head_gate = nn.Parameter(torch.ones(H))
+        elif out_op == "head_gate_reparam":  # O2': *(1+g), g=0
+            self.o_head_gate = nn.Parameter(torch.zeros(H))
+        elif out_op == "head_gate_sigmoid":  # bounded gate 2σ(s), s=0→1
+            self.o_head_gate = nn.Parameter(torch.zeros(H))
+        elif out_op == "head_gate_softplus": # g=softplus(w)≈1
+            w0 = float(torch.log(torch.expm1(torch.tensor(1.0))))
+            self.o_head_gate = nn.Parameter(torch.full((H,), w0))
+        elif out_op == "head_gate_clamp":    # g=clamp(g,0,2), init 1
+            self.o_head_gate = nn.Parameter(torch.ones(H))
+        elif out_op == "head_temp":          # O3': divide by τ_h, init 1
+            self.o_head_temp = nn.Parameter(torch.ones(H))
+        elif out_op == "per_hd_gain":        # gain over (H,D), init 1
+            self.o_hd_gain = nn.Parameter(torch.ones(H, D))
+        elif out_op == "out_layerscale":     # per-channel D gain, init 1
+            self.o_chan_gain = nn.Parameter(torch.ones(D))
+        elif out_op == "out_scale":          # single global scalar, init 1
+            self.o_scale = nn.Parameter(torch.ones(1))
+        elif out_op == "out_bias":           # O6: per-head bias, init 0
+            self.o_head_bias = nn.Parameter(torch.zeros(H, 1))
+        elif out_op == "out_bias_channel":   # per-(H,D) bias, init 0
+            self.o_hd_bias = nn.Parameter(torch.zeros(H, D))
+        elif out_op == "head_affine":        # a_h·out + b_h, a=1,b=0
+            self.o_head_gate = nn.Parameter(torch.ones(H))
+            self.o_head_bias = nn.Parameter(torch.zeros(H, 1))
+        elif out_op == "per_hd_affine":      # G(H,D)·out + b(H,D)
+            self.o_hd_gain = nn.Parameter(torch.ones(H, D))
+            self.o_hd_bias = nn.Parameter(torch.zeros(H, D))
+        elif out_op == "headmix_reparam":    # M=I+Δ cross-head, Δ=0
+            self.o_headmix = nn.Parameter(torch.zeros(H, H))
+        elif out_op == "headmix_lowrank1":   # M=I+u vᵀ, u,v=0
+            self.o_mix_u = nn.Parameter(torch.zeros(H))
+            self.o_mix_v = nn.Parameter(torch.zeros(H))
+        elif out_op == "headmix_lowrank2":   # M=I+U Vᵀ rank 2, U,V=0
+            self.o_mix_U = nn.Parameter(torch.zeros(H, 2))
+            self.o_mix_V = nn.Parameter(torch.zeros(H, 2))
+        elif out_op == "out_tanh":           # tanh(α·out), α=1 (own control)
+            self.o_alpha = nn.Parameter(torch.ones(1))
+        elif out_op == "out_rms":            # rms over D + gain(H,D) (own control)
+            self.o_hd_gain = nn.Parameter(torch.ones(H, D))
+        elif out_op == "out_l2norm":         # unit per head + gain(H) (own control)
+            self.o_head_gate = nn.Parameter(torch.ones(H))
+        # parameter-free own-control ops need no params:
+        #   out_softplus, out_gelu, out_swish, out_signed_sqrt,
+        #   out_softcap30, out_clamp10, out_center,
+        #   out_dropout10/20, head_dropout10
+
+    def _apply_output_op(self, attn_output):
+        """Apply the selected O-family op to attn_output [B, H, T, D]."""
+        op = getattr(self, "out_op", "")
+        if not op:
+            return attn_output
+        a = attn_output
+        if op == "head_gate":
+            return a * self.o_head_gate.view(1, -1, 1, 1)
+        if op == "head_gate_reparam":
+            return a * (1.0 + self.o_head_gate.view(1, -1, 1, 1))
+        if op == "head_gate_sigmoid":
+            return a * (2.0 * torch.sigmoid(self.o_head_gate)).view(1, -1, 1, 1)
+        if op == "head_gate_softplus":
+            return a * F.softplus(self.o_head_gate).view(1, -1, 1, 1)
+        if op == "head_gate_clamp":
+            return a * self.o_head_gate.clamp(0.0, 2.0).view(1, -1, 1, 1)
+        if op == "head_temp":
+            return a / self.o_head_temp.view(1, -1, 1, 1)
+        if op == "per_hd_gain":
+            return a * self.o_hd_gain.view(1, self.n_heads, 1, self.d_k)
+        if op == "out_layerscale":
+            return a * self.o_chan_gain.view(1, 1, 1, -1)
+        if op == "out_scale":
+            return a * self.o_scale
+        if op == "out_bias":
+            return a + self.o_head_bias.view(1, self.n_heads, 1, 1)
+        if op == "out_bias_channel":
+            return a + self.o_hd_bias.view(1, self.n_heads, 1, self.d_k)
+        if op == "head_affine":
+            return a * self.o_head_gate.view(1, -1, 1, 1) + self.o_head_bias.view(1, self.n_heads, 1, 1)
+        if op == "per_hd_affine":
+            g = self.o_hd_gain.view(1, self.n_heads, 1, self.d_k)
+            b = self.o_hd_bias.view(1, self.n_heads, 1, self.d_k)
+            return a * g + b
+        if op == "headmix_reparam":
+            M = torch.eye(self.n_heads, device=a.device, dtype=a.dtype) + self.o_headmix
+            return torch.einsum("bhtd,hH->bHtd", a, M)
+        if op == "headmix_lowrank1":
+            M = torch.eye(self.n_heads, device=a.device, dtype=a.dtype) + torch.outer(self.o_mix_u, self.o_mix_v)
+            return torch.einsum("bhtd,hH->bHtd", a, M)
+        if op == "headmix_lowrank2":
+            M = torch.eye(self.n_heads, device=a.device, dtype=a.dtype) + self.o_mix_U @ self.o_mix_V.t()
+            return torch.einsum("bhtd,hH->bHtd", a, M)
+        if op == "out_tanh":
+            return torch.tanh(self.o_alpha * a)
+        if op == "out_softplus":
+            return F.softplus(a)
+        if op == "out_gelu":
+            return F.gelu(a)
+        if op == "out_swish":
+            return F.silu(a)
+        if op == "out_signed_sqrt":
+            return torch.sign(a) * torch.sqrt(a.abs() + 1e-6)
+        if op == "out_softcap30":
+            return 30.0 * torch.tanh(a / 30.0)
+        if op == "out_clamp10":
+            return a.clamp(-10.0, 10.0)
+        if op == "out_center":
+            return a - a.mean(dim=-1, keepdim=True)
+        if op == "out_rms":
+            rms = torch.sqrt(a.pow(2).mean(dim=-1, keepdim=True) + 1e-6)
+            return (a / rms) * self.o_hd_gain.view(1, self.n_heads, 1, self.d_k)
+        if op == "out_l2norm":
+            n = a.norm(dim=-1, keepdim=True) + 1e-6
+            return (a / n) * self.o_head_gate.view(1, -1, 1, 1)
+        if op == "out_dropout10":
+            return F.dropout(a, p=0.1, training=self.training)
+        if op == "out_dropout20":
+            return F.dropout(a, p=0.2, training=self.training)
+        if op == "head_dropout10":
+            if not self.training:
+                return a
+            keep = (torch.rand(a.size(0), self.n_heads, 1, 1, device=a.device) > 0.1).to(a.dtype)
+            return a * keep / 0.9
+        return a
+
+    def _manual_rope(self, Q, K, seq_len):
+        """Apply RoPE with per-head / per-token / partial support.
+
+        Used by Q6 (per-head base), Q7 (partial rotary), and Q28
+        (per-token rope). Q, K are in [B, H, T, D] layout (the
+        layout used in the manual attention branch). Returns the
+        same [B, H, T, D] layout.
+        """
+        device = Q.device
+        d_k = self.d_k
+        # Build frequency spectrum for the GLOBAL rope_base.
+        idx = torch.arange(0, d_k, 2, device=device, dtype=torch.float32)
+        inv_freq = 1.0 / (self.rope_base ** (idx / d_k))  # [d_k/2]
+        # Per-head frequency multiplier.
+        if self.use_per_head_rope_base:
+            head_scale = torch.exp(self.per_head_rope_log)  # [H]
+        else:
+            head_scale = torch.ones(self.n_heads, device=device)
+        # Per-token frequency multiplier (Q28). Computed earlier in
+        # [B, T, H]; transpose to [B, H, T] for our layout.
+        if self._per_token_rope_log is not None:
+            tok_scale = torch.exp(self._per_token_rope_log).permute(0, 2, 1)
+        else:
+            tok_scale = None
+        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        # Build freqs in [B, H, T, d_k/2].
+        # outer: position t × inv_freq → [T, d_k/2]
+        # multiply by head_scale[h] per head → [H, T, d_k/2]
+        # then expand to B.
+        freqs = t[None, None, :, None] * inv_freq[None, None, None, :]  # [1, 1, T, d_k/2]
+        freqs = freqs * head_scale[None, :, None, None]  # [1, H, T, d_k/2]
+        freqs = freqs.expand(Q.size(0), -1, -1, -1).contiguous()
+        if tok_scale is not None:
+            # tok_scale: [B, H, T]. Multiply along T.
+            freqs = freqs * tok_scale.unsqueeze(-1)
+        # cos/sin shape [B, H, T, d_k/2] → interleave to [B, H, T, d_k].
+        cos_h = freqs.cos()
+        sin_h = freqs.sin()
+        cos = torch.repeat_interleave(cos_h, 2, dim=-1)
+        sin = torch.repeat_interleave(sin_h, 2, dim=-1)
+        # Partial rotary: zero out the unrotated dims.
+        if self.partial_rotary_p < 1.0:
+            keep = int(self.partial_rotary_p * d_k)
+            mask = torch.zeros(d_k, device=device)
+            mask[:keep] = 1.0
+            cos = cos * mask
+            sin = sin * mask
+        # Apply RoPE: x_rot = x * cos + rotate_half(x) * sin
+        def rotate_half(x):
+            x1 = x[..., 0::2]
+            x2 = x[..., 1::2]
+            return torch.stack([-x2, x1], dim=-1).reshape(*x.shape)
+        Qr = Q * cos + rotate_half(Q) * sin
+        Kr = K * cos + rotate_half(K) * sin
+        return Qr, Kr
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -859,10 +1252,14 @@ class MultiHeadAttention(nn.Module):
             # Q: [B, T, H, D]. M: [H, H]. Result: [B, T, H, D] = Q @ M.
             Q = Q + torch.einsum("bthd,he->bted", Q, self.q_head_mix)
         # Q25 Time-conv. 1D conv k=3 over position axis, zero-init.
+        # Depthwise over (B*H) batches, d_k groups.
         if self.use_q_time_conv:
             # Q: [B, T, H, D] -> [B*H, D, T] for conv1d over T.
             qc = Q.permute(0, 2, 3, 1).reshape(-1, self.d_k, seq_len)
-            qc = qc + F.conv1d(qc, self.q_time_conv_w, self.q_time_conv_b, padding=1)
+            qc = qc + F.conv1d(
+                qc, self.q_time_conv_w, self.q_time_conv_b,
+                padding=1, groups=self.d_k,
+            )
             Q = qc.reshape(batch_size, self.n_heads, self.d_k, seq_len).permute(0, 3, 1, 2)
         # Q26 EMA-smooth over position. Q ← α·Q + (1−α)·Q_{t-1}.
         if self.use_q_ema_smooth:
@@ -897,7 +1294,120 @@ class MultiHeadAttention(nn.Module):
         # #51 sliding-window: when enabled, use a [T, T] causal-local
         # boolean mask instead of SDPA's `is_causal=True` fast path.
         # The mask is broadcast across batch and head dims.
-        if self.use_diff_attn:
+        # ---- Query-tweaks: manual-attention branch for score-side mods ----
+        # When any of {alibi, cosine, qk_bilinear, talking_heads_q,
+        # decoupled_content_pos, antisym_qk, q_feature_map} is on, we
+        # need a manual path (Q@K.T + bias → mask → softmax → @V).
+        # We also use this path for {per_head_rope_base, partial_rotary,
+        # per_token_rope} since the standard Rotary module doesn't support
+        # per-head / per-token frequencies.
+        # The O1 talking_heads_out lever (docs/research/attention_output/)
+        # lives on the OUTPUT side of softmax (post-matmul(attn_w, V)),
+        # so it also forces the manual path.
+        if (
+            self.use_alibi_bias or self.use_cosine_attn
+            or self.use_qk_bilinear or self.use_talking_heads_q
+            or self.use_decoupled_content_pos or self.use_antisym_qk
+            or self.use_q_feature_map or self.use_per_head_rope_base
+            or self.partial_rotary_p < 1.0
+            or (self._per_token_rope_log is not None)
+            or self.use_talking_heads_out
+        ):
+            # Q, K, V are already in [B, H, T, D] from the earlier
+            # transpose at line 951 — no further transpose needed.
+            # Build the causal mask (and combine with SWA if needed).
+            ar = torch.arange(seq_len, device=Q.device)
+            causal = ar[None, :] <= ar[:, None]  # [T, T]
+            if self.use_sliding_window:
+                window = self._sliding_window_mask[:seq_len, :seq_len]
+            else:
+                window = causal
+            # ---- Manual RoPE (per-head base / partial / per-token) ----
+            if (
+                self.use_per_head_rope_base
+                or self.partial_rotary_p < 1.0
+                or (self._per_token_rope_log is not None)
+            ):
+                Q, K = self._manual_rope(Q, K, seq_len)
+            # ---- Q3 Cosine attention: L2-normalize Q, K ----
+            if self.use_cosine_attn:
+                Qn = Q / (Q.norm(dim=-1, keepdim=True) + 1e-6)
+                Kn = K / (K.norm(dim=-1, keepdim=True) + 1e-6)
+            else:
+                Qn, Kn = Q, K
+            # ---- Base scores ----
+            # Standard QK^T / sqrt(d_k). SDPA-style "scale" math.
+            scale = 1.0 / (float(self.d_k) ** 0.5)
+            scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # ---- Q3 per-head τ: multiply by τ_h (Q3 only — different
+            # from Q1 alibi which is a constant prior) ----
+            if self.use_cosine_attn:
+                tau = self.cosine_tau.view(1, self.n_heads, 1, 1)
+                scores = scores * tau
+            # ---- Q4 Per-channel relevance: score = Q^T diag(d_h) K ----
+            if self.use_qk_bilinear:
+                # d_h has shape [H, D]. Broadcast over [B, T].
+                d_h = self.qk_bilinear_d.view(1, self.n_heads, 1, self.d_k)
+                # Qn * d_h: [B,H,T,D] * [1,H,1,D] → [B,H,T,D]
+                Qn_d = Qn * d_h
+                scores = torch.matmul(Qn_d, Kn.transpose(-1, -2)) * scale
+            # ---- Q1 ALiBi bias: scores += -m_h · (i - j) per head ----
+            if self.use_alibi_bias:
+                diff = ar[None, :].float() - ar[:, None].float()  # [T, T]
+                m = self.alibi_slope.view(1, self.n_heads, 1, 1)
+                scores = scores - m * diff.view(1, 1, seq_len, seq_len)
+            # ---- Q10 Antisymmetric Q·K coupling: +Q^T S K, S skew ----
+            if self.use_antisym_qk:
+                # Enforce skew: S = (raw - raw.T) / 2.
+                S = 0.5 * (self.antisym_S - self.antisym_S.t())
+                # Q, K: [B, H, T, D]. Scores: [B, H, T, T].
+                # antisym: Q[b,h,t,:] @ S @ K[b,h,s,:]
+                # = (Q @ S)[b,h,t,:] · K[b,h,s,:]
+                QS = torch.matmul(Q, S)
+                extra = torch.matmul(QS, K.transpose(-1, -2))
+                scores = scores + extra
+            # ---- Q9 Decoupled content + position (DeBERTa-style) ----
+            if self.use_decoupled_content_pos:
+                # Q_c, K_c: bottleneck r → q_size (one d_k per head).
+                # Both zero-init => step-0 contribution is 0.
+                Qc = F.linear(F.linear(x, self.dcp_qc), self.dcp_kc)  # [B, T, q_size]
+                Kc = F.linear(F.linear(x, self.dcp_qc), self.dcp_kc)
+                Qc = Qc.reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+                Kc = Kc.reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+                # Position stream: same shape, separate zero-init projections.
+                Qp = F.linear(F.linear(x, self.dcp_qp), self.dcp_kp)
+                Kp = F.linear(F.linear(x, self.dcp_qp), self.dcp_kp)
+                Qp = Qp.reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+                Kp = Kp.reshape(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+                pos = torch.matmul(Qp, Kp.transpose(-1, -2))  # zero-init => 0 at step 0
+                scores = scores + pos
+            # ---- Q27 Feature-map attention: phi(Q) phi(K)^T ----
+            if self.use_q_feature_map:
+                Qp = self.q_fm_phi(Q)
+                Kp = self.q_fm_phi(K)
+                scores = torch.matmul(Qp, Kp.transpose(-1, -2)) * scale
+            # ---- Mask (causal / SWA) ----
+            scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
+            # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
+            if self.use_talking_heads_q:
+                # scores: [B, H, T, T]. M: [H, H]. Mix over H only.
+                # out[b, h_new, t, s] = sum_h M[h_new, h] * scores[b, h, t, s]
+                scores = torch.einsum(
+                    "bhst,hH->bHst", scores, self.talking_heads_M
+                )
+            # Softmax
+            attn_w = torch.softmax(scores, dim=-1)
+            attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
+            attn_output = torch.matmul(attn_w, V)
+            # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
+            # output. Sibling of Q5 (which mixes *scores* pre-softmax).
+            # attn_output: [B, H, T, D]. M: [H, H]. M init I → no-op
+            # at step 0. See docs/research/attention_output/plan.md.
+            if self.use_talking_heads_out:
+                attn_output = torch.einsum(
+                    "bhtd,hH->bHtd", attn_output, self.talking_heads_out_M
+                )
+        elif self.use_diff_attn:
             # #87 Differential Attention: two sub-attentions on the split
             # head_dim, combined as a1 - lambda * a2 (SDPA is linear in V).
             d_half = self.d_k // 2
@@ -1020,7 +1530,10 @@ class MultiHeadAttention(nn.Module):
         if self.use_attn_output_gate:
             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
             attn_output = attn_output * gate
-        
+        # O-family: cheap op on the post-softmax output [B,H,T,D] (pre-merge),
+        # applied for every attention branch. No-op when out_op == "".
+        attn_output = self._apply_output_op(attn_output)
+
         # Reshape output
         attn_output = attn_output.transpose(1, 2).reshape(
             batch_size, seq_len, self.d_model
@@ -1053,6 +1566,8 @@ class TransformerBlock(nn.Module):
         ffn_variant: str = "squared_relu",
         use_embed_residual: bool = False,
         use_attn_output_gate: bool = False,
+        use_talking_heads_out: bool = False,
+        out_op: str = "",
         use_layerscale: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
@@ -1086,6 +1601,46 @@ class TransformerBlock(nn.Module):
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
+        # R1 ReZero: per-sublayer scalar gate x = x + α·f(x), α=0 init.
+        # Replaces the baseline residual add; lever is the *learning* of α.
+        # 2 params/block (one for attention, one for FFN).
+        use_re_zero: bool = False,
+        # Residual-stream lever family (docs/research/residual_stream/plan.md):
+        # one cheap scalar/vector knob on the residual add `x = a·x + g·f(x)`.
+        # One string selects the lever; params are built in _init_resid and
+        # applied via _resid_add in the pre-norm forward. n_layers feeds the
+        # DeepNorm-style fixed-scale levers.
+        resid_mode: str = "",
+        n_layers: int = 1,
+        # Query-tweaks (29 experiments). Pass-through to MHA.
+        q_norm_type: str = "rmsnorm",
+        use_alibi_bias: bool = False,
+        use_q_temp_token: bool = False,
+        use_cosine_attn: bool = False,
+        use_qk_bilinear: bool = False,
+        use_talking_heads_q: bool = False,
+        use_per_head_rope_base: bool = False,
+        partial_rotary_p: float = 1.0,
+        use_q_expansion: bool = False,
+        use_decoupled_content_pos: bool = False,
+        use_antisym_qk: bool = False,
+        use_q_per_head_bias: bool = False,
+        use_q_per_channel_gain: bool = False,
+        use_q_hd_gain: bool = False,
+        use_q_norm_gate: bool = False,
+        use_q_lowrank_refine: bool = False,
+        q_lowrank_refine_rank: int = 8,
+        use_q_layerscale: bool = False,
+        use_q_softplus_gain: bool = False,
+        use_q_head_mix: bool = False,
+        use_q_time_conv: bool = False,
+        use_q_ema_smooth: bool = False,
+        q_ema_alpha: float = 0.0,
+        use_q_feature_map: bool = False,
+        q_feature_map_hidden: int = 64,
+        use_q_per_token_rope: bool = False,
+        q_per_token_rope_hidden: int = 32,
+        use_q_noise_reg: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -1105,6 +1660,8 @@ class TransformerBlock(nn.Module):
             dropout,
             n_kv_heads,
             use_attn_output_gate=use_attn_output_gate,
+            use_talking_heads_out=use_talking_heads_out,
+            out_op=out_op,
             use_value_embed=use_value_embed,
             use_query_embed=use_query_embed,
             use_key_embed=use_key_embed,
@@ -1132,6 +1689,35 @@ class TransformerBlock(nn.Module):
             use_attn_sink=use_attn_sink,
             qk_norm_type=qk_norm_type,
             v_norm_type=v_norm_type,
+            # Query-tweaks pass-through.
+            q_norm_type=q_norm_type,
+            use_alibi_bias=use_alibi_bias,
+            use_q_temp_token=use_q_temp_token,
+            use_cosine_attn=use_cosine_attn,
+            use_qk_bilinear=use_qk_bilinear,
+            use_talking_heads_q=use_talking_heads_q,
+            use_per_head_rope_base=use_per_head_rope_base,
+            partial_rotary_p=partial_rotary_p,
+            use_q_expansion=use_q_expansion,
+            use_decoupled_content_pos=use_decoupled_content_pos,
+            use_antisym_qk=use_antisym_qk,
+            use_q_per_head_bias=use_q_per_head_bias,
+            use_q_per_channel_gain=use_q_per_channel_gain,
+            use_q_hd_gain=use_q_hd_gain,
+            use_q_norm_gate=use_q_norm_gate,
+            use_q_lowrank_refine=use_q_lowrank_refine,
+            q_lowrank_refine_rank=q_lowrank_refine_rank,
+            use_q_layerscale=use_q_layerscale,
+            use_q_softplus_gain=use_q_softplus_gain,
+            use_q_head_mix=use_q_head_mix,
+            use_q_time_conv=use_q_time_conv,
+            use_q_ema_smooth=use_q_ema_smooth,
+            q_ema_alpha=q_ema_alpha,
+            use_q_feature_map=use_q_feature_map,
+            q_feature_map_hidden=q_feature_map_hidden,
+            use_q_per_token_rope=use_q_per_token_rope,
+            q_per_token_rope_hidden=q_per_token_rope_hidden,
+            use_q_noise_reg=use_q_noise_reg,
             value_embed_rank=value_embed_rank,
         )
         if ffn_variant == "squared_relu":
@@ -1160,6 +1746,14 @@ class TransformerBlock(nn.Module):
         if self.use_layerscale:
             self.attn_layerscale = nn.Parameter(torch.zeros(d_model))
             self.ffn_layerscale = nn.Parameter(torch.zeros(d_model))
+        # R1 ReZero: one α per sublayer, zero-init (no-op at step 0).
+        # Mirrors the use_layerscale wiring: declared as nn.Parameter
+        # scalars so they get routed to AdamW by the optimizer setup.
+        self.use_re_zero = use_re_zero
+        if self.use_re_zero:
+            self.re_zero_alpha_attn = nn.Parameter(torch.zeros(1))
+            self.re_zero_alpha_ffn = nn.Parameter(torch.zeros(1))
+        self._init_resid(resid_mode, d_model, n_layers)
         # #47 FFN embeddings: add a learned projection of the factorized
         # token embedding to the FFN input. Different position from
         # V-embed (#29, inside attention) and O-embed (#33, post-O).
@@ -1172,6 +1766,129 @@ class TransformerBlock(nn.Module):
             self.ffn_embed_proj = nn.Parameter(
                 torch.zeros(d_model, value_embed_rank)
             )
+
+    def _init_resid(self, resid_mode: str, d_model: int, n_layers: int):
+        """Build params for the selected residual-add lever. Each sublayer
+        ('attn'/'ffn') gets its own params unless the mode is shared. Identity
+        at init unless the mode name implies a fixed/const scale (own control).
+        See docs/research/residual_stream/plan.md."""
+        self.resid_mode = resid_mode or ""
+        if not self.resid_mode:
+            return
+        m = self.resid_mode
+        sub = ["attn", "ffn"]
+
+        def P(name, tensor):
+            setattr(self, f"_rs_{name}", nn.Parameter(tensor))
+
+        if m == "rezero_shared":            # one α=0, shared by both adds
+            P("alpha", torch.zeros(1))
+        elif m in ("fixed_half", "fixed_sqrt2", "fixed_deepnorm",
+                   "input_scale_half", "ema_resid", "convex_half",
+                   "branch_dropout05", "branch_dropout10",
+                   "stoch_depth10", "stoch_depth20"):
+            pass  # parameter-free (fixed scales / stochastic)
+        else:
+            for s in sub:
+                if m == "rezero_vec":
+                    P(f"alpha_{s}", torch.zeros(d_model))
+                elif m == "rezero_init_one":
+                    P(f"alpha_{s}", torch.ones(1))
+                elif m == "rezero_init_half":
+                    P(f"alpha_{s}", torch.full((1,), 0.5))
+                elif m == "branch_gain":
+                    P(f"g_{s}", torch.ones(1))
+                elif m == "branch_gain_vec":
+                    P(f"g_{s}", torch.ones(d_model))
+                elif m == "input_scale":
+                    P(f"a_{s}", torch.ones(1))
+                elif m == "input_scale_vec":
+                    P(f"a_{s}", torch.ones(d_model))
+                elif m == "resid_mix":
+                    P(f"a_{s}", torch.ones(1)); P(f"g_{s}", torch.ones(1))
+                elif m == "resid_mix_vec":
+                    P(f"a_{s}", torch.ones(d_model)); P(f"g_{s}", torch.ones(d_model))
+                elif m == "highway_sigmoid":
+                    P(f"s_{s}", torch.zeros(1))          # 2σ(0)=1
+                elif m == "tanh_gate":
+                    P(f"s_{s}", torch.zeros(1))          # 1+tanh(0)=1
+                elif m == "softplus_gate":
+                    w0 = float(torch.log(torch.expm1(torch.tensor(1.0))))
+                    P(f"s_{s}", torch.full((1,), w0))    # softplus≈1
+                elif m == "clamp_gate":
+                    P(f"g_{s}", torch.ones(1))
+                elif m == "double_gate":
+                    P(f"g1_{s}", torch.ones(1)); P(f"g2_{s}", torch.ones(1))
+                elif m == "attn_only_rezero" and s == "attn":
+                    P("alpha_attn", torch.zeros(1))
+                elif m == "ffn_only_rezero" and s == "ffn":
+                    P("alpha_ffn", torch.zeros(1))
+                elif m == "attn_only_gain" and s == "attn":
+                    P("g_attn", torch.ones(d_model))
+                elif m == "ffn_only_gain" and s == "ffn":
+                    P("g_ffn", torch.ones(d_model))
+        # fixed DeepNorm constant (same for every layer): 1/√(2·n_layers)
+        self._resid_deepnorm = (2.0 * max(1, n_layers)) ** -0.5
+
+    def _resid_add(self, x, f, which):
+        """x = a·x + g·f for the selected lever (`which` ∈ {attn, ffn})."""
+        m = self.resid_mode
+        g = lambda n: getattr(self, f"_rs_{n}_{which}", None)
+        if m == "rezero_shared":
+            return x + self._rs_alpha * f
+        if m in ("rezero_vec", "rezero_init_one", "rezero_init_half"):
+            a = g("alpha")
+            return x + (a if a is not None else 0.0) * f
+        if m in ("attn_only_rezero", "ffn_only_rezero"):
+            a = getattr(self, f"_rs_alpha_{which}", None)
+            return x + f if a is None else x + a * f
+        if m == "branch_gain":
+            return x + g("g") * f
+        if m == "branch_gain_vec":
+            return x + g("g") * f
+        if m in ("attn_only_gain", "ffn_only_gain"):
+            gg = getattr(self, f"_rs_g_{which}", None)
+            return x + f if gg is None else x + gg * f
+        if m in ("input_scale", "input_scale_vec"):
+            return g("a") * x + f
+        if m in ("resid_mix", "resid_mix_vec"):
+            return g("a") * x + g("g") * f
+        if m == "highway_sigmoid":
+            return x + (2.0 * torch.sigmoid(g("s"))) * f
+        if m == "tanh_gate":
+            return x + (1.0 + torch.tanh(g("s"))) * f
+        if m == "softplus_gate":
+            return x + F.softplus(g("s")) * f
+        if m == "clamp_gate":
+            return x + g("g").clamp(0.0, 2.0) * f
+        if m == "double_gate":
+            return x + g("g2") * (g("g1") * f)
+        # ---- fixed / const (own control) ----
+        if m == "fixed_half":
+            return x + 0.5 * f
+        if m == "fixed_sqrt2":
+            return (2.0 ** -0.5) * x + (2.0 ** -0.5) * f
+        if m == "fixed_deepnorm":
+            return x + self._resid_deepnorm * f
+        if m == "input_scale_half":
+            return 0.5 * x + f
+        if m == "ema_resid":
+            return 0.9 * x + 0.1 * f
+        if m == "convex_half":
+            return 0.5 * x + 0.5 * f
+        # ---- stochastic regularizers (identity at eval) ----
+        if m == "branch_dropout05":
+            return x + F.dropout(f, p=0.05, training=self.training)
+        if m == "branch_dropout10":
+            return x + F.dropout(f, p=0.10, training=self.training)
+        if m in ("stoch_depth10", "stoch_depth20"):
+            p = 0.1 if m == "stoch_depth10" else 0.2
+            if not self.training:
+                return x + f
+            if torch.rand(()) < p:
+                return x
+            return x + f / (1.0 - p)
+        return x + f
 
     def forward(self, x, x0=None, ve=None):
         # Re-inject the original embedding before attention/MLP (#20)
@@ -1215,7 +1932,15 @@ class TransformerBlock(nn.Module):
             attn_out = self.attention(self.norm1(x), ve)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
-            x = x + self.dropout(attn_out)
+            # R1 ReZero (pre-norm branch): x = x + α·f(x). α=0 init ⇒
+            # zero contribution at step 0; lever is α's learning. Replaces
+            # the baseline add (x = x + dropout(attn_out)).
+            if self.use_re_zero:
+                x = x + self.re_zero_alpha_attn * self.dropout(attn_out)
+            elif self.resid_mode:
+                x = self._resid_add(x, self.dropout(attn_out), "attn")
+            else:
+                x = x + self.dropout(attn_out)
 
             ffn_in = self.norm2(x)
             if self.use_ffn_embed and ve is not None:
@@ -1223,5 +1948,11 @@ class TransformerBlock(nn.Module):
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
-            x = x + self.dropout(ff_out)
+            # R1 ReZero (pre-norm branch, FFN): same gate on the FFN add.
+            if self.use_re_zero:
+                x = x + self.re_zero_alpha_ffn * self.dropout(ff_out)
+            elif self.resid_mode:
+                x = self._resid_add(x, self.dropout(ff_out), "ffn")
+            else:
+                x = x + self.dropout(ff_out)
         return x

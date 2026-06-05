@@ -1,6 +1,8 @@
 # Query ablations — tutorial (SCAFFOLD — fill after experiments)
 
-> **Status: not written.** This is a placeholder. Do not publish until
+> **Status: code wired, runs pending, tutorial not written.** All Q1–Q29 levers are
+> implemented and launchable (see [experiments.md](experiments.md)), but **no runs
+> have landed**, so there are no numbers yet. Do not publish until
 > [results.md](results.md) has a clear story (a live win or an instructive null).
 > Follow the house style of
 > [../../../tutorials/qk_gain/README.md](../../../tutorials/qk_gain/README.md):

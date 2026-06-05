@@ -19,39 +19,52 @@ def _maybe_compile(fn):
 
 
 @_maybe_compile
-def zeropower_polar_express(G:torch.Tensor, steps: int = 5,):
-    """Polar express as replacement for Newton-Schulz iteration"""
+def zeropower_polar_express(G:torch.Tensor, steps: int = 5, coeffs_mode: str = "polar_express"):
+    """Orthogonalize a matrix via Newton-Schulz / Polar Express iteration.
+
+    coeffs_mode:
+        "polar_express" — modded-nanogpt 5-step schedule (default,
+            byte-identical to the original kernel).
+        "newton_schulz" — classic NS quintic; uses a single
+            (a, b, c) = (3.4445, -4.7750, 2.0315) at every step.
+    """
     assert G.ndim >= 2
-    assert steps <= len(coeffs_list)
+    if coeffs_mode == "polar_express":
+        assert steps <= len(coeffs_list)
+        coeffs = coeffs_list[:steps]
+    elif coeffs_mode == "newton_schulz":
+        ns_coeff = (3.4445, -4.7750, 2.0315)
+        coeffs = [ns_coeff] * steps
+    else:
+        raise ValueError(f"Unknown coeffs_mode: {coeffs_mode!r}")
 
     X = G.bfloat16()
     # X = G.half()
 
     transpose_needed = G.size(-2) > G.size(-1) # transposing if tall matrix
-    if transpose_needed: 
-        X = X.mT 
-    
+    if transpose_needed:
+        X = X.mT
+
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-7) # safety factor
-    
-    coeffs = coeffs_list[:steps]
+
     for a , b, c in coeffs:
-        A = X @ X.mT 
-        A2 = A @ A 
+        A = X @ X.mT
+        A2 = A @ A
         B = b * A + c * A2
         X = a * X + B @ X  # Right-multiplication for left polar factor
-    
-    if transpose_needed: 
-        X = X.mT 
-    
-    return X # orthogonalized 
+
+    if transpose_needed:
+        X = X.mT
+
+    return X # orthogonalized
 
 
 
 
 class Muon(torch.optim.Optimizer):
     """Muon - MomentUm Orthogonalized by Polar Express / Newton Schulz"""
-    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5):
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5, orthogonalize=True, coeffs_mode="polar_express", shape_scale=True, scale_mode="shape_aspect", adamw_lr=0.006, lazy_ortho_steps=1):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps, orthogonalize=orthogonalize, coeffs_mode=coeffs_mode, shape_scale=shape_scale, scale_mode=scale_mode, adamw_lr=adamw_lr, lazy_ortho_steps=lazy_ortho_steps)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -75,6 +88,57 @@ class Muon(torch.optim.Optimizer):
                 g = g.float()
                 buf.lerp_(g, 1 - group["momentum"])
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                g = zeropower_polar_express(g, steps=group["ns_steps"]) # steps are 5 for both ns and pe
+                # M13 lever — LazyOrtho: orthogonalize every N steps, reuse the
+                # cached polar-express output in between. With lazy_ortho_steps=1
+                # (default) the ortho re-runs every step — byte-identical to the
+                # pre-M13 baseline. With N>1 we cut the polar-express cost ~Nx;
+                # the momentum buffer is still updated every step, so the cached
+                # "old" orthogonalized g is applied to a "new" momentum buffer.
+                # The plan claims this is loss-neutral; speed lever. See
+                # docs/research/muon/plan.md (Batch 5).
+                if group["orthogonalize"]:
+                    if "ortho_step" not in state:
+                        state["ortho_step"] = -1
+                        state["cached_ortho_g"] = None
+                    state["ortho_step"] += 1
+                    if (
+                        state["cached_ortho_g"] is None
+                        or state["ortho_step"] % group["lazy_ortho_steps"] == 0
+                    ):
+                        g = zeropower_polar_express(g, steps=group["ns_steps"], coeffs_mode=group["coeffs_mode"]) # steps are 5 for both ns and pe
+                        state["cached_ortho_g"] = g
+                    else:
+                        g = state["cached_ortho_g"]
                 g = g.to(p.dtype)
-                p.add_(g.view_as(p), alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
+                # M5 lever — NoShapeScale: drop the max(1, fanout/fanin)**0.5 factor.
+                # When shape_scale=True (default) the scale is unchanged; when False,
+                # the update uses a flat lr. Changes effective step size → must sweep
+                # muon_lr. See docs/research/muon/plan.md, Batch 2.
+                #
+                # M6 lever — SpectralScale: under scale_mode="spectral" use the
+                # modded-nanogpt 0.2·sqrt(max(dims)) scale instead. A different
+                # principled update-norm target. Default scale_mode="shape_aspect"
+                # is byte-identical to the previous behavior. Also changes
+                # effective step size → must sweep muon_lr. See
+                # docs/research/muon/plan.md, Batch 2.
+                #
+                # M7 lever — RMSMatchScale: under scale_mode="rms_match" rescale
+                # the orthogonalized update g so its RMS equals AdamW's typical
+                # per-step RMS (≈ adamw_lr, since Adam normalizes the update by
+                # sqrt(v) ≈ 1). Makes Muon/AdamW steps commensurate — fairer LR
+                # coupling. Changes effective step size → must sweep muon_lr.
+                # See docs/research/muon/plan.md, Batch 2.
+                if not group["shape_scale"]:
+                    scale = 1.0
+                elif group["scale_mode"] == "shape_aspect":
+                    scale = max(1, p.size(-2) / p.size(-1)) ** 0.5
+                elif group["scale_mode"] == "spectral":
+                    scale = 0.2 * (max(p.size(-2), p.size(-1)) ** 0.5)
+                elif group["scale_mode"] == "rms_match":
+                    adamw_lr = group.get("adamw_lr", 0.006)
+                    g_flat = g.view_as(p)
+                    mu = g_flat.float().pow(2).mean().sqrt().clamp_min(1e-12)
+                    scale = adamw_lr / mu
+                else:
+                    raise ValueError(f"Unknown scale_mode: {group['scale_mode']!r}")
+                p.add_(g.view_as(p), alpha=-group["lr"] * scale)

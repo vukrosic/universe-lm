@@ -77,10 +77,46 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     adamw_params = []
 
     for name, param in model.named_parameters():
-        if (param.ndim == 2 and 
-            'token_embedding' not in name and 
-            'norm' not in name and 
-            param.requires_grad):
+        is_muon_candidate = (
+            param.ndim == 2
+            and 'token_embedding' not in name
+            and 'norm' not in name
+            and param.requires_grad
+        )
+        # R1 lever — MuonFor1DNorm: route 1-D norm params (e.g. `norm.weight`)
+        # to Muon instead of AdamW. Default off → step-0 identical to baseline.
+        # See docs/research/optimizer_routing/plan.md.
+        if (
+            getattr(config, "muon_for_1d_norm", False)
+            and param.ndim == 1
+            and 'norm' in name
+            and param.requires_grad
+        ):
+            is_muon_candidate = True
+        # R2 lever — MuonForEmbed: route `token_embedding` (and `emb_proj`,
+        # since they're related) to Muon instead of AdamW. The embedding is
+        # ~91% of params at vocab=50k — does it want orthogonalized updates?
+        # Default off → step-0 identical to baseline. See
+        # docs/research/optimizer_routing/plan.md.
+        if (
+            getattr(config, "muon_for_embed", False)
+            and ('token_embedding' in name or 'emb_proj' in name)
+            and param.ndim == 2
+            and param.requires_grad
+        ):
+            is_muon_candidate = True
+        # R3 lever — MuonForOutput: route the attention output projection
+        # (`out_proj` / `W_O`) to Muon instead of AdamW. The output projection
+        # is 2-D but might be deliberately kept in AdamW. Default off →
+        # step-0 identical to baseline. See docs/research/optimizer_routing/plan.md.
+        if (
+            getattr(config, "muon_for_output", False)
+            and 'out_proj' in name
+            and param.ndim == 2
+            and param.requires_grad
+        ):
+            is_muon_candidate = True
+        if is_muon_candidate:
             muon_params.append(param)
         else:
             adamw_params.append(param)
@@ -88,7 +124,19 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
     print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
 
-    muon_optimizer = Muon(muon_params, lr=config.muon_lr, momentum=config.muon_momentum)
+    muon_optimizer = Muon(
+        muon_params,
+        lr=config.muon_lr,
+        momentum=config.muon_momentum,
+        ns_steps=getattr(config, "muon_ns_steps", 5),
+        orthogonalize=getattr(config, "muon_orthogonalize", True),
+        coeffs_mode=getattr(config, "muon_coeffs_mode", "polar_express"),
+        shape_scale=getattr(config, "muon_shape_scale", True),
+        scale_mode=getattr(config, "muon_scale_mode", "shape_aspect"),
+        adamw_lr=getattr(config, "adamw_lr", 0.006),
+        nesterov=getattr(config, "muon_nesterov", True),
+        lazy_ortho_steps=getattr(config, "muon_lazy_ortho_steps", 1),
+    )
     device = resolve_device(getattr(config, "device", "auto"))
     adamw_optimizer = torch.optim.AdamW(
         adamw_params,
@@ -220,6 +268,34 @@ def train_model(
             # Count tokens in this batch (approx: batch_size * seq_len)
             batch_tokens = x.numel()
 
+            # A10 EntropyReg aux loss: collect stashed terms from every
+            # MultiHeadAttention that computed one this forward. Sum across
+            # layers; treat λ as a per-layer coefficient (tune for depth).
+            # Default (no flag set): no module sets _entropy_reg_loss, so
+            # this stays 0 and CE behavior is unchanged.
+            def _collect_entropy_reg(m):
+                total = next(m.parameters()).new_zeros(())
+                for block in m.transformer_blocks:
+                    term = getattr(block.attention, "_entropy_reg_loss", None)
+                    if term is not None:
+                        total = total + term
+                        del block.attention._entropy_reg_loss  # avoid double-count next step
+                return total
+
+            # OH1 ZLoss (output-head ablation #1): aux term = λ·mean(logsumexp(logits)²).
+            # Train-only; eval stays plain CE (see reporting rule in
+            # docs/research/output_head/plan.md). λ=0 → no-op. Uses
+            # getattr so the base LLMConfig is unchanged.
+            z_loss_lambda = getattr(config, "z_loss_lambda", 0.0)
+            use_z_loss = getattr(config, "use_z_loss", False) and z_loss_lambda > 0.0
+
+            # OH2 LabelSmooth (output-head ablation #2): CE with smoothing ε.
+            # Train-only; eval stays plain CE (see reporting rule in
+            # docs/research/output_head/plan.md). ε=0 → no-op (PyTorch treats
+            # 0.0 as no smoothing, but the conditional is cleaner and keeps
+            # the call site byte-identical when the flag is off / absent).
+            label_smooth = getattr(config, "label_smooth", 0.0)
+
             # Forward pass (optimized to avoid large contiguous copies of logits)
             if config.use_amp and device.type == "cuda":
                 with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -228,26 +304,73 @@ def train_model(
                     # We set the last token to -100 so cross_entropy ignores it
                     shift_labels = torch.full_like(y, -100)
                     shift_labels[:, :-1] = y[:, 1:]
-                    
+
                     ce_loss = F.cross_entropy(
                         logits.view(-1, config.vocab_size),
                         shift_labels.view(-1),
-                        ignore_index=-100
+                        ignore_index=-100,
+                        label_smoothing=label_smooth if label_smooth > 0 else 0.0,
                     )
-                    loss = ce_loss / config.gradient_accumulation_steps
+                    entropy_reg_loss = _collect_entropy_reg(model)
+                    z_loss = (
+                        z_loss_lambda * (logits.logsumexp(dim=-1) ** 2).mean()
+                        if use_z_loss
+                        else logits.new_zeros(())
+                    )
+                    # OH3 ConfPenalty (output-head ablation #3): aux term = -β·H(softmax(logits)).
+                    # Anti-overconfidence regularizer. Train-only; eval stays plain CE
+                    # (see reporting rule in docs/research/output_head/plan.md).
+                    # β=0 → no-op (zero scalar added). Uses getattr so the base
+                    # LLMConfig is unchanged.
+                    conf_penalty_beta = getattr(config, "conf_penalty_beta", 0.0)
+                    if conf_penalty_beta > 0:
+                        probs = logits.float().softmax(-1)
+                        ent = -(probs * probs.clamp_min(1e-9).log()).sum(-1).mean()
+                        conf_penalty = -conf_penalty_beta * ent
+                    else:
+                        conf_penalty = logits.new_zeros(())
+                    loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty) / config.gradient_accumulation_steps
                 loss.backward()
             else:
                 logits = model(x)
                 shift_labels = torch.full_like(y, -100)
                 shift_labels[:, :-1] = y[:, 1:]
-                
+
                 ce_loss = F.cross_entropy(
                     logits.view(-1, config.vocab_size),
                     shift_labels.view(-1),
-                    ignore_index=-100
+                    ignore_index=-100,
+                    label_smoothing=label_smooth if label_smooth > 0 else 0.0,
                 )
-                loss = ce_loss / config.gradient_accumulation_steps
+                entropy_reg_loss = _collect_entropy_reg(model)
+                z_loss = (
+                    z_loss_lambda * (logits.logsumexp(dim=-1) ** 2).mean()
+                    if use_z_loss
+                    else logits.new_zeros(())
+                )
+                # OH3 ConfPenalty (output-head ablation #3): aux term = -β·H(softmax(logits)).
+                # Anti-overconfidence regularizer. Train-only; eval stays plain CE
+                # (see reporting rule in docs/research/output_head/plan.md).
+                # β=0 → no-op (zero scalar added). Uses getattr so the base
+                # LLMConfig is unchanged.
+                conf_penalty_beta = getattr(config, "conf_penalty_beta", 0.0)
+                if conf_penalty_beta > 0:
+                    probs = logits.float().softmax(-1)
+                    ent = -(probs * probs.clamp_min(1e-9).log()).sum(-1).mean()
+                    conf_penalty = -conf_penalty_beta * ent
+                else:
+                    conf_penalty = logits.new_zeros(())
+                loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty) / config.gradient_accumulation_steps
                 loss.backward()
+
+            # Detach z-loss to a python float for logging only
+            z_loss_val = z_loss.detach().item()
+
+            # Detach entropy reg to a python float for logging only (graph no longer needed)
+            entropy_reg_val = entropy_reg_loss.detach().item()
+
+            # Detach conf penalty to a python float for logging only (graph no longer needed)
+            conf_penalty_val = conf_penalty.detach().item()
 
             # Optimizer step
             if (step + 1) % config.gradient_accumulation_steps == 0:
@@ -282,11 +405,13 @@ def train_model(
                     'step': f'{step}/{est_total_steps}',
                     'loss': f'{current_loss_val:.4f}',
                     'acc': f'{accuracy:.3f}',
+                    'ent': f'{entropy_reg_val:+.2e}',
+                    'cp': f'{conf_penalty_val:+.2e}',
                     'lr': f'{current_lr:.5f}'
                 })
                 # Console print for visibility
                 if step % (log_every * 10) == 0 or stopped_early:
-                    print(f" [Step {step}] Loss: {current_loss_val:.4f} | Acc: {accuracy:.3f} | LR: {current_lr:.6f}")
+                    print(f" [Step {step}] Loss: {current_loss_val:.4f} | EntReg: {entropy_reg_val:+.2e} | ConfPen: {conf_penalty_val:+.2e} | Acc: {accuracy:.3f} | LR: {current_lr:.6f}")
             
             pbar.update(batch_tokens)
             tokens_seen += batch_tokens
@@ -324,7 +449,7 @@ def train_model(
                     delta = eval_metrics['val_loss'] - baseline_loss
                     print(f"   Baseline@step {step}: {baseline_loss:.4f} | delta: {delta:+.4f}")
 
-                live_metrics = {**eval_metrics, 'train_loss': current_loss_val}
+                live_metrics = {**eval_metrics, 'train_loss': current_loss_val, 'train/conf_penalty_loss': conf_penalty_val}
                 write_live_metrics(live_metrics, step, tokens_seen)
                 if output_path:
                     save_training_checkpoint(

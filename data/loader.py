@@ -95,7 +95,7 @@ def tokenize_and_chunk(
         # Concatenate all sequences in this batch
         arrays = {k: np.concatenate(examples[k]) for k in examples.keys()}
         total = arrays["input_ids"].shape[0]
-        
+
         # Skip batches that are too small
         if total < block_size:
             logger.warning(
@@ -103,11 +103,28 @@ def tokenize_and_chunk(
                 f"Skipping this batch."
             )
             return {k: np.empty((0, block_size), dtype=arrays[k].dtype) for k in arrays.keys()}
-        
+
         # Drop partial block at the end
         trunc = (total // block_size) * block_size
         n = trunc // block_size
-        return {k: v[:trunc].reshape(n, block_size) for k, v in arrays.items()}
+        out = {k: v[:trunc].reshape(n, block_size) for k, v in arrays.items()}
+
+        # D1 DocPack lever (docs/research/data_packing/plan.md): when on, emit
+        # a per-token `doc_id` column marking which document each token came
+        # from. The baseline group_texts already concatenates documents
+        # (implicit doc pack); this flag only exposes the boundary info. With
+        # use_doc_pack=False (the default) this branch is skipped and the
+        # output dict is byte-identical to the original implementation.
+        if config.use_doc_pack:
+            per_doc_lengths = [len(arr) for arr in examples["input_ids"]]
+            # `offsets[i]` = number of tokens in docs 0..i-1. The doc that
+            # owns a global position p is the smallest i with offsets[i] > p.
+            offsets = np.cumsum(per_doc_lengths)
+            positions = np.arange(total)
+            doc_ids = np.searchsorted(offsets, positions, side="right")
+            out["doc_id"] = doc_ids[:trunc].reshape(n, block_size)
+
+        return out
 
     logger.info(f"Grouping texts into blocks of size {block_size}")
     if is_streaming:

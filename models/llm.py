@@ -7,6 +7,141 @@ from configs.llm_config import LLMConfig
 from models.layers import TransformerBlock, make_norm
 
 
+class TiedOutputMLP(nn.Module):
+    """B0 Tied output MLP — shared Wu/Wd, autoencoder-tied encode+decode.
+
+    encode:  h0 = x + Wd(act(Wu(x)))        (one FFN, run on the embedding)
+    decode:  z  = x + g * Wu^T(act(Wd^T(x))) (same Wu, Wd, transposed)
+
+    `g` (g_decode) is a learnable scalar (ReZero-style, init 0) so the
+    decode path is a no-op at step 0 — the model earns the additive
+    output path during training. Encode is NOT gated at init, so
+    step-0 embeddings differ from the baseline by the standard-init
+    `Wu·x` contribution. That's a known B0 design issue; flag it.
+
+    Net new params: 2 × d_model × d_ff (one FFN's worth of Wu + Wd),
+    both 2-D so they route to Muon under the existing rule.
+    """
+
+    def __init__(self, d_model: int, d_ff: int):
+        super().__init__()
+        # Wu: d_model -> d_ff (encode "up" / decode "down" via .t())
+        # Wd: d_ff -> d_model (encode "down" / decode "up" via .t())
+        self.Wu = nn.Linear(d_model, d_ff, bias=False)
+        self.Wd = nn.Linear(d_ff, d_model, bias=False)
+        self.activation = nn.GELU()
+        # ReZero scalar gate on the decode path: starts at 0, the optimizer
+        # grows it. Without this the decode path would perturb the output
+        # representation at step 0 (encode path still does, see class docstring).
+        self.g_decode = nn.Parameter(torch.zeros(1))
+
+    def encode(self, x_emb: torch.Tensor) -> torch.Tensor:
+        """Run once on the (scaled) embedding, before the block loop."""
+        return x_emb + self.Wd(self.activation(self.Wu(x_emb)))
+
+    def decode(self, x_norm: torch.Tensor) -> torch.Tensor:
+        """Run once after the final norm, before the tied unembed.
+
+        Uses the transposed Wu/Wd weights via F.linear so the encode and
+        decode paths share the same parameter tensors (tied autoencoder).
+        """
+        # Wd^T projects d_model -> d_ff (decode's "up")
+        # Wu^T projects d_ff -> d_model (decode's "down")
+        hidden = self.activation(F.linear(x_norm, self.Wd.weight.t()))
+        out = F.linear(hidden, self.Wu.weight.t())
+        return x_norm + self.g_decode * out
+
+
+class UntiedOutputMLP(nn.Module):
+    """B1 Untied output MLP — separate Wu/Wd for encode and decode.
+
+    Same shape as TiedOutputMLP, but the decode path uses fresh weights
+    (not the encode weights' transpose). Doubles the parameter cost vs
+    B0 (4 × d_model × d_ff instead of 2 × d_model × d_ff).
+
+    Control: isolates whether the *tying* matters. If B1 ≈ B0, tying is
+    free regularization; if B1 > B0, the constraint is a cost.
+
+    `g_decode` is a learnable scalar (ReZero-style, init 0) so the decode
+    path is a no-op at step 0. Encode is NOT gated at init (same B0
+    caveat): step-0 embeddings differ from the baseline by the
+    standard-init `Wu·x` contribution. Flag it.
+
+    Net new params: 4 × d_model × d_ff (two FFNs' worth of Wu + Wd),
+    all 2-D so they route to Muon under the existing rule.
+    """
+
+    def __init__(self, d_model: int, d_ff: int):
+        super().__init__()
+        # Encode path: same shape as B0's Wu/Wd.
+        self.Wu = nn.Linear(d_model, d_ff, bias=False)
+        self.Wd = nn.Linear(d_ff, d_model, bias=False)
+        # Decode path: separate fresh weights (no transpose, no sharing).
+        self.Wu_decode = nn.Linear(d_ff, d_model, bias=False)
+        self.Wd_decode = nn.Linear(d_model, d_ff, bias=False)
+        self.activation = nn.GELU()
+        # ReZero scalar gate on the decode path: starts at 0, the optimizer
+        # grows it. Encode path is also ungated at init (B0 caveat).
+        self.g_decode = nn.Parameter(torch.zeros(1))
+
+    def encode(self, x_emb: torch.Tensor) -> torch.Tensor:
+        """Run once on the (scaled) embedding, before the block loop."""
+        return x_emb + self.Wd(self.activation(self.Wu(x_emb)))
+
+    def decode(self, x_norm: torch.Tensor) -> torch.Tensor:
+        """Run once after the final norm, before the tied unembed.
+
+        Untied: separate decode weights (no transpose of encode weights).
+        """
+        hidden = self.activation(self.Wd_decode(x_norm))
+        out = self.Wu_decode(hidden)
+        return x_norm + self.g_decode * out
+
+
+class TiedLinearOutputMLP(nn.Module):
+    """B2 Tied linear output MLP — B0 with NO nonlinearity.
+
+    encode:  h0 = x + Wd(Wu(x))         (no activation between)
+    decode:  z  = x + g * Wu^T(Wd^T(x)) (no activation, same Wu, Wd, transposed)
+
+    Linear cousin of B0. The plan flags B2 as a sanity rung — it should
+    fold into the existing linear tied head (which is `x @ token_embedding.T`),
+    so we expect ≈ baseline. If B0 ≈ B2, the nonlinearity isn't doing work.
+
+    Same g_decode zero-init as B0. Net new params: 2·d_model·d_ff (one FFN),
+    both 2-D so they route to Muon under the existing rule.
+    """
+
+    def __init__(self, d_model: int, d_ff: int):
+        super().__init__()
+        # Wu: d_model -> d_ff (encode "up" / decode "down" via .t())
+        # Wd: d_ff -> d_model (encode "down" / decode "up" via .t())
+        self.Wu = nn.Linear(d_model, d_ff, bias=False)
+        self.Wd = nn.Linear(d_ff, d_model, bias=False)
+        # No activation — that's the B2 ablation.
+        # ReZero scalar gate on the decode path: starts at 0, the optimizer
+        # grows it. Decode is a no-op at step 0; encode is NOT gated at init
+        # (same B0 caveat).
+        self.g_decode = nn.Parameter(torch.zeros(1))
+
+    def encode(self, x_emb: torch.Tensor) -> torch.Tensor:
+        """Run once on the (scaled) embedding, before the block loop."""
+        return x_emb + self.Wd(self.Wu(x_emb))  # no activation
+
+    def decode(self, x_norm: torch.Tensor) -> torch.Tensor:
+        """Run once after the final norm, before the tied unembed.
+
+        Linear (no activation): Wu^T then Wd^T, shared with encode via
+        F.linear + weight transpose so both ends point at the same
+        parameter tensors (tied autoencoder, but linear).
+        """
+        # Wd^T projects d_model -> d_ff (decode's "up")
+        # Wu^T projects d_ff -> d_model (decode's "down")
+        hidden = F.linear(x_norm, self.Wd.weight.t())  # no activation
+        out = F.linear(hidden, self.Wu.weight.t())
+        return x_norm + self.g_decode * out
+
+
 class MinimalLLM(nn.Module):
     """Minimal dense LLM"""
 
@@ -136,6 +271,11 @@ class MinimalLLM(nn.Module):
                     ffn_variant=config.ffn_variant,
                     use_embed_residual=getattr(config, "use_embed_residual", False),
                     use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
+                    use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
+                    out_op=getattr(config, "out_op", ""),
+                    use_re_zero=getattr(config, "use_re_zero", False),
+                    resid_mode=getattr(config, "resid_mode", ""),
+                    n_layers=config.n_layers,
                     use_layerscale=getattr(config, "use_layerscale", False),
                     use_value_embed=self.use_value_embed,
                     use_query_embed=self.use_query_embed,
@@ -208,16 +348,72 @@ class MinimalLLM(nn.Module):
         if self.use_embed_residual:
             self.x0_norm = nn.RMSNorm(config.d_model)
 
+        # B0 Tied output MLP — see docs/research-plans/tied-output-mlp/plan.md.
+        # Autoencoder-tied shared Wu/Wd: encode runs once on the embedding,
+        # decode runs once after the final norm. One extra FFN's worth of
+        # params (2·d_model·d_ff), both 2-D so they go to Muon.
+        self.use_tied_output_mlp = getattr(config, "use_tied_output_mlp", False)
+        if self.use_tied_output_mlp:
+            self.tied_output_mlp = TiedOutputMLP(config.d_model, config.d_ff)
+
+        # B1 Untied output MLP — same shape as B0 but with separate decode
+        # weights. Control for B0: isolates whether the tying matters vs
+        # "just more output capacity." Costs 2× the params of B0
+        # (4·d_model·d_ff). Default off (getattr fallback) keeps the
+        # baseline byte-identical.
+        self.use_untied_output_mlp = getattr(config, "use_untied_output_mlp", False)
+        if self.use_untied_output_mlp:
+            self.untied_output_mlp = UntiedOutputMLP(config.d_model, config.d_ff)
+
+        # B2 Tied linear output MLP — B0 with NO nonlinearity. Sanity rung
+        # for B0: should fold into the existing linear tied head, so we
+        # expect ≈ baseline. Costs the same as B0 (2·d_model·d_ff).
+        # Default off (getattr fallback) keeps the baseline byte-identical.
+        self.use_tied_linear_output_mlp = getattr(
+            config, "use_tied_linear_output_mlp", False
+        )
+        if self.use_tied_linear_output_mlp:
+            self.tied_linear_output_mlp = TiedLinearOutputMLP(
+                config.d_model, config.d_ff
+            )
+
+        # OH4 OutputTemp: logits /= τ, learnable scalar (τ=1 init). 1-D param,
+        # routes to AdamW. τ=1 at init is an exact no-op, so step 0 == baseline.
+        # See docs/research/output_head/plan.md (Batch 2).
+        self.use_output_temp = getattr(config, "use_output_temp", False)
+        if self.use_output_temp:
+            self.output_temp_tau = nn.Parameter(torch.ones(1))
+        # OH5 VocabBias: logits += b_v, learnable per-vocab bias (b=0 init).
+        # 1-D param of size vocab_size, routes to AdamW. b=0 at init is an
+        # exact no-op, so step 0 == baseline. Logit op — flows into eval CE
+        # legitimately. See docs/research/output_head/plan.md (Batch 2).
+        self.use_vocab_bias = getattr(config, "use_vocab_bias", False)
+        if self.use_vocab_bias:
+            self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))
+
         # Output layers
         self.norm = make_norm(config.d_model, self.norm_type, self.use_layernorm)
         self.output_dropout = nn.Dropout(config.dropout)
+
+        # OH7 UntieHead (OutputHead Batch 3 — see docs/research/output_head/plan.md):
+        # separate lm_head weight from token_embedding. Costs vocab_size × d_model
+        # extra params (NOT budget-matched). Probe — is weight-tying load-bearing?
+        # Default off (getattr fallback) keeps the tied-head baseline byte-identical.
+        # Flag is read via getattr so it doesn't require editing llm_config.py.
+        self.use_untied_head = getattr(config, "use_untied_head", False)
 
         # Language modeling head (tied with embeddings).
         # Full case: standard tied Linear. Factorized case: lm_head is computed
         # functionally in forward() through the SAME two matrices, so input and
         # output embeddings stay tied with zero extra params.
         self.output_adapter_rank = getattr(config, "output_adapter_rank", None)
-        if self.emb_rank is None:
+        if self.use_untied_head:
+            # Untied head: independent [vocab, d_model] weight, same init scheme
+            # as token_embedding (normal std=0.02, matching _init_weights for
+            # nn.Embedding). 2-D param → routes to Muon under the existing rule.
+            self.lm_head = nn.Parameter(torch.empty(config.vocab_size, config.d_model))
+            torch.nn.init.normal_(self.lm_head, mean=0.0, std=0.02)
+        elif self.emb_rank is None:
             self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
             self.lm_head.weight = self.token_embedding.weight
         else:
@@ -269,6 +465,22 @@ class MinimalLLM(nn.Module):
             x = tok * emb_scale
         else:
             x = self.emb_proj(tok) * emb_scale
+        # B0 Tied output MLP: encode runs once on the (scaled) embedding,
+        # before the block loop. Modify the input to the stack by adding
+        # Wd·φ(Wu·x). See TiedOutputMLP docstring for step-0 caveat.
+        if self.use_tied_output_mlp:
+            x = self.tied_output_mlp.encode(x)
+        # B1 Untied output MLP: same shape as B0 but with separate decode
+        # weights. Encode path uses the same Wu/Wd pattern as B0 (no
+        # transpose here — the tying is on the decode side only). See
+        # UntiedOutputMLP docstring for the B0-shared step-0 caveat.
+        if self.use_untied_output_mlp:
+            x = self.untied_output_mlp.encode(x)
+        # B2 Tied linear output MLP: same encode pattern as B0 (Wu then Wd,
+        # no activation). See TiedLinearOutputMLP docstring for the
+        # B0-shared step-0 caveat.
+        if self.use_tied_linear_output_mlp:
+            x = self.tied_linear_output_mlp.encode(x)
         # #29 value-embed source: the raw token embedding, injected into each V
         # #30 query-embed source: same `tok` (raw embedding). Both Q-embed and
         # V-embed can read from the same source, so we only branch once.
@@ -298,8 +510,32 @@ class MinimalLLM(nn.Module):
 
         # Output projection
         x = self.norm(x)
+        # B0 Tied output MLP: decode runs after the final norm, before the
+        # output dropout and the tied unembed. g_decode=0 at init, so the
+        # decode path is a no-op at step 0 and the model earns it during
+        # training.
+        if self.use_tied_output_mlp:
+            x = self.tied_output_mlp.decode(x)
+        # B1 Untied output MLP: decode runs after the final norm, before
+        # the output dropout and the tied unembed. Same g_decode=0 init
+        # trick as B0 (decode is a no-op at step 0).
+        if self.use_untied_output_mlp:
+            x = self.untied_output_mlp.decode(x)
+        # B2 Tied linear output MLP: decode runs after the final norm,
+        # before the output dropout and the tied unembed. Same g_decode=0
+        # init trick as B0 (decode is a no-op at step 0).
+        if self.use_tied_linear_output_mlp:
+            x = self.tied_linear_output_mlp.decode(x)
         x = self.output_dropout(x)
-        if self.emb_rank is None:
+        # OH7 UntieHead: when on, use the independent [vocab, d_model] weight
+        # instead of the tied embedding table. In the factorized case
+        # (emb_rank is not None), the untied head uses the d_model-dimensional
+        # x directly, bypassing the emb_proj reduction (the untied head is
+        # full d_model → vocab, not r → vocab). See docs/research/output_head/plan.md
+        # (Batch 3). Default off = tied (byte-identical to baseline).
+        if self.use_untied_head:
+            logits = x @ self.lm_head.T
+        elif self.emb_rank is None:
             logits = self.lm_head(x)
         else:
             # Tied factorized head: d_model -> r (via emb_proj^T) -> vocab (via
@@ -314,5 +550,16 @@ class MinimalLLM(nn.Module):
         softcap = getattr(self.config, 'logit_softcap', 0.0)
         if softcap > 0.0:
             logits = softcap * torch.tanh(logits / softcap)
+
+        # OH4 OutputTemp: logits /= τ (τ=1 init = no-op). Logit op, so it
+        # flows into eval CE legitimately per the output_head plan's
+        # Reporting rule. See docs/research/output_head/plan.md (Batch 2).
+        if self.use_output_temp:
+            logits = logits / self.output_temp_tau
+        # OH5 VocabBias: logits += b_v (b=0 init = no-op). Logit op, so it
+        # flows into eval CE legitimately per the output_head plan's
+        # Reporting rule. See docs/research/output_head/plan.md (Batch 2).
+        if self.use_vocab_bias:
+            logits = logits + self.vocab_bias
 
         return logits

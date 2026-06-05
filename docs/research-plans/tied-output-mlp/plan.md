@@ -35,6 +35,20 @@ Rationale: a tied autoencoder forces `decode ∘ encode ≈ identity` on the emb
 
 ¹ #20 adds `x0` from step 0, so A and A+B0 are not exact baselines at init by construction.
 
+## Simple high-signal variants (C-series — run these first)
+
+The B-series above is the "real" mechanism but costs a full FFN. These C-variants are near-free (≤ d_model params), step-0 == baseline, and several have a strong prior to **beat baseline #0**. Cheapest-first; this is the order to actually run.
+
+| Variant | What | Extra params | Step-0 == base? | Conf | Expect win? | Why |
+|---|---|---|---|---|---|---|
+| C0 Output x0 inject | `logits = (norm(x) + γ·x0) @ E^T`, scalar γ=0 | +1 | yes | high | **yes** | The 1-param version of the whole question: a *single* boundary injection of the initial embedding vs. #20's per-layer one. If C0 ≈ A, the layer-by-layer cost of #20 is wasted. Dirt cheap, directly answers the research question. |
+| C2 Output bias | learnable per-token logit bias `b`, 0-init | +vocab | yes | high | **yes** | The bias weight-tying silently drops. Encodes the unigram/frequency prior directly into logits — a well-known early-loss win. Mirror of "RMSNorm + bias" in the norm plan. |
+| C1 Scalar-gated tied MLP | B0 but whole decode branch scaled by one scalar α=0 | +1 FFN +1 | yes | med-high | maybe | B0 with a single safety gate — lets the net dial the tied autoencoder in/out. Isolates "is the *direction* useful" from "is full-strength too much." |
+| C3 LayerScale decode | per-dim gate `s⊙decode(x)`, s=0 init | +d_model | yes | med | maybe | Per-channel version of C1. Decides which residual dims should listen to the embedding manifold. Same family as the shipped LayerScale (#21). |
+| C4 Cosine head + temp | unembed on L2-normed `x` and L2-normed `E` rows, learn scalar temp τ | +1 | no | med | maybe | Forces the prediction to be an *angle* on the embedding manifold — the strongest form of "output token ∈ embedding space." Not step-0-clean (norm changes geometry), so weaker transfer prior. |
+
+Run order: **C0 → C2 → C1 → C3** (all cheap, two expected wins), then the B-series, then C4 last.
+
 ## Implementation notes
 
 - New flag `use_tied_output_mlp: bool` (+ `untie_output_mlp`, `tied_output_mlp_linear` for B1/B2) on `LLMConfig`.
@@ -47,7 +61,7 @@ Rationale: a tied autoencoder forces `decode ∘ encode ≈ identity` on the emb
 ## Eval protocol (don't skip — Screen ≠ transfer)
 
 1. Baseline #0 number + seed count fixed first; reuse the standard Screen10M20M harness.
-2. Run A, B0, B1, B2, A+B0 at the **same** screen budget, ≥2 seeds each (the tweaks here are subtle; one seed is noise).
+2. Run the C-series first (C0, C2, C1, C3), then A, B0, B1, B2, A+B0, C4 at the **same** screen budget, ≥2 seeds each (the tweaks here are subtle; one seed is noise).
 3. Promotion gate: report Δnats **and** Δnats-per-extra-param vs baseline. B0 must beat A *per param* to be interesting, not just beat baseline.
 4. Transfer check: only promote a winner to a 25M confirm run; never ship on Screen alone (per the config docstrings' own warning).
 5. Kill conditions stated up front: B2 ≈ baseline (expected) → drop. B1 ≈ B0 → tying is free, keep tied form. A+B0 ≈ max(A,B0) → redundant prior, ship only the cheaper one.
