@@ -241,6 +241,73 @@ class LLMConfig:
     # can attend to, so it isn't forced to dump probability on a real token.
     use_attn_sink: bool = False
 
+    # ============================================================================
+    # Query-tweaks plan (29 experiments, 6 batches). All defaults are
+    # identity/zero-init so step-0 == baseline unless the flag is on.
+    # See docs/research-plans/query-tweaks/plan.md for the spec.
+    # ============================================================================
+
+    # q-side normalization (Q-only). Defaults to qk_norm_type at
+    # construction (see __post_init__) so existing configs are
+    # bit-identical. Sweep in Batch 4 (Q11-Q16) sets this directly.
+    q_norm_type: str = ""
+    # ---- Batch 1: high-signal levers ----
+    # Q1 ALiBi-style per-head distance bias `scores += -m_h·(i-j)`.
+    use_alibi_bias: bool = False
+    # Q2 Token-conditioned per-head temperature `Q *= (1+tanh(x·w_h))`.
+    use_q_temp_token: bool = False
+    # Q3 Cosine attention (L2-normalize Q,K; learnable per-head τ).
+    use_cosine_attn: bool = False
+    # Q4 Per-channel relevance `score = Q^T diag(d_h) K` (d_h init 1).
+    use_qk_bilinear: bool = False
+    # ---- Batch 2: flagship + positional ----
+    # Q5 Talking-heads on Q: logit-mix via learned n_h × n_h M (M=I init).
+    use_talking_heads_q: bool = False
+    # Q6 Per-head learnable RoPE base (Q and K share head h's θ).
+    use_per_head_rope_base: bool = False
+    # Q7 Partial rotary: rotate only fraction p of Q/K dims (default 1.0).
+    partial_rotary_p: float = 1.0
+    # ---- Batch 3: exotic ----
+    # Q8 Multi-query expansion: project Q to 2·q_size, 2 attention reads, mean.
+    use_q_expansion: bool = False
+    # Q9 Decoupled content/position attention (DeBERTa-style).
+    use_decoupled_content_pos: bool = False
+    # Q10 Antisymmetric Q·K coupling via learnable skew S (init 0).
+    use_antisym_qk: bool = False
+    # ---- Batch 5: learnable-param zoo ----
+    # Q17 Per-head bias `Q += b_h` after q_norm and RoPE (constant prior).
+    use_q_per_head_bias: bool = False
+    # Q18 Per-channel gain `Q *= g_d` (d_k) after RoPE.
+    use_q_per_channel_gain: bool = False
+    # Q19 Head×channel gain `Q *= g_hd` (n_h × d_k) after RoPE.
+    use_q_hd_gain: bool = False
+    # Q20 Norm-gate: per-head scalar `g_h = σ(a_h·‖x‖+b_h)` on Q.
+    use_q_norm_gate: bool = False
+    # Q21 Low-rank refine: `Q ← Q + (W1·x) @ W2` (zero-init, default r=8).
+    use_q_lowrank_refine: bool = False
+    q_lowrank_refine_rank: int = 8
+    # Q22 LayerScale on Q: `Q *= (1 + ls_d)` per-channel after RoPE.
+    use_q_layerscale: bool = False
+    # Q23 Softplus gain: `Q *= softplus(g_h)` per-head — always ≥ 0.
+    use_q_softplus_gain: bool = False
+    # ---- Batch 6: architecture / mixing ----
+    # Q24 Head-mix: `Q ← Q + Q @ M` (M=I init) pre-attention.
+    use_q_head_mix: bool = False
+    # Q25 Time-conv: `Q += conv1d(Q, k=3)` zero-init along position axis.
+    use_q_time_conv: bool = False
+    # Q26 EMA-smooth over position: `Q ← α·Q + (1−α)·Q_prev` (α=1 init).
+    use_q_ema_smooth: bool = False
+    q_ema_alpha: float = 0.0  # sigmoid'd; 0 → α=0.5 at init
+    # Q27 Feature-map attention: phi(Q) @ phi(K)^T with learnable phi.
+    # NOT identity-init — see plan.md note. Needs own control.
+    use_q_feature_map: bool = False
+    q_feature_map_hidden: int = 64
+    # Q28 Per-token RoPE: each token's θ via small MLP (default hidden=32).
+    use_q_per_token_rope: bool = False
+    q_per_token_rope_hidden: int = 32
+    # Q29 Noise reg: `Q += N(0, σ²)` in training only (learnable σ).
+    use_q_noise_reg: bool = False
+
     # Base Training Defaults
     seed: int = 42  # seeds model init AND data order; override via --seed
     device: str = "auto"  # auto, cuda, mps, or cpu
@@ -274,6 +341,11 @@ class LLMConfig:
     def __post_init__(self):
         self.d_k = self.d_model // self.n_heads
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
+        # Query-tweaks Batch 4 prereq wire: q_norm_type defaults to
+        # qk_norm_type so existing configs are bit-identical unless the
+        # Q-side norm is explicitly set (see plan.md Batch 4 note).
+        if not self.q_norm_type:
+            self.q_norm_type = self.qk_norm_type
 
     def active_flags(self) -> dict:
         """Return {field_name: value} for every field whose value differs

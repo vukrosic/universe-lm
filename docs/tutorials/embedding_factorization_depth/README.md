@@ -1,5 +1,7 @@
 # 1 Pretraining Trick That Broke My LLM Record
 
+🎥 **Video walkthrough:** https://youtu.be/cLYWgyUkvTk
+
 **Result:** validation loss **4.549 → 4.301** on a 10M-param model, 200M tokens, one consumer GPU. Same parameter budget — I just spent it differently.
 
 ---

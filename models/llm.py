@@ -70,6 +70,35 @@ class MinimalLLM(nn.Module):
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
         self.use_attn_sink = getattr(config, "use_attn_sink", False)
+        # Query-tweaks: 29 new flags (see docs/research-plans/query-tweaks/plan.md).
+        self.q_norm_type = getattr(config, "q_norm_type", self.qk_norm_type)
+        self.use_alibi_bias = getattr(config, "use_alibi_bias", False)
+        self.use_q_temp_token = getattr(config, "use_q_temp_token", False)
+        self.use_cosine_attn = getattr(config, "use_cosine_attn", False)
+        self.use_qk_bilinear = getattr(config, "use_qk_bilinear", False)
+        self.use_talking_heads_q = getattr(config, "use_talking_heads_q", False)
+        self.use_per_head_rope_base = getattr(config, "use_per_head_rope_base", False)
+        self.partial_rotary_p = getattr(config, "partial_rotary_p", 1.0)
+        self.use_q_expansion = getattr(config, "use_q_expansion", False)
+        self.use_decoupled_content_pos = getattr(config, "use_decoupled_content_pos", False)
+        self.use_antisym_qk = getattr(config, "use_antisym_qk", False)
+        self.use_q_per_head_bias = getattr(config, "use_q_per_head_bias", False)
+        self.use_q_per_channel_gain = getattr(config, "use_q_per_channel_gain", False)
+        self.use_q_hd_gain = getattr(config, "use_q_hd_gain", False)
+        self.use_q_norm_gate = getattr(config, "use_q_norm_gate", False)
+        self.use_q_lowrank_refine = getattr(config, "use_q_lowrank_refine", False)
+        self.q_lowrank_refine_rank = getattr(config, "q_lowrank_refine_rank", 8)
+        self.use_q_layerscale = getattr(config, "use_q_layerscale", False)
+        self.use_q_softplus_gain = getattr(config, "use_q_softplus_gain", False)
+        self.use_q_head_mix = getattr(config, "use_q_head_mix", False)
+        self.use_q_time_conv = getattr(config, "use_q_time_conv", False)
+        self.use_q_ema_smooth = getattr(config, "use_q_ema_smooth", False)
+        self.q_ema_alpha = getattr(config, "q_ema_alpha", 0.0)
+        self.use_q_feature_map = getattr(config, "use_q_feature_map", False)
+        self.q_feature_map_hidden = getattr(config, "q_feature_map_hidden", 64)
+        self.use_q_per_token_rope = getattr(config, "use_q_per_token_rope", False)
+        self.q_per_token_rope_hidden = getattr(config, "q_per_token_rope_hidden", 32)
+        self.use_q_noise_reg = getattr(config, "use_q_noise_reg", False)
         # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
         # group of N consecutive blocks shares weights. We create only
         # n_layers // N unique blocks and the forward pass cycles through
@@ -139,6 +168,34 @@ class MinimalLLM(nn.Module):
                     use_multiscale_heads=self.use_multiscale_heads,
                     use_parallel_block=self.use_parallel_block,
                     use_attn_sink=self.use_attn_sink,
+                    q_norm_type=self.q_norm_type,
+                    use_alibi_bias=self.use_alibi_bias,
+                    use_q_temp_token=self.use_q_temp_token,
+                    use_cosine_attn=self.use_cosine_attn,
+                    use_qk_bilinear=self.use_qk_bilinear,
+                    use_talking_heads_q=self.use_talking_heads_q,
+                    use_per_head_rope_base=self.use_per_head_rope_base,
+                    partial_rotary_p=self.partial_rotary_p,
+                    use_q_expansion=self.use_q_expansion,
+                    use_decoupled_content_pos=self.use_decoupled_content_pos,
+                    use_antisym_qk=self.use_antisym_qk,
+                    use_q_per_head_bias=self.use_q_per_head_bias,
+                    use_q_per_channel_gain=self.use_q_per_channel_gain,
+                    use_q_hd_gain=self.use_q_hd_gain,
+                    use_q_norm_gate=self.use_q_norm_gate,
+                    use_q_lowrank_refine=self.use_q_lowrank_refine,
+                    q_lowrank_refine_rank=self.q_lowrank_refine_rank,
+                    use_q_layerscale=self.use_q_layerscale,
+                    use_q_softplus_gain=self.use_q_softplus_gain,
+                    use_q_head_mix=self.use_q_head_mix,
+                    use_q_time_conv=self.use_q_time_conv,
+                    use_q_ema_smooth=self.use_q_ema_smooth,
+                    q_ema_alpha=self.q_ema_alpha,
+                    use_q_feature_map=self.use_q_feature_map,
+                    q_feature_map_hidden=self.q_feature_map_hidden,
+                    use_q_per_token_rope=self.use_q_per_token_rope,
+                    q_per_token_rope_hidden=self.q_per_token_rope_hidden,
+                    use_q_noise_reg=self.use_q_noise_reg,
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(n_unique)

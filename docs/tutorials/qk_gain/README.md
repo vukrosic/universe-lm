@@ -1,5 +1,7 @@
 # Let attention control its sharpness
 
+🎥 **Video walkthrough:** https://youtu.be/-SfFR-gL32Q
+
 Add one learnable parameter per attention head that controls how diffused or focused attention scores are.
 
 The curves below are from the `screen10m` setup: a ~7.7M parameter LLM trained on 20M tokens. Q-gain adds only 144 scalars on this model.

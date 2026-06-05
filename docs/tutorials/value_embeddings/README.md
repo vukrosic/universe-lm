@@ -1,5 +1,7 @@
 # Value Embeddings: a +0.07 win on a 10M model (`#29`)
 
+🎥 **Video walkthrough:** https://youtu.be/Z5Mk3Dd2G1o
+
 **Result:** adding *value embeddings* to the 10M model beat the standing
 champion by **+0.069 validation loss** at the 4,000-step screen — the first
 architecture lever in this series that cleared the noise band by a wide margin,

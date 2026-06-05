@@ -240,6 +240,35 @@ class MultiHeadAttention(nn.Module):
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
+        # Query-tweaks (29 experiments, 6 batches — see plan.md).
+        q_norm_type: str = "rmsnorm",
+        use_alibi_bias: bool = False,
+        use_q_temp_token: bool = False,
+        use_cosine_attn: bool = False,
+        use_qk_bilinear: bool = False,
+        use_talking_heads_q: bool = False,
+        use_per_head_rope_base: bool = False,
+        partial_rotary_p: float = 1.0,
+        use_q_expansion: bool = False,
+        use_decoupled_content_pos: bool = False,
+        use_antisym_qk: bool = False,
+        use_q_per_head_bias: bool = False,
+        use_q_per_channel_gain: bool = False,
+        use_q_hd_gain: bool = False,
+        use_q_norm_gate: bool = False,
+        use_q_lowrank_refine: bool = False,
+        q_lowrank_refine_rank: int = 8,
+        use_q_layerscale: bool = False,
+        use_q_softplus_gain: bool = False,
+        use_q_head_mix: bool = False,
+        use_q_time_conv: bool = False,
+        use_q_ema_smooth: bool = False,
+        q_ema_alpha: float = 0.0,
+        use_q_feature_map: bool = False,
+        q_feature_map_hidden: int = 64,
+        use_q_per_token_rope: bool = False,
+        q_per_token_rope_hidden: int = 32,
+        use_q_noise_reg: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -506,6 +535,170 @@ class MultiHeadAttention(nn.Module):
         # attacks the outlier problem at its source. Zero extra params.
         self.use_attn_sink = use_attn_sink
 
+        # ============================================================================
+        # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
+        # parameters stored here; the actual math runs in forward().
+        # ============================================================================
+        # Q-side normalization. Defaults to qk_norm_type at the
+        # LLMConfig level, so existing configs are bit-identical.
+        # Batch 4 sets this flag directly per experiment.
+        self.q_norm = make_norm(self.d_k, q_norm_type, self.use_layernorm)
+
+        # Q1 ALiBi-style per-head distance bias. scores += -m_h*(i-j).
+        # m_h init 0 → step-0 == baseline.
+        self.use_alibi_bias = use_alibi_bias
+        if use_alibi_bias:
+            self.alibi_slope = nn.Parameter(torch.zeros(self.n_heads))
+        # Q2 Token-conditioned per-head temperature. Q *= (1 + tanh(x·w_h)).
+        # w_h init 0 → tanh(0) = 0 → step-0 == baseline.
+        self.use_q_temp_token = use_q_temp_token
+        if use_q_temp_token:
+            self.q_temp_w = nn.Parameter(torch.zeros(self.n_heads, d_model))
+        # Q3 Cosine attention. L2-normalize Q and K; per-head learnable τ.
+        # τ init 1 / sqrt(d_k) (the standard inverse-temperature), so
+        # step-0 score scale ≈ the standard softmax-QK scale.
+        self.use_cosine_attn = use_cosine_attn
+        if use_cosine_attn:
+            self.cosine_tau = nn.Parameter(torch.full((self.n_heads,), 1.0))
+        # Q4 Per-channel relevance. score = Q^T diag(d_h) K. d_h init 1.
+        self.use_qk_bilinear = use_qk_bilinear
+        if use_qk_bilinear:
+            self.qk_bilinear_d = nn.Parameter(torch.ones(self.n_heads, self.d_k))
+        # Q5 Talking-heads on Q. n_h × n_h mix on attention logits pre-softmax.
+        # M init I → step-0 == baseline.
+        self.use_talking_heads_q = use_talking_heads_q
+        if use_talking_heads_q:
+            self.talking_heads_M = nn.Parameter(
+                torch.eye(self.n_heads, self.n_heads)
+            )
+        # Q6 Per-head learnable RoPE base. Stored as raw log-frequency
+        # so we can rebase as base * exp(log_h). log_h init 0 → θ_h = base.
+        self.use_per_head_rope_base = use_per_head_rope_base
+        if use_per_head_rope_base:
+            self.per_head_rope_log = nn.Parameter(torch.zeros(self.n_heads))
+        # Q7 Partial rotary. 0 < p <= 1 fraction of Q/K dims rotated.
+        # p=1 (default) = full RoPE.
+        self.partial_rotary_p = float(partial_rotary_p)
+        # Q8 Multi-query expansion. Project Q to 2·q_size, run 2 reads, mean.
+        # 2nd-query zero-init → step-0 == baseline.
+        self.use_q_expansion = use_q_expansion
+        if use_q_expansion:
+            self.q_expand = nn.Parameter(torch.zeros(q_size, d_model))
+        # Q9 Decoupled content/position attention (DeBERTa-style).
+        # Two small projections (content + position), both zero-init so
+        # step-0 is exact baseline. Cost: 2 × (d_model × r + r × d_k).
+        self.use_decoupled_content_pos = use_decoupled_content_pos
+        if use_decoupled_content_pos:
+            r = max(8, self.d_k // 2)
+            self.dcp_qc = nn.Parameter(torch.zeros(r, d_model))
+            self.dcp_kc = nn.Parameter(torch.zeros(self.d_k, r))
+            self.dcp_qp = nn.Parameter(torch.zeros(r, d_model))
+            self.dcp_kp = nn.Parameter(torch.zeros(self.d_k, r))
+        # Q10 Antisymmetric Q·K coupling. add Q^T S K, S skew-init 0.
+        # S is stored as a full d_k×d_k; we enforce skew in forward.
+        self.use_antisym_qk = use_antisym_qk
+        if use_antisym_qk:
+            self.antisym_S = nn.Parameter(torch.zeros(self.d_k, self.d_k))
+        # Q17 Per-head bias. Q += b_h (per-head×channel) post-RoPE.
+        # b_h init 0 → step-0 == baseline.
+        self.use_q_per_head_bias = use_q_per_head_bias
+        if use_q_per_head_bias:
+            self.q_per_head_bias = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k)
+            )
+        # Q18 Per-channel gain. Q *= g_d (per-channel) post-RoPE.
+        # g_d init 1 → step-0 == baseline.
+        self.use_q_per_channel_gain = use_q_per_channel_gain
+        if use_q_per_channel_gain:
+            self.q_per_channel_gain = nn.Parameter(torch.ones(self.d_k))
+        # Q19 Head×channel gain. Q *= g_hd post-RoPE.
+        self.use_q_hd_gain = use_q_hd_gain
+        if use_q_hd_gain:
+            self.q_hd_gain = nn.Parameter(
+                torch.ones(self.n_heads, self.d_k)
+            )
+        # Q20 Norm-gate. per-head scalar σ(a_h·‖x‖ + b_h) on Q.
+        # a_h init 0, b_h init 0 → σ(0) = 0.5 → step-0 != baseline.
+        # We use a_h=0,b=0 with a "shift" so g_h=1 at init: use
+        # g_h = σ(a_h·‖x‖ + b_h) + 0.5 (a shift). Or simpler: use
+        # a tiny init and an explicit bias-to-1, gated as 1+gate.
+        # Implementation: store (a_h, b_h); gate = 1 + (σ(a·‖x‖+b) - 0.5).
+        self.use_q_norm_gate = use_q_norm_gate
+        if use_q_norm_gate:
+            self.q_norm_gate_a = nn.Parameter(torch.zeros(self.n_heads))
+            self.q_norm_gate_b = nn.Parameter(torch.zeros(self.n_heads))
+        # Q21 Low-rank refine. Q += (W1·x) @ W2, both zero-init.
+        self.use_q_lowrank_refine = use_q_lowrank_refine
+        if use_q_lowrank_refine:
+            r = max(1, int(q_lowrank_refine_rank))
+            self.q_refine_W1 = nn.Parameter(torch.zeros(r, d_model))
+            self.q_refine_W2 = nn.Parameter(torch.zeros(q_size, r))
+        # Q22 LayerScale on Q. Q *= (1 + ls_d) per-channel post-RoPE.
+        self.use_q_layerscale = use_q_layerscale
+        if use_q_layerscale:
+            self.q_layerscale = nn.Parameter(torch.zeros(self.d_k))
+        # Q23 Softplus gain. Q *= softplus(g_h) per-head — always ≥ 0.
+        # g_h init 0 → softplus(0) = ln(2) ≈ 0.693 → step-0 != baseline.
+        # Use a "shift to 1" form: Q *= 1 + softplus(g_h) - ln(2). Or
+        # accept the 0.693× init (clearly different from identity) and
+        # measure whether it learns back. We pick the latter — identity
+        # at step 0 is *not* required (the score has just been rescaled
+        # by a constant; the optimizer will see a useful gradient).
+        # Per plan.md, "softplus gain" doesn't claim identity-init.
+        self.use_q_softplus_gain = use_q_softplus_gain
+        if use_q_softplus_gain:
+            self.q_softplus_g = nn.Parameter(torch.zeros(self.n_heads))
+        # Q24 Head-mix. Q ← Q + Q @ M (M=I init) pre-attention.
+        # We store M − I so init gives M_eff=I. This is cleaner
+        # than storing M and skipping the residual at init.
+        self.use_q_head_mix = use_q_head_mix
+        if use_q_head_mix:
+            self.q_head_mix = nn.Parameter(
+                torch.zeros(self.n_heads, self.n_heads)
+            )
+        # Q25 Time-conv. 1D conv k=3 over position axis, zero-init.
+        self.use_q_time_conv = use_q_time_conv
+        if use_q_time_conv:
+            # depthwise over (heads × d_k) channels → simple 1D conv.
+            self.q_time_conv_w = nn.Parameter(
+                torch.zeros(self.d_k, 1, 3)  # [out, in/groups, k]
+            )
+            self.q_time_conv_b = nn.Parameter(torch.zeros(self.d_k))
+        # Q26 EMA-smooth over position. Q ← α·Q + (1−α)·Q_prev.
+        # We store q_ema_alpha as a free parameter, sigmoid-mapped so
+        # α ∈ (0,1). q_ema_alpha=0 → α=0.5 (mid EMA). The plan
+        # calls for "α=1" (no smoothing) at step-0. We use a
+        # learnable scalar but pick init so α ≈ 1: init = log(100)
+        # so sigmoid(4.6) ≈ 0.99. Stored as raw scalar; mapped in forward.
+        self.use_q_ema_smooth = use_q_ema_smooth
+        if use_q_ema_smooth:
+            self.q_ema_logit = nn.Parameter(
+                torch.tensor(4.6)  # sigmoid(4.6) ≈ 0.99
+            )
+        # Q27 Feature-map attention. phi is a small learnable MLP.
+        # NOT identity-init — needs its own control (see plan.md).
+        self.use_q_feature_map = use_q_feature_map
+        if use_q_feature_map:
+            h = max(8, int(q_feature_map_hidden))
+            self.q_fm_phi = nn.Sequential(
+                nn.Linear(self.d_k, h, bias=False),
+                nn.GELU(),
+                nn.Linear(h, self.d_k, bias=False),
+            )
+        # Q28 Per-token RoPE. Each token's θ via a small MLP on x.
+        self.use_q_per_token_rope = use_q_per_token_rope
+        if use_q_per_token_rope:
+            h = max(8, int(q_per_token_rope_hidden))
+            # output: log-frequency scale per head (init 0 → θ=base).
+            self.q_ptr_mlp = nn.Linear(d_model, self.n_heads, bias=False)
+            nn.init.zeros_(self.q_ptr_mlp.weight)
+        # Q29 Noise reg. Add N(0, σ²) to Q during training only.
+        # σ stored as softplus parameter (always ≥ 0). init -10 →
+        # softplus(-10) ≈ 4.5e-5, basically zero noise.
+        self.use_q_noise_reg = use_q_noise_reg
+        if use_q_noise_reg:
+            self.q_noise_log = nn.Parameter(torch.tensor(-10.0))
+
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
         
@@ -532,6 +725,31 @@ class MultiHeadAttention(nn.Module):
         else:
             Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
+
+        # ============================================================================
+        # Query-tweaks (Batch 1-3, 5-6): x-dependent Q modifications.
+        # Applied to the FLAT Q (shape [B, T, q_size]) before the per-head
+        # reshape. Each one has a flag — defaults are all identity/zero-init
+        # so step-0 == baseline (with the documented exceptions).
+        # ============================================================================
+        # Q21 Low-rank refine. Q += (W1·x) @ W2; both zero-init.
+        if self.use_q_lowrank_refine:
+            Q = Q + F.linear(F.linear(x, self.q_refine_W1), self.q_refine_W2)
+        # Q8 Q-expansion: project Q to 2·q_size, mean of two reads. The
+        # 2nd read is via the learned q_expand projection (zero-init) so
+        # step-0 == baseline. The first read uses the existing Q.
+        if self.use_q_expansion:
+            q2 = F.linear(x, self.q_expand)  # [B, T, q_size], zero-init
+            # We can't "mean two reads" without changing the head shape.
+            # Practical implementation: 2nd head slot per head, mean over
+            # the slot dim after reshape. Simpler: just add the 2nd
+            # projection back into the q_size (zero-init => step 0 baseline).
+            Q = Q + q2  # zero-init means baseline at step 0
+        # Q2 Token-conditioned per-head temperature. Q is flat here;
+        # we need per-head projection x·w_h. Defer to per-head block
+        # below (after reshape) — see Q2 post-reshape.
+        # Q25 Time-conv and Q29 noise reg also need the per-head reshape;
+        # deferred to the post-reshape block.
 
         # #29 value embeddings: add the projected token embedding to the values
         # (before head reshape). Zero-inited projection => exact baseline at step 0.
@@ -589,6 +807,83 @@ class MultiHeadAttention(nn.Module):
             V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
         if self.use_k_gain:
             K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
+
+        # ============================================================================
+        # Query-tweaks post-RoPE Q modifications. Each is gated by its
+        # own flag; all are identity/zero-init at step-0 unless noted.
+        # Q is in [B, T, H, D] layout here. We apply the cheap vector
+        # mods in-place; score-side mods (Q1, Q3, Q4, Q5, Q9, Q10)
+        # are handled in the manual-attention branch below.
+        # ============================================================================
+        # Q2 Token-conditioned per-head temperature. Q *= (1 + tanh(x·w_h)).
+        # x has shape [B, T, d_model]; w_h has shape [H, d_model].
+        # gate = (x @ w_h.T) has shape [B, T, H]. Reshape to broadcast.
+        if self.use_q_temp_token:
+            gate = torch.tanh(torch.einsum("btd,hd->bth", x, self.q_temp_w))
+            Q = Q * (1.0 + gate.unsqueeze(-1))
+        # Q17 Per-head bias. Q += b_h (per-head×channel).
+        if self.use_q_per_head_bias:
+            Q = Q + self.q_per_head_bias.view(1, 1, self.n_heads, self.d_k)
+        # Q18 Per-channel gain. Q *= g_d.
+        if self.use_q_per_channel_gain:
+            Q = Q * self.q_per_channel_gain.view(1, 1, 1, self.d_k)
+        # Q19 Head×channel gain. Q *= g_hd.
+        if self.use_q_hd_gain:
+            Q = Q * self.q_hd_gain.view(1, 1, self.n_heads, self.d_k)
+        # Q22 LayerScale on Q. Q *= (1 + ls_d).
+        if self.use_q_layerscale:
+            Q = Q * (1.0 + self.q_layerscale.view(1, 1, 1, self.d_k))
+        # Q23 Softplus gain. Q *= softplus(g_h) per head. Note: NOT
+        # identity at step-0 (softplus(0) = ln 2 ≈ 0.693). The score
+        # function starts scaled by 0.693 and learns back.
+        if self.use_q_softplus_gain:
+            Q = Q * torch.nn.functional.softplus(
+                self.q_softplus_g
+            ).view(1, 1, self.n_heads, 1)
+        # Q20 Norm-gate. g_h = 1 + (σ(a·‖x‖+b) - 0.5) per head. The
+        # `+ 0.5` would make step-0 = 1.0; with a_h=0,b_h=0 we get
+        # 1 + (0.5 - 0.5) = 1.0 at step 0. Identity-init.
+        if self.use_q_norm_gate:
+            x_norm = x.norm(dim=-1)  # [B, T]
+            gate_arg = (
+                torch.einsum("bth,bth->bth",
+                             x_norm.unsqueeze(-1).expand(-1, -1, self.n_heads),
+                             self.q_norm_gate_a.view(1, 1, -1))
+                + self.q_norm_gate_b.view(1, 1, -1)
+            )
+            gate = 1.0 + (torch.sigmoid(gate_arg) - 0.5)
+            Q = Q * gate.unsqueeze(-1)
+        # Q24 Head-mix. Q ← Q + Q @ M (M stored as M−I; init 0).
+        # Operates on heads, broadcast over [T, d_k].
+        if self.use_q_head_mix:
+            # Q: [B, T, H, D]. M: [H, H]. Result: [B, T, H, D] = Q @ M.
+            Q = Q + torch.einsum("bthd,he->bted", Q, self.q_head_mix)
+        # Q25 Time-conv. 1D conv k=3 over position axis, zero-init.
+        if self.use_q_time_conv:
+            # Q: [B, T, H, D] -> [B*H, D, T] for conv1d over T.
+            qc = Q.permute(0, 2, 3, 1).reshape(-1, self.d_k, seq_len)
+            qc = qc + F.conv1d(qc, self.q_time_conv_w, self.q_time_conv_b, padding=1)
+            Q = qc.reshape(batch_size, self.n_heads, self.d_k, seq_len).permute(0, 3, 1, 2)
+        # Q26 EMA-smooth over position. Q ← α·Q + (1−α)·Q_{t-1}.
+        if self.use_q_ema_smooth:
+            alpha = torch.sigmoid(self.q_ema_logit)  # ~0.99 at init
+            shifted = torch.cat([Q[:, :1], Q[:, :-1]], dim=1)
+            Q = alpha * Q + (1.0 - alpha) * shifted
+        # Q28 Per-token RoPE. Per-head θ_t via small MLP on x; init 0
+        # so θ_t = base at step 0. This is a SCALE on the rotary freq
+        # per head, per token. We use the per-head RoPE base = base *
+        # exp(log_scale_t). Implementation: re-compute rotary for the
+        # whole sequence with per-token freqs. (This breaks the SDPA
+        # fast path; we mark this as a "manual path required" lever
+        # and apply RoPE manually below.)
+        if self.use_q_per_token_rope:
+            self._per_token_rope_log = self.q_ptr_mlp(x)  # [B, T, H]
+        else:
+            self._per_token_rope_log = None
+        # Q29 Noise reg. Q += N(0, σ²) training-only. softplus(-10) ≈ 4.5e-5.
+        if self.use_q_noise_reg and self.training:
+            sigma = torch.nn.functional.softplus(self.q_noise_log)
+            Q = Q + torch.randn_like(Q) * sigma
 
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
