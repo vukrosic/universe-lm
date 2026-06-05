@@ -34,6 +34,24 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, check=True, **kw)
 
 
+def ensure_data():
+    """Download README Option C (40M tokens) to ./processed_data/pretrain_dataset.
+
+    Runs on the Kaggle box (its network), so it never touches the user's
+    bandwidth. Resumable: skips if the dir already exists.
+    """
+    dst = os.path.join(SRC, "processed_data", "pretrain_dataset")
+    if os.path.isdir(dst) and os.listdir(dst):
+        print(f"data already present: {dst}")
+        return
+    print("downloading 40M-token subset (vukrosic/blueberry-1B-pretrain train[:20000]) ...")
+    from datasets import load_dataset
+    ds = load_dataset("vukrosic/blueberry-1B-pretrain", split="train[:20000]")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    ds.save_to_disk(dst)
+    print(f"data ready: {dst}  rows={len(ds)}")
+
+
 def main():
     os.chdir(WORK)
     # Fresh clone each run (Kaggle gives a clean box); shallow for speed.
@@ -42,11 +60,26 @@ def main():
     os.chdir(SRC)
     sh("git log --oneline -1")
 
-    # Kaggle ships torch + CUDA already; install only what's missing, quietly.
-    sh("pip install -q -r requirements.txt")
+    # DO NOT `pip install -r requirements.txt`: torchtune/torchao would UPGRADE
+    # torch to a build that drops Tesla P100 (sm_60) -> "no kernel image" at
+    # runtime. Keep Kaggle's GPU-matched torch and pin it so pip resolves a
+    # torchtune compatible with the already-installed torch. torchtune is the
+    # only extra the *training* path needs (RoPE); torchao/lm-eval are eval-only.
+    sh(
+        'TV=$(python -c "import torch,sys; sys.stdout.write(torch.__version__.split(chr(43))[0])"); '
+        'echo "pinning torch==$TV"; '
+        'pip install -q "torch==$TV" torchtune'
+    )
+    sh('python -c "import torch; print(\'torch\', torch.__version__, \'cuda?\', torch.cuda.is_available())"')
 
     # nvidia-smi sanity (non-fatal).
     subprocess.run("nvidia-smi", shell=True)
+
+    # Data: the configs expect a pre-built on-disk dataset at
+    # ./processed_data/pretrain_dataset (chunked at seq 2048). Download the
+    # README "Option C" 40M-token subset ON THE KAGGLE BOX (zero user
+    # bandwidth). ~41M tokens (20k rows x 2048) >> the 3M-token Tiny budget.
+    ensure_data()
 
     folders = " ".join(FOLDERS)
     seeds   = " ".join(str(s) for s in SEEDS)
