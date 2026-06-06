@@ -280,3 +280,6 @@ docs/**/pdf-images-*/
 !results/
 !results/**/*.json
 !results/**/*.md
+
+# Per-page PDF previews (derivable from the PDF, not linked from README)
+docs/tutorials/*/post_*_p-*.png
