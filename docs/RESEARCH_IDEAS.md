@@ -30,6 +30,10 @@ Each has a GitHub issue (AI-generated, idea-only until a human signs off). Confi
 |---|---|---|---|
 | Embedding factorization + depth | low-rank embedding (vocab×r @ r×d_model, r=48) frees ~4.7M params at the 10M budget, spent on depth 3→24 layers | **wins at 10m** (in validation, 200M run) | Crosses baseline by step 2000; −0.176 nats by step 20k; already under the 4.5486 record at ~40% of the run. **Transfer caveat:** the win comes from embedding being 91% of params at 10M; at 135M (d_model 576) embedding is only ~21%, so the gain should shrink sharply with scale. Strong 10m record, weak 135M bet. Branch `exp/emb-factor-depth`. |
 
+## External idea inbox
+
+- 2026-06-06: Tilde Research X post to inspect and convert into a scoped mechanism if it fits the rules: https://x.com/tilderesearch/status/2062928775613206777
+
 ## Planned (own folders, drafted, not yet issues)
 - **RMSNorm micro-tweaks** → [research-plans/rmsnorm-tweaks/plan.md](research-plans/rmsnorm-tweaks/plan.md)
 - **Query / W_Q micro-tweaks** → [research-plans/query-tweaks/plan.md](research-plans/query-tweaks/plan.md)

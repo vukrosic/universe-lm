@@ -51,6 +51,20 @@ class LLMConfig:
     # #23 U-Net skips: add zero-init learned bridges from early block outputs to
     # mirrored late blocks. Helps deep narrow stacks preserve early lexical detail.
     use_unet_skips: bool = False
+    # Number of early-to-late bridge pairs. None = n_layers // 2 (full U).
+    # Must be <= n_layers // 2 (bridges read from un-saved early activations
+    # otherwise). Only active when use_unet_skips=True.
+    unet_skip_count: Optional[int] = None
+    # Gate parameterization for U-Net skips. "raw" applies the gate directly
+    # (`x = x + gate * skip`); "sigmoid" wraps as `x = x + sigmoid(gate) * skip`
+    # (modded-nanoGPT speedrun style). Default "raw" + init 0.0 reproduces the
+    # current behaviour bit-for-bit.
+    unet_gate_type: str = "raw"
+    # Initial gate parameter value (broadcast to (skip_count, d_model)).
+    # With unet_gate_type="raw", 0.0 means no contribution at step 0 (default,
+    # current behaviour). With unet_gate_type="sigmoid", -1.5 matches the
+    # speedrun: sigmoid(-1.5) ~= 0.18 of the early activation flows in at step 0.
+    unet_gate_init: float = 0.0
     # #28 Attention output gate: zero-init per-head multiplier on attention output.
     # Starts as exact baseline via output *= (1 + gate).
     use_attn_output_gate: bool = False

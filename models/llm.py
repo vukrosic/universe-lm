@@ -165,9 +165,29 @@ class MinimalLLM(nn.Module):
         self.position_dropout = nn.Dropout(config.dropout)
         self.use_unet_skips = getattr(config, "use_unet_skips", False)
         if self.use_unet_skips:
-            self.unet_skip_count = config.n_layers // 2
+            cfg_skip_count = getattr(config, "unet_skip_count", None)
+            self.unet_skip_count = (
+                cfg_skip_count if cfg_skip_count is not None
+                else (config.n_layers // 2)
+            )
+            if self.unet_skip_count > config.n_layers // 2:
+                raise ValueError(
+                    f"unet_skip_count={self.unet_skip_count} exceeds "
+                    f"n_layers//2={config.n_layers // 2}; bridges would "
+                    "read from un-saved early activations"
+                )
+            self.unet_gate_type = getattr(config, "unet_gate_type", "raw")
+            if self.unet_gate_type not in ("raw", "sigmoid"):
+                raise ValueError(
+                    f"unet_gate_type must be 'raw' or 'sigmoid', got "
+                    f"{self.unet_gate_type!r}"
+                )
+            gate_init = float(getattr(config, "unet_gate_init", 0.0))
             self.unet_skip_gates = nn.Parameter(
-                torch.zeros(self.unet_skip_count, config.d_model)
+                torch.full(
+                    (self.unet_skip_count, config.d_model),
+                    gate_init,
+                )
             )
 
         # Transformer blocks
@@ -503,7 +523,10 @@ class MinimalLLM(nn.Module):
             block = self.transformer_blocks[i // self.tie_layer_groups]
             if self.use_unet_skips and i >= self.config.n_layers - self.unet_skip_count:
                 skip_idx = self.config.n_layers - 1 - i
-                x = x + self.unet_skip_gates[skip_idx] * unet_skips[skip_idx]
+                gate = self.unet_skip_gates[skip_idx]
+                if self.unet_gate_type == "sigmoid":
+                    gate = torch.sigmoid(gate)
+                x = x + gate * unet_skips[skip_idx]
             x = block(x, x0, ve)
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)

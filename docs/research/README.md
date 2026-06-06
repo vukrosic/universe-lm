@@ -39,6 +39,7 @@ pending · `scaffold` = plan + tutorial scaffold only, code-wiring unverified.
 | Output head + loss | [output_head/](output_head/) | 8 | code (configs exist) | z-loss, vocab bias |
 | RMSNorm op | [rmsnorm/](rmsnorm/) | 17 + zoo sweep | scaffold | partial-norm mix, RMS+bias, DynTanh |
 | Muon optimizer | [muon/](muon/) | 14 | scaffold | no-ortho A/B, ns_steps speed cut |
+| U-Net skips | [unet_skips/](unet_skips/) | gate/init + skip-count | scaffold | sigmoid gate init vs raw zero gate |
 
 > Note: **code-wired ≠ run.** Every `results.md` in §2 is still `pending` — the levers
 > are implemented and launchable but no val_loss numbers exist yet.

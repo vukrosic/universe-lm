@@ -251,6 +251,8 @@ def main():
     parser.add_argument("--use_attn_sink", type=str, help="Attention sink slot / softmax-off-by-one, #99 (true/false)")
     parser.add_argument("--use_unet_skips", type=str, help="U-net cross-layer skip connections (true/false)")
     parser.add_argument("--unet_skip_count", type=int, help="Number of U-net skip pairs")
+    parser.add_argument("--unet_gate_type", type=str, choices=["raw", "sigmoid"], help="U-net gate parameterization (raw or sigmoid)")
+    parser.add_argument("--unet_gate_init", type=float, help="Initial U-net gate value (e.g. 0.0 for raw default, -1.5 for sigmoid speedrun)")
     parser.add_argument("--use_smear_gate", type=str, help="Token-smear gate (mix previous token) (true/false)")
     parser.add_argument("--use_attn_output_gate", type=str, help="Gated attention output (true/false)")
     parser.add_argument("--use_layerscale", type=str, help="Learnable per-channel residual gate (LayerScale), (true/false)")
@@ -414,6 +416,10 @@ def main():
         config.use_unet_skips = (args.use_unet_skips.lower() == "true")
     if args.unet_skip_count is not None:
         config.unet_skip_count = args.unet_skip_count
+    if args.unet_gate_type is not None:
+        config.unet_gate_type = args.unet_gate_type
+    if args.unet_gate_init is not None:
+        config.unet_gate_init = args.unet_gate_init
     if args.use_smear_gate is not None:
         config.use_smear_gate = (args.use_smear_gate.lower() == "true")
     if args.use_attn_output_gate is not None:
