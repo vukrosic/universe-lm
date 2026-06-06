@@ -283,3 +283,16 @@ docs/**/pdf-images-*/
 
 # Per-page PDF previews (derivable from the PDF, not linked from README)
 docs/tutorials/*/post_*_p-*.png
+
+# Phase 1 U-Net ablation analysis — figures, plotting scripts, param-count.
+# Generated locally from metrics.json; not part of the repo. The published
+# writeup (phase1_results.md) and the launch script (scripts/kaggle_unet_*.sh)
+# are tracked; the artifacts to regenerate them are not.
+results/**/figures/
+results/**/figures/**
+**/figures/
+**/figures/**
+**/make_graphs.py
+**/make_*.py
+**/param_count.py
+**/*_analysis.py
