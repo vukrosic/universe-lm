@@ -92,13 +92,20 @@ Eight runs on a `tiny1m` (12 layers, d_model 64, body ~542K params, total ~1M) t
 | `tiny_unet_sigmoid_m15` | true | sigmoid | −1.5 | 6 (default) | **6.3816** | **590.85** |
 | `tiny_unet_sigmoid_m30` | true | sigmoid | −3.0 | 6 (default) | 6.3831 | 591.77 |
 
+![val loss curves across all 6 runs](images/01_val_loss_curves.png)
+![final val_loss bar chart — sigmoid wins by 0.04–0.07](images/02_final_loss_bar.png)
+
 ### What the data shows
 
 1. **The sigmoid bound beats raw scalar gates by 0.04–0.07 val_loss.** The best run (`sigmoid_m15`, 6.3816) is 0.039 below the best raw run and 0.061 below the no-skip control. The benefit is robust to the initial value: `sigmoid_m15` and `sigmoid_m30` differ by only 0.0015 val_loss, well inside run-to-run noise.
 
 2. **The sigmoid advantage comes from the [0, 1] bound, not the start point.** `sigmoid(-1.5) ≈ 0.18` — the same effective skip weight as `raw_init=0.18` at initialization. The two runs start with identical skip signal strength, but sigmoid ends 0.046 val_loss better. The bound prevents the gate from drifting to large values that would let the skip dominate the residual stream.
 
+![sigmoid vs raw — same init, sigmoid ends lower](images/03_sigmoid_vs_raw.png)
+
 3. **Skip count is non-monotonic for raw gates.** With raw gates at init 0, k=2 (only the deepest two bridges) is *worse* than no skips at all, but k=6 (the full U) is *better* than no skips. The model apparently needs a minimum bridge count to overcome the dead-start of raw gates at 0; fewer than that minimum is a net loss.
+
+![skip count sweep — only one k=2 point is real (see caveats)](images/04_skip_count_scatter.png)
 
 ### Caveats
 
