@@ -253,6 +253,7 @@ def main():
     parser.add_argument("--unet_skip_count", type=int, help="Number of U-net skip pairs")
     parser.add_argument("--unet_gate_type", type=str, choices=["raw", "sigmoid"], help="U-net gate parameterization (raw or sigmoid)")
     parser.add_argument("--unet_gate_init", type=float, help="Initial U-net gate value (e.g. 0.0 for raw default, -1.5 for sigmoid speedrun)")
+    parser.add_argument("--unet_bridge_norm", type=str, help="RMSNorm each U-net skip before the gated add (true/false)")
     parser.add_argument("--use_smear_gate", type=str, help="Token-smear gate (mix previous token) (true/false)")
     parser.add_argument("--use_attn_output_gate", type=str, help="Gated attention output (true/false)")
     parser.add_argument("--use_layerscale", type=str, help="Learnable per-channel residual gate (LayerScale), (true/false)")
@@ -420,6 +421,8 @@ def main():
         config.unet_gate_type = args.unet_gate_type
     if args.unet_gate_init is not None:
         config.unet_gate_init = args.unet_gate_init
+    if args.unet_bridge_norm is not None:
+        config.unet_bridge_norm = (args.unet_bridge_norm.lower() == "true")
     if args.use_smear_gate is not None:
         config.use_smear_gate = (args.use_smear_gate.lower() == "true")
     if args.use_attn_output_gate is not None:

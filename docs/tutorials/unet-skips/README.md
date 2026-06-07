@@ -1,8 +1,8 @@
-# Bridge Early Layers to Late Layers to Improve Your LLM Training: U-Net Skips
+# U-Net Skip Connections Make Small LLMs Train Faster - Until You Train Them Longer
 
 By Vuk Rosić
 
-We added this trick to a small model and validation loss improved:
+We added this trick to a small model and validation loss improved at first:
 
 ![val loss curves](images/01_val_loss_curves.png)
 
@@ -94,17 +94,69 @@ The three "raw0" rows below are bit-identical runs - the skip-count flag was ign
 
 ### Findings
 
-The sigmoid bound beats raw scalar gates by 0.04-0.07 val_loss, and the bound - not the start point - is what helps: `sigmoid(-1.5)` and `raw_init=0.18` start with the same effective weight, but sigmoid ends 0.046 val_loss better because the [0, 1] bound keeps the gate from drifting to values that would dominate the residual stream.
+At the full k=6, the sigmoid gate beats the raw gate by 0.046 val_loss even at a matched start (`sigmoid(-1.5)` and `raw_init=0.18` begin at the same effective weight), which suggested the [0, 1] bound was doing the work.
+
+Phase 2 below tests that idea at other bridge counts and at scale, and the picture turns out to be narrower than this first read.
 
 ![sigmoid vs raw - same init, sigmoid ends lower](images/03_sigmoid_vs_raw.png)
 
-Skip count is non-monotonic for raw gates. With k=2 (only the deepest two bridges) the model is *worse* than no skips, but k=6 (the full U) is *better* - it needs a minimum bridge count to overcome the dead-start of raw gates at 0.
+The raw-gate skip count also looked non-monotonic here: k=2 was *worse* than no skips while k=6 was *better*.
+
+Phase 2 finds the same zig-zag for sigmoid gates too, so this is better read as single-seed noise than as a real "minimum bridge count" law.
 
 ![skip count sweep - only one k=2 point is real (see caveats)](images/04_skip_count_scatter.png)
 
 ### Caveats
 
-The skip_count sweep is incomplete - only `raw0_k2_real` actually used a non-default skip count, so k=1, 3, 4, 5 are untested for both families. The `raw0_k2_real` run also used a different code path ("real" branch), so the k=2 dip may be a branch artifact, not a property of the architecture. All runs are tiny1m at 3M tokens; if the sigmoid-vs-raw gap holds or grows at 5-10M, the bound is doing real work.
+The original skip_count sweep was incomplete - the flag was ignored, so several runs were bit-identical at the default k=6. Phase 2 below re-ran it with the flag actually wired, and all runs are single-seed, so treat small gaps as directional.
+
+## Phase 2: going deeper
+
+We then filled the gaps and tested the two questions Phase 1 left open.
+
+### Does skip count have a clean trend?
+
+We ran the full sigmoid curve from k=1 to k=6 bridges, all at 3M tokens, seed 42.
+
+The curve zig-zags: k=3 is the worst point and k=6 is the best, with no smooth trend in between.
+
+At a single seed these wiggles are within the run-to-run noise, so the honest read is "more bridges trend slightly better, but pick k=6 and move on."
+
+![skip count curve k=1 to 6 - noisy, k=6 best](images/05_skipcount_curve.png)
+
+### Is it the bound or the starting point?
+
+`sigmoid(-1.5)` and a raw gate at `0.18` start at the same effective weight, so any difference is the [0, 1] bound, not the start.
+
+We compared them at k=2, k=4, and k=6.
+
+The bound only clearly helps at k=6 - at k=2 the edge is tiny and at k=4 it disappears.
+
+So "the sigmoid bound wins" is really a k=6 effect, not a general law.
+
+![bound vs init at matched start - bound only helps at k=6](images/07_bound_vs_init.png)
+
+### Does the win survive more tokens?
+
+This is the one that matters for whether you should use it.
+
+We re-ran the best config (sigmoid, k=6) against the no-skip control at 3M, 10M, and 20M tokens.
+
+The advantage shrinks fast: +0.061 val_loss at 3M, +0.009 at 10M, then -0.007 at 20M.
+
+Past about 10M tokens the U-Net skip stops helping and becomes a small net negative.
+
+So the skip buys faster early convergence, not a better final model - and if you train long enough it slightly hurts.
+
+![U-Net advantage shrinks then reverses with more training](images/06_scale_washout.png)
+
+### Bottom line
+
+Use U-Net skips when your model is small or undertrained and you want faster early progress.
+
+Drop them once you train near convergence - here the gain reverses past 10M tokens.
+
+This is also a reminder to always re-test a "win" at more tokens before you trust it.
 
 ### Want to go deeper in AI research? I'll coach you 1-on-1
 

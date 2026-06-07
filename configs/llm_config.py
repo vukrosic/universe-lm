@@ -65,6 +65,10 @@ class LLMConfig:
     # current behaviour). With unet_gate_type="sigmoid", -1.5 matches the
     # speedrun: sigmoid(-1.5) ~= 0.18 of the early activation flows in at step 0.
     unet_gate_init: float = 0.0
+    # RMSNorm each early-layer skip before the gated add. Aims to keep the bridge
+    # contribution scale-stable as the residual stream grows over training. Off
+    # reproduces the current behaviour. Only active when use_unet_skips=True.
+    unet_bridge_norm: bool = False
     # #28 Attention output gate: zero-init per-head multiplier on attention output.
     # Starts as exact baseline via output *= (1 + gate).
     use_attn_output_gate: bool = False

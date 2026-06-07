@@ -189,6 +189,11 @@ class MinimalLLM(nn.Module):
                     gate_init,
                 )
             )
+            self.unet_bridge_norm = getattr(config, "unet_bridge_norm", False)
+            if self.unet_bridge_norm:
+                self.unet_bridge_norms = nn.ModuleList(
+                    [nn.RMSNorm(config.d_model) for _ in range(self.unet_skip_count)]
+                )
 
         # Transformer blocks
         self.use_value_embed = getattr(config, "use_value_embed", False)
@@ -526,7 +531,10 @@ class MinimalLLM(nn.Module):
                 gate = self.unet_skip_gates[skip_idx]
                 if self.unet_gate_type == "sigmoid":
                     gate = torch.sigmoid(gate)
-                x = x + gate * unet_skips[skip_idx]
+                skip = unet_skips[skip_idx]
+                if self.unet_bridge_norm:
+                    skip = self.unet_bridge_norms[skip_idx](skip)
+                x = x + gate * skip
             x = block(x, x0, ve)
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
