@@ -12,7 +12,10 @@ human-readable view of it. Regenerate with
 
 ## Active remote queue (FIFO, always 3)
 
-| Slot | Folder | Run | Status |
+Tracks which folder occupies which **GPU slot** — remote execution, *not* the
+pipeline `status` field. "Run state" below = idle/in-progress/done on the metal.
+
+| Slot | Folder | Run | Run state |
 |---|---|---|---|
 | 1 | `autoresearch/ideas/001-cautious-muon/` | tiny1m3m + `use_cautious_muon=True` | IN-PROGRESS (Kaggle T4, s42) |
 | 2 | empty | fill from PENDING below | — |
@@ -22,16 +25,15 @@ Rule: aim for 3 in the queue at all times so the remote never idles.
 
 ## Ideas board (in folder-number order)
 
-`status` mirrors each `idea.md` frontmatter — see [`PIPELINE.md`](PIPELINE.md).
+Pure index — **no status column on purpose.** The `status:` frontmatter in each
+`idea.md` is the *only* source of truth (see [`PIPELINE.md`](PIPELINE.md)). To
+see live status: `grep -H "status:" autoresearch/ideas/*/idea.md`. Never copy
+status into this file — that is exactly the drift that breaks the loop.
 
-| # | Folder | One-liner | Expected Δ | status |
-|---|---|---|---|---|
-| 001 | `001-cautious-muon/` | sign-mask on Muon ortho'd update | −0.01 to −0.05 | running |
-| 002 | `002-cautious-adamw/` | sign-mask on AdamW (1D params) | −0.005 to −0.02 | needs-revision |
-| 003 | `003-polar-express/` | adaptive NS coeffs vs fixed polar_express | −0.01 to −0.03 | needs-revision |
-| 004 | `004-moe-ffn/` | top-2 routing, 8 experts, aux load-balancing | −0.05 to −0.12 | needs-revision |
-| 005 | `005-soap/` | Shampoo + Adam hybrid in eigenbasis | −0.02 to −0.05 | needs-review |
-| 006 | `006-retnet-retention/` | linear-attention retention, parallel/recurrent modes | −0.02 to −0.06 (if transfers to 10M) | needs-review |
+| # | Folder | One-liner | Expected Δ |
+|---|---|---|---|
+| 001 | `001-cautious-muon/` | sign-mask on Muon ortho'd update | −0.01 to −0.05 |
+| 002 | `002-cautious-adamw/` | sign-mask on AdamW (1D params) | −0.005 to −0.02 |
 
 ## PENDING — not yet foldered (migrate on first touch)
 
@@ -53,6 +55,7 @@ record.
 ## External sources to mine (refresh weekly)
 
 - arXiv: `cs.LG`, `cs.CL` — filter "Muon", "orthogonal", "spectral", "MoE", "state space", "Mamba", "DeltaNet", "linear attention", "cautious"
+- **科学空间 / kexue.fm (Su Jianlin 苏剑林)** — https://kexue.fm — originator of RoPE; deep mechanism-level posts on attention, optimizers (Muon, Tiger), normalization, length extrapolation. Chinese-language; the agent reads it natively. Browse `https://kexue.fm/archives/<id>` and the front-page index. (Anti-bot JS wall blocks plain WebFetch/curl — agent may need a browser tool or the user pastes the text.)
 - X follows: @kellerjordan0, @borisdayma, @arankomatsuzaki, @_akhaliq, @hardmaru, @StasBekman, @cloneofsimo
 - Repos: modded-nanogpt, picoGPT, llm.c, nanogpt-speedrun, PaLM-pytorch, mamba
 - HF papers: https://huggingface.co/papers

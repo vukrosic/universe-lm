@@ -1,0 +1,7 @@
+{"ts":"2026-06-08T16:50:00Z","agent":"backfill","idea":"002-cautious-adamw","from":null,"to":"needs-revision","round":1,"note":"seeded at system migration; prior history not captured"}
+{"ts":"2026-06-08T13:14:32Z","agent":"reviser","idea":"002-cautious-adamw","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
+{"ts":"2026-06-08T13:16:51Z","agent":"reviser","idea":"002-cautious-adamw","from":"revising","to":"needs-review","round":3,"note":"applied 4 findings (Wiring, bucket map, compute budget, Fallback)"}
+{"ts":"2026-06-08T13:21:39Z","agent":"reviewer","idea":"002-cautious-adamw","from":"needs-review","to":"reviewing","round":3,"note":"claimed r3"}
+{"ts":"2026-06-08T13:22:17Z","agent":"reviewer","idea":"002-cautious-adamw","from":"reviewing","to":"needs-plan","round":3,"note":"verdict: approve"}
+{"ts":"2026-06-08T13:52:46Z","agent":"code-impl","idea":"002-cautious-adamw","from":"needs-plan","to":"planning","round":3,"note":"claimed"}
+{"ts":"2026-06-08T13:55:55Z","agent":"code-impl","idea":"002-cautious-adamw","from":"planning","to":"needs-run","round":3,"note":"plan+code done: CautiousAdamW + use_cautious_adamw str flag (none/embedding/gain/all) + trainer gate"}

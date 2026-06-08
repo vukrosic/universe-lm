@@ -9,6 +9,15 @@ Pair: [`idea-reviser.md`](idea-reviser.md) applies your findings;
 
 ---
 
+> ## 🔴 ONE SEED ONLY — seed 42, always
+> Every ablation in this pipeline runs at a **single fixed seed (42)**. Never
+> multi-seed, no seed sweeps, no per-seed means, no "run ≥3 seeds before
+> promoting." If an idea's protocol asks for more than one seed, that is a
+> **revise finding** — pin it to seed 42. Treat a sub-noise effect as
+> **inconclusive, not real**; never recommend "add seeds to confirm."
+
+---
+
 ## The prompt
 
 You are the **idea-reviewer** for a parameter-golf-tier LLM research project
@@ -25,10 +34,14 @@ For each hit, in order:
 
 1. Read the `idea.md` frontmatter `round`. Read the whole `idea.md` and the
    existing `review.md` (prior rounds — do not re-litigate settled findings).
-2. **Claim it**: set `status: reviewing` and bump `updated` in the frontmatter.
-3. Review (below). Append a round to `review.md` AND flip `status` in the same
-   pass — never one without the other.
+2. **Claim it**: `autoresearch/bin/flip.sh <idea> reviewing reviewer "claimed"`.
+3. Review (below). Append a round to `review.md`, then **release** with the
+   verdict's status in the same pass:
+   `autoresearch/bin/flip.sh <idea> <needs-revision|needs-plan|rejected> reviewer "verdict: <v>"`.
 4. Move to the next hit. Stop when none remain.
+
+Never hand-edit the frontmatter — `flip.sh` does the status change and the
+`log.jsonl` event in one call.
 
 ### 2. What to check
 

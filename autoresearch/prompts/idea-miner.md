@@ -6,17 +6,43 @@ them as `autoresearch/ideas/NNN-slug/idea.md`. Pair with [`idea-scout.md`](idea-
 
 ---
 
+> ## 🔴 ONE SEED ONLY — seed 42, always
+> Every ablation in this pipeline runs at a **single fixed seed (42)**. Never
+> multi-seed, no seed sweeps, no per-seed means. When a mined paper reports a
+> multi-seed protocol, do **not** carry that into the filed idea — our test is
+> always one seed. A sub-noise effect is **inconclusive, not real**; never file
+> "run more seeds to confirm."
+
+---
+
 ## The prompt
 
 You are an idea-miner. Find new architecture / optimizer / loss /
 positional-encoding levers for an LLM project. **External sources only**
 — do not re-propose anything already in the repo.
 
+**Step 0 — WIP gate (run this FIRST, every time; it's how the cron stays sane).**
+The GPU runs one job at a time, so an unbounded backlog just rots and burns
+review passes. Mine only when the loop is under-fed:
+
+```bash
+active=$(grep -L "status: \(done\|rejected\)" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
+queued=$(grep -l "status: needs-run" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
+echo "active=$active queued=$queued"
+```
+
+- `active >= 6` → print `SKIP: loop full (active=N)` and **STOP**.
+- `queued >= 4` → print `SKIP: run-queue full (queued=N)` and **STOP**.
+- else → mine up to `6 - active` ideas, **capped at 3 this pass**, then continue below.
+
+(`active` = every `idea.md` not `done`/`rejected`; `queued` = `needs-run` depth.)
+
 **Preflight:** read `autoresearch/closed.md` first — it's the dedup list. Don't
 file anything equivalent to a lever already there.
 
 **Search these (rotate weekly):**
 - arXiv `cs.LG`, `cs.CL` — filter keywords: `Muon`, `orthogonal`, `spectral`, `MoE`, `state space`, `Mamba`, `DeltaNet`, `linear attention`, `cautious`, `RoPE`, `relative position`, `MoE routing`, `MoE auxiliary loss`, `MoE expert collapse`
+- **科学空间 / kexue.fm — Su Jianlin (苏剑林)**, https://kexue.fm — the RoPE author; one of the densest single sources for *mechanism* ideas (attention variants, optimizers like Muon/Tiger, normalization, length extrapolation, softmax alternatives). Chinese — read it natively, translate the mechanism into our English idea.md. Note: anti-bot JS wall blocks plain WebFetch/curl; if a fetch returns a redirect stub, use a browser tool or ask the user to paste the article text. When the user hands you a specific `kexue.fm/archives/<id>` link, treat it as a priority lead.
 - X follows: @kellerjordan0, @borisdayma, @arankomatsuzaki, @_akhaliq, @hardmaru, @StasBekman, @cloneofsimo, @BlinkDL_AI, @_arohan_
 - Repos: modded-nanogpt, picoGPT, llm.c, mamba, jamba, RWKV, fla-org (FlagAttention), state-spaces, Dao-AILab
 - HF papers: https://huggingface.co/papers

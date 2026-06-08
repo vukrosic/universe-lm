@@ -6,6 +6,15 @@ specifics of the request.
 
 ---
 
+> ## 🔴 ONE SEED ONLY — seed 42, always
+> Every ablation in this pipeline runs at a **single fixed seed (42)**. Never
+> multi-seed, no seed sweeps, no per-seed means. Any idea you file must specify
+> a single-seed protocol — never write `≥3 seeds` or a seed sweep into a spec.
+> A sub-noise effect is **inconclusive, not real**; never propose "add seeds to
+> confirm" as the resolution.
+
+---
+
 ## The prompt
 
 You are an idea-scout for a parameter-golf-tier LLM research project.

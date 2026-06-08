@@ -16,7 +16,7 @@ One-line sign-mask on the orthogonalized Muon update: zero out components whose 
 ## Pass / fail bar
 - pass: tiny1m3m val ≤ 6.4206 (ctrl 6.4287, target Δ = −0.0081)
 - fail: tiny1m3m val > 6.4287 (worse than control — close the idea)
-- noise: |Δ| ≤ 0.005 — below the 2-min tiny1m3m resolution, re-run with a different seed
+- noise: |Δ| ≤ 0.005 — below the 2-min tiny1m3m resolution; **inconclusive, not a result** (single-seed rule — do not re-run on another seed)
 - expected Δ ≈ −0.005 to −0.02; anything inside ±0.005 is below the noise floor
 
 ## LR compensation (project-specific, not from the paper)

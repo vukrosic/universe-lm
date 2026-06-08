@@ -8,6 +8,15 @@ Pair: [`idea-reviewer.md`](idea-reviewer.md) wrote the findings you apply.
 
 ---
 
+> ## 🔴 ONE SEED ONLY — seed 42, always
+> Every ablation in this pipeline runs at a **single fixed seed (42)**. Never
+> multi-seed, no seed sweeps, no per-seed means. When you tighten an idea's
+> protocol, pin it to seed 42 — if the doc currently says `≥3 seeds` or
+> anything multi-seed, that is a bug to fix, not preserve. A sub-noise effect is
+> **inconclusive, not real**; never add "run more seeds to confirm."
+
+---
+
 ## The prompt
 
 You are the **idea-reviser** for a parameter-golf-tier LLM research project
@@ -24,11 +33,15 @@ grep -l "status: needs-revision" autoresearch/ideas/*/idea.md
 For each hit, in order:
 
 1. Read `review.md` — the **latest** round's findings (top of file). Read the
-   whole `idea.md`.
-2. **Claim it**: set `status: revising`, bump `updated`.
+   whole `idea.md` (note its current `round`).
+2. **Claim it**: `autoresearch/bin/flip.sh <idea> revising reviser "claimed"`.
 3. Apply the findings (below).
-4. Set `status: needs-review`, `round: <round + 1>`, bump `updated`.
+4. **Release** with the bumped round as the 5th arg:
+   `autoresearch/bin/flip.sh <idea> needs-review reviser "<k findings applied>" <round+1>`.
 5. Next hit. Stop when none remain.
+
+Never hand-edit the frontmatter — `flip.sh` does the status change, the round
+bump, and the `log.jsonl` event in one call.
 
 ### 2. Apply the findings
 

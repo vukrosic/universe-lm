@@ -8,6 +8,14 @@ Picks up where [`idea-reviewer.md`](idea-reviewer.md) left off (`needs-plan`).
 
 ---
 
+> ## 🔴 ONE SEED ONLY — seed 42, always
+> Every ablation in this pipeline runs at a **single fixed seed (42)**. Never
+> multi-seed, no seed sweeps, no per-seed means. A plan that asks for >1 seed is
+> malformed — pin it to seed 42. A sub-noise effect is **inconclusive, not
+> real**; log it and move on, never "add seeds to confirm."
+
+---
+
 ## The prompt
 
 You are the **code-implementer** for a parameter-golf-tier LLM research project
@@ -24,11 +32,15 @@ For each hit, in order:
 
 1. Read the whole `idea.md` (it is `approve`d — the mechanism, pass/fail bar, and
    transfer argument are settled) and `review.md` (the verdict context).
-2. **Claim it**: set `status: planning`, bump `updated`.
+2. **Claim it**: `autoresearch/bin/flip.sh <idea> planning code-impl "claimed"`.
 3. Write `plan.md`, implement, self-check (below).
-4. Set `status: needs-run`, bump `updated`. Fill or update the idea's row in the
-   `autoresearch/queue.md` run board.
+4. **Release**: `autoresearch/bin/flip.sh <idea> needs-run code-impl "plan+code done"`.
+   Fill or update the idea's row in the `autoresearch/queue.md` run board.
 5. Next hit. Stop when none remain.
+
+Never hand-edit the frontmatter — `flip.sh` does the status change and the
+`log.jsonl` event in one call. If you're blocked and can't implement, bounce it
+back instead of closing: `flip.sh <idea> needs-review code-impl "blocked: <why>"`.
 
 ### 2. Coordination — before touching shared code
 
@@ -55,7 +67,7 @@ stop and flag it in your output rather than forcing it.
 <which files, which functions, the diff in prose. Step-0 ≈ baseline when off.>
 
 ## Control
-<the exact A/B: control config, treatment config, seed, tier>
+<the exact A/B: control config, treatment config, seed (always 42 — one seed), tier>
 
 ## Cost
 <params Δ, FLOPs Δ, memory Δ>

@@ -358,6 +358,15 @@ class LLMConfig:
     # to the Muon path; AdamW is unchanged (separate flag `use_cautious_adamw`
     # if/when we add it). See docs/research/muon/cautious-muon/plan.md.
     use_cautious_muon: bool = False
+    # Cautious AdamW (Liang et al. 2024, arXiv 2411.16085): same sign-mask
+    # as Cautious Muon, applied to the AdamW path (1D / embedding / head).
+    # Selects WHICH AdamW bucket(s) the mask fires on (the AdamW path is
+    # independent of Muon — `use_cautious_muon` does NOT affect it).
+    # Allowed values: "none" (default — bit-identical baseline AdamW),
+    # "embedding" (mask on `token_embedding` + `emb_proj` only),
+    # "gain" (mask on `*.norm.weight` + 1D scalars), "all" (mask every
+    # AdamW param). See autoresearch/ideas/002-cautious-adamw/plan.md.
+    use_cautious_adamw: str = "none"
 
     # Evaluation
     eval_every: Optional[int] = None

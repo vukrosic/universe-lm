@@ -12,6 +12,7 @@ from typing import List, Optional, Callable, Dict, Any
 from configs.llm_config import LLMConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
+from optimizers.cautious_adamw import CautiousAdamW
 from training.checkpointing import (
     capture_git_metadata,
     capture_rng_state,
@@ -139,12 +140,38 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
         cautious=getattr(config, "use_cautious_muon", False),
     )
     device = resolve_device(getattr(config, "device", "auto"))
-    adamw_optimizer = torch.optim.AdamW(
-        adamw_params,
-        lr=config.adamw_lr,
-        weight_decay=config.weight_decay,
-        fused=device.type == "cuda",
-    )
+    # Cautious-AdamW gate (Liang et al. 2024) — see
+    # autoresearch/ideas/002-cautious-adamw/plan.md. "none" = baseline
+    # `torch.optim.AdamW` (bit-identical to today); other values select
+    # which AdamW bucket(s) the sign-mask fires on.
+    _cautious_mode = getattr(config, "use_cautious_adamw", "none")
+    if _cautious_mode != "none":
+        if _cautious_mode == "embedding":
+            _mask_buckets = ("token_embedding", "emb_proj")
+        elif _cautious_mode == "gain":
+            _mask_buckets = ("norm.weight",)
+        elif _cautious_mode == "all":
+            _mask_buckets = ()
+            _mask_all = True
+        else:
+            raise ValueError(f"Unknown use_cautious_adamw: {_cautious_mode!r}")
+        if _cautious_mode != "all":
+            _mask_all = False
+        adamw_optimizer = CautiousAdamW(
+            adamw_params,
+            mask_buckets=_mask_buckets,
+            mask_all=_mask_all,
+            lr=config.adamw_lr,
+            weight_decay=config.weight_decay,
+            fused=device.type == "cuda",
+        )
+    else:
+        adamw_optimizer = torch.optim.AdamW(
+            adamw_params,
+            lr=config.adamw_lr,
+            weight_decay=config.weight_decay,
+            fused=device.type == "cuda",
+        )
 
     return [muon_optimizer, adamw_optimizer]
 

@@ -1,5 +1,16 @@
 # Review log — 002 cautious-adamw
 
+## r3 — 2026-06-08 — verdict: approve
+
+**3-round cap reached. All r2 findings addressed — approving.**
+
+- **Wiring rewrite (r2 blocker) — fixed.** `idea.md` Wiring now correctly subclasses `torch.optim.AdamW` as `CautiousAdamW` (copy `Adam._single_tensor_adam` body, apply the sign-mask just before `param.add_`), adds `use_cautious_adamw: bool = False` to `LLMConfig` next to `use_cautious_muon`, and gates the swap at `training/trainer.py:142`. The wrong "computed inside `Muon.step()`" claim is gone. `adamw_lr` correctly identified as a Muon hyperparameter used only in `rms_match` scaling (`optimizers/muon.py:147-150`), not a parameter group. ~40 LoC total.
+- **Condition-mapping vs actual routing (r2 finding) — fixed.** `idea.md` "AdamW routing — what's actually in the bucket" now names the real params: `token_embedding.weight`, `emb_proj.weight`, `*.norm.weight`, `out_proj.weight`, plus the 1D scalars (q_gain, k_gain, smear_gate, output_temp τ, vocab_bias b_v). A = embedding-mask on `token_embedding` + `emb_proj` (the 2D embedding params, ~91% of AdamW grads). B = gain-mask on `norm.weight` + 1D scalars. C explicitly dropped. Per-bucket kill-criteria committed.
+- **Compute budget (r2 finding) — fixed.** C dropped, single seed (42) per condition, A-first launch order with B only if A is null/in noise. Worst case 2 screen20m runs ≈ 40 min on the RTX 3050; happy case 1 run ≈ 20 min if A hits. A sub-noise Δ is **inconclusive**, not chased with more seeds.
+- **Fallback rewrite (r2 finding) — fixed.** The "001's run exercises the AdamW path" claim is correctly deleted. New fallback: after 001's screen20m follow-up lands, run a 2-flag combo (`use_cautious_muon=True` + `use_cautious_adamw=True`) on the V+q+SWA+HighRoPE baseline — additive answer in one run.
+- **5-check sweep:** source real & current (Liang 2024, arXiv 2411.16085 — same paper as 001); mechanism is structural (sign-mask), not a HP lever; not in `closed.md`; < 200 LoC; falsifiable bar tied to real control (V+q+SWA+HighRoPE 4.6364). Tier (screen20m) resolves the expected-Δ range. Gated on 001 passing — correct research hygiene.
+- **Hand-off to code-implementer:** promote to `plan.md`. The wiring section is concrete enough to spec directly — `CautiousAdamW` subclass + 1 config flag + 4-line trainer gate. A/B launch order is committed (A first, B only if A is in noise).
+
 ## r2 — 2026-06-08 — verdict: revise
 
 - **r1 findings addressed: 4/4 mechanism+tier+seeds+1D-split.** Mechanism paragraph (`idea.md` line 14) now states complementarity explicitly without self-contradiction. Tier moved to screen20m with the noise-band citation. 3-seed protocol committed. The A/B/C 1D-bucket split is laid out with kill-criteria. Good revisions on all four.
