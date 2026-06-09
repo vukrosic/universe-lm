@@ -34,6 +34,10 @@ status into this file — that is exactly the drift that breaks the loop.
 |---|---|---|---|
 | 001 | `001-cautious-muon/` | sign-mask on Muon ortho'd update | −0.01 to −0.05 |
 | 002 | `002-cautious-adamw/` | sign-mask on AdamW (1D params) | −0.005 to −0.02 |
+| 003 | `003-soap/` | Shampoo + Adam hybrid in eigenbasis | −0.02 to −0.05 |
+| 004 | `004-retnet-retention/` | linear-attention retention (parallel/recurrent) | −0.02 to −0.06 (if transfers) |
+| 005 | `005-decoupled-qkv-muon/` | split fused qkvo into 4 matrices for Muon routing | −0.005 to −0.02 |
+| 006 | `006-schedule-free-adamw/` | AdamW w/o LR schedule, iterate-averaging | −0.005 to −0.02 |
 
 ## PENDING — not yet foldered (migrate on first touch)
 

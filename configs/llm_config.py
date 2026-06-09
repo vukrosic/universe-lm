@@ -367,6 +367,16 @@ class LLMConfig:
     # "gain" (mask on `*.norm.weight` + 1D scalars), "all" (mask every
     # AdamW param). See autoresearch/ideas/002-cautious-adamw/plan.md.
     use_cautious_adamw: str = "none"
+    # SOAP (Vyas et al. 2024, arXiv 2409.11321): Adam in the eigenbasis
+    # of the Shampoo preconditioner, with periodic basis refresh. Routes
+    # ONLY the 2D non-Muon AdamW params (`token_embedding.weight`,
+    # `emb_proj.weight`, `out_proj.weight`) to SOAP; 1D scalars and
+    # `*.norm.weight` stay on plain AdamW (eigendecomp is meaningless on
+    # 1D). Default off → bit-identical to baseline. Pair with the
+    # bf16 pre-flight in `autoresearch/ideas/003-soap/plan.md` before
+    # the full screen20m run. See autoresearch/ideas/003-soap/idea.md.
+    use_soap: bool = False
+    use_soap_precondition_freq: int = 10
 
     # Evaluation
     eval_every: Optional[int] = None

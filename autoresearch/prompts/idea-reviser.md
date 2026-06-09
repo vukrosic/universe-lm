@@ -62,10 +62,9 @@ bump, and the `log.jsonl` event in one call.
   your job is to make the doc good enough to clear it.
 - One pass per claim — apply, bump, release. Don't re-review your own work.
 
-### 4. Output to the human
+### 4. Output (a log, not a conversation — no questions)
 
 1. One line per idea: `NNN — round N→N+1 — <k findings applied, j disagreements>`.
 2. Any finding you couldn't resolve and why (max 1 line each).
-3. Open questions (max 2 bullets).
 
 **No auto-push.** Leave the working tree unless asked to commit.

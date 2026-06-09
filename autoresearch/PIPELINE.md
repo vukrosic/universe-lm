@@ -1,10 +1,28 @@
 # Idea pipeline
 
-Multi-agent loop that takes an idea from "scouted" to "ran on hardware".
+Multi-agent loop that takes an idea from "mined" to "ran on hardware".
 Agents are triggered manually and occasionally; each one **polls** the idea
 folders, claims work by reading + flipping a status field, and stops when its
 queue is empty. No agent talks to another directly — the only channel is the
-`status` field in each `idea.md` frontmatter and the `review.md` log.
+`status` field in each `idea.md` frontmatter and the per-gate review log.
+
+## Shape: three doer ↔ critic gates
+
+Every stage is a **doer** paired with an adversarial **critic**. The doer
+produces an artifact; the critic, whose default is skeptical, issues one verdict
+(`accept` / `revise` / `reject`); on `revise` the doer revises and they loop, up
+to a **3-round cap** after which the critic must `accept` or `reject` — no idea
+cycles forever. An idea must clear all three gates before it runs:
+
+| Gate | Doer | Critic | Question |
+|---|---|---|---|
+| **Taste** | miner | taste-reviewer | Is this idea worth a slot *at all*? |
+| **Definition** | reviser | reviewer | Is the idea *fully & soundly specified*? |
+| **Code** | code-implementer | code-reviewer | Does the code *match the spec & run correctly*? |
+
+In the taste and code loops the **doer revises itself**; the definition loop uses
+a separate reviser. Cheap tiny1m3m ideas skip the definition+code gates (cost-gate
+below).
 
 ## The one source of truth: `idea.md` frontmatter
 
@@ -29,16 +47,21 @@ Status alone routes. Verdicts live only in `review.md`.
 
 Queued (any matching agent may claim):
 
-| status | claimed by |
-|---|---|
-| `needs-review` | reviewer |
-| `needs-revision` | reviser |
-| `needs-plan` | code-implementer |
-| `needs-run` | run scheduler (human / Kaggle harness) |
+| status | claimed by | gate |
+|---|---|---|
+| `needs-taste` | taste-reviewer | taste (critic) |
+| `needs-repitch` | miner | taste (doer revises) |
+| `needs-review` | reviewer | definition (critic) |
+| `needs-revision` | reviser | definition (doer revises) |
+| `needs-plan` | code-implementer | code (doer) |
+| `needs-codereview` | code-reviewer | code (critic) |
+| `needs-recode` | code-implementer | code (doer revises) |
+| `needs-run` | run scheduler (human / Kaggle harness) | — |
 
 In-flight (acts as the lock — one agent holds it):
 
-`reviewing` · `revising` · `planning` · `running`
+`tasting` · `repitching` · `reviewing` · `revising` · `planning` ·
+`codereviewing` · `recoding` · `running`
 
 Terminal:
 
@@ -49,23 +72,47 @@ Terminal:
 
 ## State machine
 
+Each gate has the same shape: doer → `needs-<critic>` → critic verdict →
+{accept: next gate · revise: back to doer, round++ · reject: `_closed/`}.
+
 ```text
-scout/miner ─► needs-review
-                   │  reviewer claims → reviewing → appends review.md r_n with a verdict
-                   ▼
-            ┌──────┴───────┬───────────────┐
-         approve         revise          reject
-            │               │               │
-            ▼               ▼               ▼
-        needs-plan    needs-revision     rejected ─► move to _closed/
-            │               │
-         planning      reviser claims → revising → edits idea.md, round++
-            │               │
-            ▼               └─────► needs-review   (re-review)
-        needs-run
-            │
-         running ─► done   (evidence.md written)
+miner ─► needs-taste                                    ┌─ GATE 1: TASTE ─┐
+                │  taste-reviewer → tasting → taste.md r_n verdict
+                ▼
+         ┌──────┴───────┬────────────────┐
+      accept          revise           reject ─► _closed/
+         │               │
+         │          needs-repitch → miner re-pitches → needs-taste (round++)
+         │
+         ├─ cheap (tiny1m3m) ──────────────────────────────► needs-run
+         │
+         ▼  (screen20m+, round reset to 1)                 ┌─ GATE 2: DEFINITION ─┐
+      needs-review
+                │  reviewer → reviewing → review.md r_n verdict
+                ▼
+         ┌──────┴───────┬────────────────┐
+      approve         revise           reject ─► _closed/
+         │               │
+         │          needs-revision → reviser → revising → idea.md, round++ → needs-review
+         ▼
+      needs-plan                                          ┌─ GATE 3: CODE ─┐
+                │  code-implementer → planning → plan.md + code
+                ▼
+      needs-codereview
+                │  code-reviewer → codereviewing → codereview.md r_n verdict
+                ▼
+         ┌──────┴───────┬────────────────┐
+      accept          revise           reject ─► _closed/
+         │               │
+         │          needs-recode → code-implementer re-codes → needs-codereview (round++)
+         ▼
+      needs-run
+         │
+      running ─► done   (evidence.md written)
 ```
+
+Each gate runs its **own** 3-round budget: on `accept` into the next gate, the
+critic resets `round` to 1.
 
 ## The claim protocol (every agent, every run)
 
@@ -102,12 +149,15 @@ review↔revise oscillation), stuck locks (an `-ing` with no follow-up event),
 and throughput. It records **transitions, not file contents** — use `git diff`
 to inspect what the text actually changed to.
 
-## review.md format (append-only, newest round on top)
+## Critic log format (append-only, newest round on top)
+
+Each gate's critic keeps its own log in the idea folder — `taste.md` (taste),
+`review.md` (definition), `codereview.md` (code). Same shape for all three:
 
 ```markdown
-# Review log — NNN <name>
+# <Taste|Review|Code-review> log — NNN <name>
 
-## r2 — 2026-06-08 — verdict: approve
+## r2 — 2026-06-08 — verdict: accept
 - ...
 
 ## r1 — 2026-06-08 — verdict: revise
@@ -115,8 +165,9 @@ to inspect what the text actually changed to.
 - finding 2
 ```
 
-Verdict is exactly one of `approve` / `revise` / `reject`. It sets `status`
-(`approve→needs-plan`, `revise→needs-revision`, `reject→rejected`).
+Verdict is exactly one of `accept` (definition gate calls it `approve`) /
+`revise` / `reject`. It sets `status`: `accept→` next gate, `revise→` the doer's
+`needs-*` queue, `reject→rejected`.
 
 ## Hard rules
 
@@ -127,30 +178,36 @@ Verdict is exactly one of `approve` / `revise` / `reject`. It sets `status`
   review that asks for more than one seed is **malformed** — strip it down to
   seed 42 instead. Read a sub-noise effect as **inconclusive, not real**; do
   not "add seeds to confirm" — log it inconclusive and move on.
-- **3-round cap.** On `round: 3` the reviewer may only `approve` or `reject` —
-  `revise` is forbidden. No idea cycles more than 3 times.
-- **Cost-gate the loop.** The review loop exists to stop bad ideas *before they
-  burn compute*. Only gate the expensive ones:
-  - tiny1m3m ideas (~2 min on a T4): scout sets `status: needs-run` directly,
-    skipping review.
-  - screen20m+ ideas: full review loop (`needs-review`).
+- **3-round cap — every gate.** Each gate runs its own `round` budget. On
+  `round: 3` the critic may only `accept` or `reject` — `revise` is forbidden,
+  forcing the call. No idea cycles more than 3 times *within a gate*; on `accept`
+  into the next gate the critic resets `round` to 1.
+- **Cost-gate the loop.** The gates exist to stop bad ideas *before they burn
+  compute*. Only gate the expensive ones past taste:
+  - tiny1m3m ideas (~2 min on a T4): the taste-reviewer routes `accept` straight
+    to `needs-run`, skipping the definition + code gates.
+  - screen20m+ ideas: full path (`accept` → `needs-review` → … → `needs-run`).
+  - **Taste gates everything** — even cheap ideas must be worth a slot.
 - **Rejects leave the scan path.** `rejected` → move the folder to
   `autoresearch/ideas/_closed/` and append a line to `autoresearch/closed.md`.
   Active greps stay clean.
-- **One verdict per review pass.** A review that ends without exactly one
-  verdict is malformed.
-- **Only the reviewer closes.** The dedup list `autoresearch/closed.md` has one
-  agent on its write path: the reviewer, on `reject`. The code-implementer never
-  closes — if blocked it bounces the idea back to `needs-review`. Post-run null
-  results are appended to `closed.md` by the evidence/run step (human, for now).
-  The miner/scout **read** `closed.md` before filing; never write it.
+- **One verdict per critic pass.** A review that ends without exactly one verdict
+  is malformed.
+- **Critics close, doers don't.** Each gate's critic is on the `closed.md` write
+  path, on its own `reject` (taste-reviewer, reviewer, code-reviewer). Tag the
+  reason by gate: `taste-reject` / `reject` / `code-reject`. Doers never close —
+  if a doer is blocked it bounces the idea back to a `needs-*` queue, not to
+  `rejected`. Post-run null results are appended to `closed.md` by the
+  evidence/run step (human, for now). The miner **reads** `closed.md` before
+  filing; never writes it.
 
 ## Agent → prompt map
 
 | Agent | Prompt | Greps | Writes |
 |---|---|---|---|
-| scout (in-repo) | `autoresearch/prompts/idea-scout.md` | — | `idea.md` (`needs-review` or `needs-run`) |
-| miner (external) | `autoresearch/prompts/idea-miner.md` | Step 0 WIP gate, then mines | `idea.md` (`needs-review` or `needs-run`); skips if `active≥6` or `needs-run≥4` |
+| miner | `autoresearch/prompts/idea-miner.md` | `needs-repitch`, then Step 0 WIP gate + mine | `idea.md` (`needs-taste`); re-pitches `needs-repitch`; skips mining if `active≥6` |
+| taste-reviewer | `autoresearch/prompts/idea-taste.md` | `needs-taste` | appends `taste.md`, → `needs-review`/`needs-run`/`needs-repitch`/`rejected` |
 | reviewer | `autoresearch/prompts/idea-reviewer.md` | `needs-review` | appends `review.md`, flips status |
 | reviser | `autoresearch/prompts/idea-reviser.md` | `needs-revision` | edits `idea.md`, `round++` |
-| code-implementer | `autoresearch/prompts/code-implementer.md` | `needs-plan` | `plan.md` + code, → `needs-run` |
+| code-implementer | `autoresearch/prompts/code-implementer.md` | `needs-recode`, then `needs-plan` | `plan.md` + code, → `needs-codereview` |
+| code-reviewer | `autoresearch/prompts/code-reviewer.md` | `needs-codereview` | appends `codereview.md`, → `needs-run`/`needs-recode`/`rejected` |

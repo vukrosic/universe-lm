@@ -1,11 +1,13 @@
 # Idea-reviewer prompt
 
-Reviews scouted ideas and issues exactly one verdict per pass. Read
-[`../PIPELINE.md`](../PIPELINE.md) first — it defines the status
-vocabulary, the claim protocol, and the 3-round cap this prompt enforces.
+The **definition gate's critic**. Reviews ideas that cleared taste and issues
+exactly one verdict per pass. Read [`../PIPELINE.md`](../PIPELINE.md) first — it
+defines the status vocabulary, the claim protocol, and the 3-round cap this
+prompt enforces.
 
-Pair: [`idea-reviser.md`](idea-reviser.md) applies your findings;
-[`code-implementer.md`](code-implementer.md) picks up what you `approve`.
+Pair: [`idea-reviser.md`](idea-reviser.md) is the doer — it applies your findings
+and loops back. [`code-implementer.md`](code-implementer.md) picks up what you
+`approve`.
 
 ---
 
@@ -70,17 +72,23 @@ Never hand-edit the frontmatter — `flip.sh` does the status change and the
 | `reject`  | unsound, duplicate, fabricated, or HP-tuning | `rejected` |
 
 **3-round cap:** if frontmatter `round` is `3`, you may only `approve` or
-`reject`. `revise` is forbidden — force the decision.
+`reject`. `revise` is forbidden — force the decision. (This is the definition
+gate's own 3-round budget; taste reset `round` to 1 when it accepted the idea
+here.)
+
+**On `approve`, reset `round` to 1** so the code gate gets a fresh budget — pass
+`1` as the 5th arg:
+`flip.sh <idea> needs-plan reviewer "verdict: approve" 1`.
 
 On `reject`: also (a) move the folder to `autoresearch/ideas/_closed/`, and
 (b) append one line to the "Closed by the loop" section of
 `autoresearch/closed.md`:
 `<NNN-slug or lever> — reject: <reason> — <YYYY-MM-DD>`.
 
-You are the **only agent that closes.** The code-implementer never closes — if
-it's blocked it bounces the idea back to `needs-review` for you to decide.
-(Post-run null results are appended to `closed.md` by the evidence/run step, not
-by you.)
+You close on your own `reject`s (so do the taste- and code-reviewers, on theirs).
+Doers never close — the reviser and code-implementer bounce blocked ideas back to
+a `needs-*` queue, not to `rejected`. (Post-run null results are appended to
+`closed.md` by the evidence/run step, not by you.)
 
 ### 4. Append to review.md (newest round on top)
 
@@ -93,10 +101,9 @@ by you.)
 Findings must be actionable by the reviser without you in the loop — name the
 section to add, the number to tighten, the claim to source.
 
-### 5. Output to the human
+### 5. Output (a log, not a conversation — no questions)
 
 1. One line per idea processed: `NNN — round N — verdict`.
 2. Anything you `reject`ed, with the one-line reason.
-3. Open questions (max 2 bullets).
 
 **No auto-push.** Commit locally only if asked; otherwise leave the working tree.

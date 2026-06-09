@@ -1,10 +1,13 @@
 # Code-implementer prompt
 
-Turns an `approve`d idea into a `plan.md` + the actual code, then queues it to
-run. Read [`../PIPELINE.md`](../PIPELINE.md) first — status
-vocabulary, claim protocol.
+Turns an `approve`d idea into a `plan.md` + the actual code, then hands it to the
+code-reviewer. Read [`../PIPELINE.md`](../PIPELINE.md) first — status vocabulary,
+claim protocol, the 3-round cap.
 
 Picks up where [`idea-reviewer.md`](idea-reviewer.md) left off (`needs-plan`).
+You are the **doer** in the code loop: [`code-reviewer.md`](code-reviewer.md) is
+your adversary and sends code back via `needs-recode`. You two loop until it
+`accept`s, or round 3 forces the call.
 
 ---
 
@@ -34,8 +37,10 @@ For each hit, in order:
    transfer argument are settled) and `review.md` (the verdict context).
 2. **Claim it**: `autoresearch/bin/flip.sh <idea> planning code-impl "claimed"`.
 3. Write `plan.md`, implement, self-check (below).
-4. **Release**: `autoresearch/bin/flip.sh <idea> needs-run code-impl "plan+code done"`.
-   Fill or update the idea's row in the `autoresearch/queue.md` run board.
+4. **Release to the code-reviewer**:
+   `autoresearch/bin/flip.sh <idea> needs-codereview code-impl "plan+code done"`.
+   Do **not** route to `needs-run` yourself — the code-reviewer does that on
+   `accept`.
 5. Next hit. Stop when none remain.
 
 Never hand-edit the frontmatter — `flip.sh` does the status change and the
@@ -93,12 +98,40 @@ copied from idea.md>
 - The treatment path actually exercises the new code.
 - `plan.md`'s pass/fail bar matches `idea.md`.
 
-### 6. Output to the human
+### 6. Output (a log, not a conversation — no questions)
 
-1. One line per idea: `NNN — plan + code done — queued needs-run`.
+1. One line per idea: `NNN — plan + code done — needs-codereview`.
 2. Files written/edited (path + one-line summary).
 3. Any shared-file coordination issue you hit (max 2 bullets).
-4. The exact run command for the human to launch.
 
 **No auto-push.** Commit locally only if asked; wait for human review before any
-push. Do not launch remote runs yourself — leave the idea at `needs-run`.
+push. Do not launch remote runs yourself.
+
+---
+
+## Re-code mode (you are the doer in the code loop)
+
+The code-reviewer ([`code-reviewer.md`](code-reviewer.md)) sends code back when it
+finds a bug, HP drift, or spec-infidelity. You fix it — same agent, no separate
+fixer. **Run this queue at the start of every pass, before claiming new
+`needs-plan` work** (finishing a live implementation beats starting a cold one):
+
+```bash
+grep -l "status: needs-recode" autoresearch/ideas/*/idea.md
+```
+
+For each hit, in order:
+
+1. Read `codereview.md` — the **latest** round's findings (top of file). Re-read
+   `plan.md`, `idea.md`, and your diff (`git diff`). Note the `round`.
+2. **Claim it**: `autoresearch/bin/flip.sh <idea> recoding code-impl "claimed"`.
+3. Close **every** finding in the latest round — fix the file:line the reviewer
+   named, re-run the self-check (§5), update `plan.md` if the change moved a cost
+   or control. If you **disagree** with a finding, apply what you can and add a
+   one-line note to `plan.md` stating why; the next review adjudicates.
+4. **Release** with the bumped round as the 5th arg:
+   `autoresearch/bin/flip.sh <idea> needs-codereview code-impl "<k findings applied>" <round+1>`.
+5. Next hit. Then claim new `needs-plan` work.
+
+One pass per claim — fix, bump, release; don't re-judge your own code (that's the
+code-reviewer's call).

@@ -1,0 +1,7 @@
+{"ts":"2026-06-08T16:52:54Z","agent":"reviewer","idea":"003-soap","from":"needs-review","to":"reviewing","round":1,"note":"claimed r1"}
+{"ts":"2026-06-08T16:53:27Z","agent":"reviewer","idea":"003-soap","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-08T16:57:07Z","agent":"reviser","idea":"003-soap","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-08T16:58:02Z","agent":"reviser","idea":"003-soap","from":"revising","to":"needs-review","round":2,"note":"applied 6 findings (routing, 1D routing, bf16 pre-flight, seed protocol, transfer, flag placement)"}
+{"ts":"2026-06-08T17:00:32Z","agent":"reviewer","idea":"003-soap","from":"needs-review","to":"reviewing","round":2,"note":"claimed r2"}
+{"ts":"2026-06-08T17:00:52Z","agent":"reviewer","idea":"003-soap","from":"reviewing","to":"needs-plan","round":2,"note":"verdict: approve"}
+{"ts":"2026-06-09T00:39:45Z","agent":"code-impl","idea":"003-soap","from":"needs-plan","to":"planning","round":2,"note":"claimed"}

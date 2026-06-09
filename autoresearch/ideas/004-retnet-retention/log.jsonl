@@ -1,0 +1,6 @@
+{"ts":"2026-06-08T16:53:30Z","agent":"reviewer","idea":"004-retnet-retention","from":"needs-review","to":"reviewing","round":1,"note":"claimed r1"}
+{"ts":"2026-06-08T16:54:04Z","agent":"reviewer","idea":"004-retnet-retention","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-08T16:58:11Z","agent":"reviser","idea":"004-retnet-retention","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-08T16:58:57Z","agent":"reviser","idea":"004-retnet-retention","from":"revising","to":"needs-review","round":2,"note":"applied 6 findings (LoC breakdown, routing, transfer, field-moved justification, seed protocol, closed-list rule)"}
+{"ts":"2026-06-08T17:00:32Z","agent":"reviewer","idea":"004-retnet-retention","from":"needs-review","to":"reviewing","round":2,"note":"claimed r2"}
+{"ts":"2026-06-08T17:01:13Z","agent":"reviewer","idea":"004-retnet-retention","from":"reviewing","to":"needs-plan","round":2,"note":"verdict: approve"}

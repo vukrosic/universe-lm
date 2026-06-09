@@ -13,6 +13,7 @@ from configs.llm_config import LLMConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
 from optimizers.cautious_adamw import CautiousAdamW
+from optimizers.soap import SOAP
 from training.checkpointing import (
     capture_git_metadata,
     capture_rng_state,
@@ -76,6 +77,7 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
     adamw_params = []
+    soap_params = []
 
     for name, param in model.named_parameters():
         is_muon_candidate = (
@@ -117,6 +119,20 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             and param.requires_grad
         ):
             is_muon_candidate = True
+        # R4 lever — SOAP: route 2-D non-Muon AdamW params to the SOAP
+        # optimizer (Adam in Shampoo's eigenbasis). Only 2-D params
+        # (`token_embedding`, `emb_proj`, `out_proj`) — 1-D scalars
+        # and `*.norm.weight` stay on plain AdamW (eigendecomp is
+        # meaningless on 1-D). Default off → step-0 identical to
+        # baseline. See autoresearch/ideas/003-soap/plan.md.
+        if (
+            getattr(config, "use_soap", False)
+            and param.ndim == 2
+            and not is_muon_candidate
+            and param.requires_grad
+        ):
+            soap_params.append(param)
+            continue
         if is_muon_candidate:
             muon_params.append(param)
         else:
@@ -124,6 +140,7 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
     print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
+    print(f"  SOAP parameters: {sum(p.numel() for p in soap_params):,}")
 
     muon_optimizer = Muon(
         muon_params,
@@ -173,7 +190,27 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             fused=device.type == "cuda",
         )
 
-    return [muon_optimizer, adamw_optimizer]
+    optimizers = [muon_optimizer, adamw_optimizer]
+    # SOAP gate (Vyas et al. 2024) — see
+    # autoresearch/ideas/003-soap/plan.md. `use_soap=True` swaps the
+    # eligible 2-D params (`token_embedding`, `emb_proj`, `out_proj`)
+    # to a SOAP optimizer; 1-D params stay on the existing AdamW.
+    # `use_soap=False` (default) → `soap_params=[]` → no SOAP
+    # optimizer instantiated, bit-identical to baseline.
+    if getattr(config, "use_soap", False) and soap_params:
+        soap_optimizer = SOAP(
+            soap_params,
+            lr=config.adamw_lr,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=config.weight_decay,
+            precondition_frequency=getattr(
+                config, "use_soap_precondition_freq", 10),
+            precondition_eps=1e-6,
+        )
+        optimizers.append(soap_optimizer)
+
+    return optimizers
 
 
 def train_model(
