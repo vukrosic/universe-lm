@@ -9,12 +9,19 @@ Reads live from autoresearch/ideas/*/idea.md and evidence.md, and walks
 remote-results/ to find per-step val_loss series. Status vocab = PIPELINE.md.
 Run:  python3 tools/status_dashboard.py   → http://localhost:8080
 """
-import http.server, socketserver, glob, os, re, json, html
+import http.server, socketserver, glob, os, re, json, html, subprocess
 from urllib.parse import urlparse, parse_qs
 
 PORT = int(os.environ.get("PORT", "8080"))
 IDEAS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "autoresearch", "ideas"))
 REMOTE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "remote-results"))
+
+# tmux sessions we never want to show as "MiniMax workers" on the board.
+AGENT_EXCLUDE = {"agent", "dash-coder"}
+# Substrings whose presence in the recent tail indicates Claude is actively
+# generating/tool-using (covers spinner verbs and the "esticulating"/"searched" tokens).
+BUSY_TOKENS = ("Puzzling", "Thinking", "Considering", "Calculating",
+               "Crunch", "Cook", "esticulat", "searched")
 
 # (label, color, [member statuses], one-line meaning)
 GROUPS = [
@@ -51,6 +58,51 @@ def read_statuses():
         except OSError:
             continue
         out[slug] = st
+    return out
+
+def _tmux_sessions():
+    """Return a list of tmux session names, or [] if tmux is absent / empty."""
+    try:
+        r = subprocess.run(
+            ["tmux", "ls", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if r.returncode != 0:
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+def _tmux_capture(name):
+    """Capture the last ~45 lines of session `name`, returning raw text or ''."""
+    try:
+        r = subprocess.run(
+            ["tmux", "capture-pane", "-t", name, "-p", "-S", "-45"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if r.returncode != 0:
+        return ""
+    return r.stdout or ""
+
+def read_agents():
+    """List MiniMax-worker tmux sessions (excluding AGENT_EXCLUDE), with their tail.
+    Returns: [{name, tail, busy}]"""
+    out = []
+    for name in _tmux_sessions():
+        if name in AGENT_EXCLUDE:
+            continue
+        raw = _tmux_capture(name)
+        # last ~35 non-blank lines, joined with \n
+        non_blank = [ln for ln in raw.splitlines() if ln.strip()]
+        tail_lines = non_blank[-35:]
+        tail = "\n".join(tail_lines)
+        # "busy" looks only at the most recent slice (last ~10 non-blank lines),
+        # so a stale spinner from earlier doesn't lock the dot on green forever.
+        recent = "\n".join(non_blank[-10:])
+        busy = any(tok in recent for tok in BUSY_TOKENS)
+        out.append({"name": name, "tail": tail, "busy": busy})
     return out
 
 def read_idea(slug):
@@ -260,8 +312,21 @@ svg .pt{fill:#58a6ff}
 .md a{color:#58a6ff;text-decoration:none}
 .md a:hover{text-decoration:underline}
 .md hr{border:0;border-top:1px solid #30363d;margin:14px 0}
+/* MiniMax workers panel */
+.workers{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 12px;flex:0 0 auto}
+.workers h2{font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;color:#8b949e;display:flex;align-items:center;gap:10px}
+.workers h2 .ct{background:#30363d;color:#e6edf3;border-radius:11px;padding:1px 8px;font-weight:700}
+.workers .row{display:flex;gap:10px;flex-wrap:wrap}
+.worker{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 10px;flex:1 1 320px;min-width:300px;display:flex;flex-direction:column;gap:6px}
+.worker .hdr{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#e6edf3}
+.worker .dot{width:9px;height:9px;border-radius:50%;background:#6e7681;flex:0 0 auto;box-shadow:0 0 0 2px #0d1117}
+.worker .dot.busy{background:#3fb950;box-shadow:0 0 0 2px #0d1117,0 0 6px #3fb95080}
+.worker .state{font-size:10px;color:#8b949e;font-weight:500;text-transform:uppercase;letter-spacing:.4px;margin-left:auto}
+.worker pre{margin:0;background:#010409;border:1px solid #21262d;border-radius:6px;padding:6px 8px;font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d1d9;white-space:pre-wrap;word-wrap:break-word;max-height:220px;overflow:auto;line-height:1.35}
+.workers .none{color:#484f58;font-size:12px;padding:4px 2px}
 </style></head><body>
 <h1>autoresearch board <small id=meta>loading…</small></h1>
+<div class=workers id=workers><h2><span>MiniMax workers</span><span class=ct id=workers-ct>0</span></h2><div class=row id=workers-row><div class=none>loading…</div></div></div>
 <div class=board id=board></div>
 <div class=reader id=reader><span class=hint>Click an idea above to read its idea.md here.</span></div>
 <script>
@@ -484,7 +549,43 @@ async function show(slug){
   if(mds[1] && result && result.evidence) mds[1].innerHTML = renderMarkdown(result.evidence);
 }
 function htmlEscape(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function loadAgents(){
+  let agents = [];
+  try {
+    const r = await fetch('api/agents');
+    if(r.ok) agents = await r.json();
+  } catch(e) { agents = []; }
+  const row = document.getElementById('workers-row');
+  document.getElementById('workers-ct').textContent = agents.length;
+  if(!agents.length){
+    row.innerHTML = '<div class=none>no MiniMax workers (excluding agent, dash-coder)</div>';
+    return;
+  }
+  // Preserve scroll positions so the panel doesn't jump when the tail updates.
+  const scrolls = {};
+  row.querySelectorAll('.worker').forEach(w => {
+    const n = w.dataset.name, pre = w.querySelector('pre');
+    if(n && pre) scrolls[n] = {top: pre.scrollTop, height: pre.scrollHeight, atBottom: (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 8};
+  });
+  row.innerHTML = '';
+  for(const a of agents){
+    const w = document.createElement('div');
+    w.className = 'worker'; w.dataset.name = a.name;
+    w.innerHTML = `<div class=hdr><span class="dot${a.busy?' busy':''}"></span>`+
+      `<span>${htmlEscape(a.name)}</span>`+
+      `<span class=state>${a.busy?'busy':'idle'}</span></div>`+
+      `<pre>${htmlEscape(a.tail||'')}</pre>`;
+    row.appendChild(w);
+    // Newest-at-bottom: scroll the <pre> to the end on first render or if the
+    // user was already pinned to the bottom; otherwise keep their scroll offset.
+    const pre = w.querySelector('pre');
+    const prev = scrolls[a.name];
+    if(!prev || prev.atBottom) pre.scrollTop = pre.scrollHeight;
+    else pre.scrollTop = prev.top;
+  }
+}
 load(); setInterval(load, 5000);     // refresh board without disturbing the reader
+loadAgents(); setInterval(loadAgents, 5000);
 </script></body></html>"""
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -504,6 +605,8 @@ class H(http.server.BaseHTTPRequestHandler):
             self._send(200, PAGE.replace("__GROUPS__", json.dumps(groups)))
         elif u.path == "/api/board":
             self._send(200, json.dumps({"ideas": read_statuses()}), "application/json")
+        elif u.path == "/api/agents":
+            self._send(200, json.dumps(read_agents()), "application/json")
         elif u.path == "/api/idea":
             slug = parse_qs(u.query).get("slug", [""])[0]
             txt = read_idea(slug)

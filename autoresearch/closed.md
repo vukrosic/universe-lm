@@ -28,6 +28,12 @@ The code-implementer never closes — if blocked it bounces the idea back to
 ## Closed by the loop (append below, newest first)
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 019-dyt — reject: mathematical duplicate of closed `squash` lever (models/layers.py:52-61 SquashNorm is `g·tanh(α·x)`, no reduction, operationally identical); closed.md:24 + findings.md:60/165 already mark `squash/DyT` as falsified (val 7.6278, diverged); α-shape tweak (per-dim→scalar, 1.0→0.5) is an init HP, not a mechanism change — 2026-06-09
+- 018-ademamix — taste-reject: bet cannot fire at tiny1m3m (slow EMA half-life ~7k steps vs ~92 step run; 99% init-weighted; lever only fires at ≥100k steps per paper) — 2026-06-09
+- 010-polyloss — null: trt=6.5938 vs ctrls 6.5991/6.6050 (Δ-0.0053 < ctrl-gap 0.0059, inside variance) at tiny1m3m — 2026-06-09
+- 006-schedule-free-adamw — null: trt=6.8056 vs ctrls 6.5953/6.6091 (+0.21 worse, wrong sign) at tiny1m3m; ⚠️ session ctrl drifted +0.19 vs prior days (6.39) — suspected baseline pollution from wholesale trainer.py/llm_config.py sync — 2026-06-09
+- 012-gated-deltanet — taste-reject: re-pitch of 008; same Yang et al. gated delta-rule linear attention, miner concedes mechanism "doesn't fire at this scale" — slot would confirm known tier-mismatch — 2026-06-09
+- 014-sigmoid-loss — taste-reject: re-pitch of 007; same mechanism (sigmoid + z-loss) and same citation flaw (cites arXiv:2405.18719 = CoPE paper, not sigmoid loss) — 2026-06-09
 - 001-cautious-muon — null: trt=6.4125 vs ctrls 6.3875/6.4050 (loses to both; previous orphan-sweep pass inside variance) at tiny1m3m — 2026-06-09
 - 004-retnet-retention — null: trt=6.4162 vs ctrls 6.3875/6.4050 (loses to both; v1 ships kernel+probe, v2 wiring is the real A/B) at tiny1m3m — 2026-06-09
 - 005-decoupled-qkv-muon — null: trt=6.3909 vs ctrls 6.3875/6.4050 (sits between, inside variance) at tiny1m3m — 2026-06-09

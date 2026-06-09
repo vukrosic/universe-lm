@@ -1,0 +1,10 @@
+{"ts":"2026-06-09T11:34:56Z","agent":"taste","idea":"011-cautious-lion","from":"needs-taste","to":"needs-review","round":1,"note":"accept: orthogonal to 001/002 (sign-direction mask, not variance); null still informative on Cautious-as-general-trick. Reviewer must verify Lion is in routing table before A/B."}
+{"ts":"2026-06-09T11:47:33Z","agent":"reviewer","idea":"011-cautious-lion","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise — Lion not in routing table; need Lion baseline first; tighten PASS bar"}
+{"ts":"2026-06-09T12:06:46Z","agent":"reviser","idea":"011-cautious-lion","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:07:29Z","agent":"reviser","idea":"011-cautious-lion","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings: bare-Lion prerequisite ctrl, PASS tightened to -0.015, NULL band |Δ|<0.01, clamp(min=0.1) pinned"}
+{"ts":"2026-06-09T12:09:46Z","agent":"reviewer","idea":"011-cautious-lion","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-09T12:10:09Z","agent":"reviewer","idea":"011-cautious-lion","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T12:12:46Z","agent":"code-impl","idea":"011-cautious-lion","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:17:49Z","agent":"code-impl","idea":"011-cautious-lion","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T12:27:24Z","agent":"code-reviewer","idea":"011-cautious-lion","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: wiring verified end-to-end, identity-safe at step 0, default OFF bit-identical, LoC within budget"}
+{"ts":"2026-06-09T12:39:46Z","agent":"runner","idea":"011-cautious-lion","from":"needs-run","to":"done","round":1,"note":"WIN: trt=6.3941 vs ctrls 6.4253/6.4262 (Δ -0.0312/-0.0321 ≫ gap 0.0009; in-session WIN, in-session recovery to cross-day baseline 6.39)"}

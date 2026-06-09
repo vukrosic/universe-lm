@@ -1,8 +1,8 @@
 ---
 id: 012-gated-deltanet
-status: needs-taste
+status: rejected
 round: 1
-updated: 2026-06-09T09:35:00Z
+updated: 2026-06-09T11:35:15Z
 ---
 
 # 012 — Gated DeltaNet

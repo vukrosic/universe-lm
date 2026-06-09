@@ -214,6 +214,14 @@ class MinimalLLM(nn.Module):
         self.use_nope = getattr(config, "use_nope", False)
         self.use_fire_pe = getattr(config, "use_fire_pe", False)
         self.fire_pe_d_phi = getattr(config, "fire_pe_d_phi", 4)
+        # 013 — CoPE (content-aware positional encoding, replaces RoPE).
+        self.use_cope = getattr(config, "use_cope", False)
+        # 020 — Forgetting Transformer (per-head learnable forget gate,
+        # multiplicative on attention probabilities post-softmax).
+        # Conservative extension of softmax attention; default off →
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/020-forgetting-attn/plan.md`.
+        self.use_fox = getattr(config, "use_fox", False)
         self.rope_base = getattr(config, "rope_base", 10000)
         self.use_tied_qk = getattr(config, "use_tied_qk", False)
         self.use_mla = getattr(config, "use_mla", False)
@@ -229,9 +237,16 @@ class MinimalLLM(nn.Module):
         self.norm_type = getattr(config, "norm_type", "rmsnorm")
         self.qk_norm_type = getattr(config, "qk_norm_type", "rmsnorm")
         self.v_norm_type = getattr(config, "v_norm_type", "")
+        # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442):
+        # when True, override the Q/K norm from RMSNorm to LayerNorm,
+        # bounding the per-head logit. Default off → bit-identical
+        # baseline. See autoresearch/ideas/016-qk-norm/plan.md.
+        self.use_qk_layernorm = getattr(config, "use_qk_layernorm", False)
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
         self.use_attn_sink = getattr(config, "use_attn_sink", False)
+        # 017 — Sub-LN / Sandwich block (residual-stream re-bounding).
+        self.use_sub_ln = getattr(config, "use_sub_ln", False)
         # Query-tweaks: 29 new flags (see docs/research-plans/query-tweaks/plan.md).
         self.q_norm_type = getattr(config, "q_norm_type", self.qk_norm_type)
         self.use_alibi_bias = getattr(config, "use_alibi_bias", False)
@@ -319,6 +334,8 @@ class MinimalLLM(nn.Module):
                     use_nope=self.use_nope,
                     use_fire_pe=self.use_fire_pe,
                     fire_pe_d_phi=self.fire_pe_d_phi,
+                    use_cope=self.use_cope,
+                    use_fox=self.use_fox,
                     rope_base=self.rope_base,
                     use_tied_qk=self.use_tied_qk,
                     use_mla=self.use_mla,
@@ -334,9 +351,12 @@ class MinimalLLM(nn.Module):
                     norm_type=self.norm_type,
                     qk_norm_type=self.qk_norm_type,
                     v_norm_type=self.v_norm_type,
+                    # #16 QK-Norm pass-through to the block.
+                    use_qk_layernorm=self.use_qk_layernorm,
                     use_multiscale_heads=self.use_multiscale_heads,
                     use_parallel_block=self.use_parallel_block,
                     use_attn_sink=self.use_attn_sink,
+                    use_sub_ln=self.use_sub_ln,
                     q_norm_type=self.q_norm_type,
                     use_alibi_bias=self.use_alibi_bias,
                     use_q_temp_token=self.use_q_temp_token,

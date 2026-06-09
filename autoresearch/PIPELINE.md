@@ -1,5 +1,15 @@
 # Idea pipeline
 
+> ## 🔴 PRIME DIRECTIVE — THE GPU MUST NEVER BE IDLE
+> The entire pipeline exists to keep the remote GPU **busy**. An idle box is the
+> one failure this system must not tolerate — it is wasted rented compute and a
+> stalled research loop. Every gate's real job is to keep `needs-run` non-empty
+> so the runner always has work. **An idle GPU is an incident, not a steady
+> state:** when the box is idle, whatever stage is starving the queue (taste,
+> definition, code, or mining) is the top priority — drain it, don't wait. Aim
+> for **≥3 ideas at `needs-run`/`running` at all times**; if that number drops,
+> the upstream agents are behind and must run *now*.
+
 Multi-agent loop that takes an idea from "mined" to "ran on hardware".
 Agents are triggered manually and occasionally; each one **polls** the idea
 folders, claims work by reading + flipping a status field, and stops when its
@@ -195,6 +205,11 @@ Verdict is exactly one of `accept` (definition gate calls it `approve`) /
 
 ## Hard rules
 
+- **🔴 THE GPU MUST NEVER BE IDLE.** Keeping the box fed is the pipeline's prime
+  directive (see banner at top). The queue target is **≥3 ideas at
+  `needs-run`/`running`**. An idle GPU means an upstream stage is starving the
+  queue — that stage is the immediate priority. No agent waits for a human to
+  notice an idle box; the starving gate runs on its own.
 - **🔴 ONE SEED ONLY.** Every ablation runs at a **single fixed seed (42)** —
   never multi-seed. No `≥3 seeds`, no seed sweeps, no per-seed means. A single
   seed keeps each A/B cheap enough to actually run on the constrained hardware;

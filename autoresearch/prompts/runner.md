@@ -10,6 +10,18 @@ This agent is **run + analyze in one pass** — there is no separate analyzer.
 
 ---
 
+> ## 🔴 THE GPU MUST NEVER BE IDLE — this is your prime directive
+> You own the metal. An idle box is the one outcome you exist to prevent: it is
+> wasted rented compute and a stalled research loop. The moment a slot frees,
+> launch the next `needs-run` idea — never let the box sit empty waiting for a
+> human. If `needs-run` is empty and the box is idle, that is an **incident**:
+> say so loudly in your output (`GPU IDLE: no needs-run candidates — upstream
+> starving`) so the upstream gates get kicked. Aim to keep **≥3 ideas at
+> `needs-run`/`running`**. A box that idled while ideas were anywhere in the pipe
+> is a pipeline failure.
+
+---
+
 > ## 🔴 ONE SEED ONLY — seed 42, always
 > Every run is a **single fixed seed (42)** A/B: one control, one treatment, same
 > seed. Never a seed sweep. Box variance at tiny1m3m is **~0.04 val loss**

@@ -1,0 +1,11 @@
+{"ts":"2026-06-09T12:25:53Z","agent":"taste","idea":"015-moonlight-muon-rms","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:26:35Z","agent":"taste","idea":"015-moonlight-muon-rms","from":"tasting","to":"needs-review","round":1,"note":"accept: orthogonal mechanism (per-tensor RMS rescale on ortho'd update) — distinct from cautious-muon (sign mask), SOAP (precond), schedule-free (averaging), decoupled-QKV (routing). Sharp bet: shape-dependent RMS mismatch rebalances implicit LR across 1:1 heads vs 1:4 FFN up. Null teaches that ortho-step alone is enough at our scale. Family density flagged for definition gate."}
+{"ts":"2026-06-09T12:34:18Z","agent":"reviewer","idea":"015-moonlight-muon-rms","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:34:52Z","agent":"reviewer","idea":"015-moonlight-muon-rms","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T12:41:55Z","agent":"code-impl","idea":"015-moonlight-muon-rms","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:45:02Z","agent":"code-impl","idea":"015-moonlight-muon-rms","from":"planning","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:46:14Z","agent":"code-impl","idea":"015-moonlight-muon-rms","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T12:55:45Z","agent":"code-rev","idea":"015-moonlight-muon-rms","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:56:05Z","agent":"code-rev","idea":"015-moonlight-muon-rms","from":"codereviewing","to":"needs-run","round":1,"note":"accept: faithful c·sqrt(max(d_in,d_out)) post-mul on ortho'd update, OFF path bit-identical, no HP drift, LoC well under cap"}
+{"ts":"2026-06-09T13:00:36Z","agent":"runner","idea":"015-moonlight-muon-rms","from":"needs-run","to":"running","round":1,"note":"claimed: queuing on vast-34386"}
+{"ts":"2026-06-09T13:47:10Z","agent":"runner","idea":"015-moonlight-muon-rms","from":"running","to":"needs-run","round":1,"note":"reclaim: stale running (no live tmux queue, GPU idle); relaunch with 016+017"}

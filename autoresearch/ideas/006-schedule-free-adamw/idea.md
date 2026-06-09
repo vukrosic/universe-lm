@@ -1,8 +1,8 @@
 ---
 id: 006-schedule-free-adamw
-status: needs-codereview
-round: 1
-updated: 2026-06-09T10:19:18Z
+status: done
+round: 2
+updated: 2026-06-09T12:05:13Z
 ---
 
 # 006 — Schedule-Free AdamW

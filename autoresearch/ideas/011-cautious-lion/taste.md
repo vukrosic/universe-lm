@@ -1,0 +1,6 @@
+## r1 — 2026-06-09 — verdict: accept
+- **Leverage**: real. 001-cautious-muon and 002-cautious-adamw are both nulls, but Lion is mechanistically *not* the same target — Lion's "momentum" is sign(β·m+(1-β)·g), the cautious mask there is a *direction* filter, not a *variance* filter. A null here is a sharp, novel statement ("Cautious is variance-specific, sign-update-general is also off the table"). A win is a free lever in a slot we don't currently have.
+- **Niche fit**: identity-safe (mask has no params), zero-init-friendly, ~5-10 LoC, no compute cost. Tiny1m3m is fine — Lion's behaviour is parameter-count-agnostic, unlike the linear-attention family.
+- **Information value either way**: yes. A clean null still kills the Cautious-as-general-trick hypothesis.
+- **Caveat to flag at review** (not a taste issue): the Notes section admits "Lion is not currently in our routing table — implicitly requires adding Lion too." The definition gate must require Lion already wired before this A/B makes sense, otherwise we're really running "add-Lion" as the A/B, not "Cautious-Lion." Reviewer should reject the plan if Lion isn't a first-class optimizer option already.
+- Bet is crisp: "we expect −0.01 to −0.03 vs Lion baseline because the mask filters gradient-momentum sign disagreement, distinct from variance-correction." Good to ship.

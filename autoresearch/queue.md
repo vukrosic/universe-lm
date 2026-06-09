@@ -19,9 +19,15 @@ launches and pulls. Raw results land in `remote-results/<date>-vast-<tier>/`.
 
 | Slot | Folder | Run | Run state |
 |---|---|---|---|
-| 1 | empty | — | — (was 001, finalized 2026-06-09, NULL) |
-| 2 | empty | — | — |
+| 1 | `011-cautious-lion/` | tiny1m3m + cautious-lion, s42 | DONE (**WIN**) 12:37Z, see evidence.md |
+| 2 | empty | — | — (box idle, waiting on 015 code-impl) |
 | 3 | empty | — | — |
+
+> 006-schedule-free-adamw finalized 2026-06-09T12:01Z — NULL (trt 6.8056 vs ctrls
+> 6.5953/6.6091, +0.21 worse). 010-polyloss finalized 2026-06-09T12:11Z — NULL
+> (trt 6.5938 vs ctrls 6.5991/6.6050, inside variance). ⚠️ both batches: session
+> ctrl drifted +0.19 vs prior days — within-session A/B valid, cross-day not (see
+> evidence.md / closed.md; suspected baseline pollution from wholesale file sync).
 
 > 2026-06-09 ~06:27-06:44Z batch ran ctrl+001+003+004+005+009+ctrl2 on
 > vast-34386 (RTX 3060). 003-orphan FAIL; 001/004/005 NULL; **009 WIN** (largest
@@ -30,7 +36,13 @@ launches and pulls. Raw results land in `remote-results/<date>-vast-<tier>/`.
 > Trigger the relevant agents to push them through; the runner will pick them
 > up once they hit `needs-run`.
 
-Rule: aim for 3 in the queue at all times so the remote never idles.
+> ## 🔴 THE GPU MUST NEVER BE IDLE
+> Hard invariant, not an aspiration. Keep **≥3 ideas at `needs-run`/`running`** so
+> the remote always has work the moment a slot frees. An idle box = wasted rented
+> compute = an **incident**: find the upstream stage starving the queue (taste →
+> definition → code → mining) and drain it immediately. If all slots are empty and
+> nothing is `needs-run`, the upstream agents are behind — launch them *now*, don't
+> wait for a human to notice. See the prime directive in [`PIPELINE.md`](PIPELINE.md).
 
 ## Ideas board (in folder-number order)
 
@@ -55,6 +67,9 @@ status into this file — that is exactly the drift that breaks the loop.
 | 012 | `012-gated-deltanet/` | linear attention with delta rule + input gate (subsumes 008) | −0.02 to −0.06 (if transfers) |
 | 013 | `013-cope/` | content-conditional position offset (probe-based, drop-in for RoPE) | −0.005 to −0.02 |
 | 014 | `014-sigmoid-loss/` | sigmoid + z-loss replacing softmax CE (distinct from 010) | −0.005 to −0.02 |
+| 015 | `015-moonlight-muon-rms/` | Muon per-tensor RMS rescale `c·√max(d_in,d_out)` (Moonlight paper) | −0.01 to −0.05 |
+| 016 | `016-qk-norm/` | LayerNorm on Q,K head-dim (per-head logit bounding) | −0.005 to −0.02 |
+| 017 | `017-sub-ln-sandwich/` | LN_post wrap on each sublayer output (DeepNet §3.1) | small win or null at 6L |
 
 ## PENDING — not yet foldered (migrate on first touch)
 
@@ -62,10 +77,12 @@ These are tracked here as a quick-lookup; copy to a numbered folder when
 the idea is about to be run. Full spec lives in the table at the end of
 this file until then.
 
-Optimizer: Moonlight per-param RMS scaling · Decoupled Q/K from V in Muon routing · Schedule-free AdamW · EMA-of-orthogonalized-matrix.
-Architecture: Soft MoE (fallback) · BigBird sparse · Sandwich block · Product-key FFN.
+Optimizer: Decoupled Q/K from V in Muon routing · Schedule-free AdamW · EMA-of-orthogonalized-matrix · AdEMAMix dual-EMA AdamW (018).
+Architecture: Soft MoE (fallback) · BigBird sparse · Product-key FFN.
 Loss/objective: Sigmoid loss / ET loss · PolyLoss.
 Positional: FIRE · CoPE.
+Attention stability: Forgetting Transformer per-head decay (020).
+Normalization: Dynamic Tanh / DyT (019).
 
 ## CLOSED ideas (do not re-propose)
 
@@ -94,6 +111,9 @@ record.
 | 2026-06-09 | — | `004-retnet-retention/` | tiny1m3m + retention probe, s42 (v1 kernel+probe, v2 not wired) | DONE (NULL) | 6.4162 | +0.029 / +0.011 |
 | 2026-06-09 | — | `005-decoupled-qkv-muon/` | tiny1m3m + decoupled-QKV, s42 (code loop skipped) | DONE (NULL) | 6.3909 | +0.003 / -0.014 |
 | 2026-06-09 | — | `009-fire-pe/` | tiny1m3m + FIRE, s42 | DONE (**WIN**) | 6.3234 | **-0.064 / -0.082** |
+| 2026-06-09 | — | `006-schedule-free-adamw/` | tiny1m3m + SF-AdamW, s42 (vast-34386) | DONE (NULL) | 6.8056 | +0.21 / +0.20 — clear negative |
+| 2026-06-09 | — | `010-polyloss/` | tiny1m3m + PolyLoss, s42 (vast-34386) | DONE (NULL) | 6.5938 | −0.0053 / −0.0112 — inside ctrl-pair gap (0.0059) |
+| 2026-06-09 | — | `011-cautious-lion/` | tiny1m3m + cautious-lion, s42 (vast-34386) | DONE (**WIN**) | 6.3941 | **−0.0312 / −0.0321** ≫ gap 0.0009 — in-session WIN |
 
 ## Protocol (per-idea folder)
 

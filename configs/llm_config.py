@@ -149,6 +149,34 @@ class LLMConfig:
     # See autoresearch/ideas/009-fire-pe/plan.md.
     use_fire_pe: bool = False
     fire_pe_d_phi: int = 4
+    # 013 — CoPE (Golovneva et al. 2024, arXiv:2405.18719, Meta):
+    # content-aware positional bias replacing RoPE. Position offset
+    # between query i and key j is the count of "important" tokens
+    # (those with high content dot-product to a per-head learned probe)
+    # in [j, i] — not the literal index distance. Replaces RoPE when
+    # ON: the Rotary construction is gated off, the Q/K RMSNorm still
+    # runs (magnitude-stabilizer role), and the CoPE bias is added to
+    # attention scores in the manual branch. Default off → baseline
+    # path bit-identical. Probe init N(0, 0.02) (mirrors FIRE's per-
+    # head content projection init at `models/fire_pe.py:60`); τ=0
+    # pinned (one-seed-only rule forbids the τ sweep). A/B is
+    # "FIRE + CoPE" vs "FIRE" — stacked lever, not a replacement.
+    use_cope: bool = False
+    # 020 — Forgetting Transformer (FoX, Lin et al. 2025, arXiv:2503.02130):
+    # per-head, per-token learnable forget gate that multiplies the
+    # attention matrix element-wise after softmax, then row-renormalizes.
+    # Conservative extension of softmax attention (the softmax stays; the
+    # projection stays; the V path is unchanged). Strictly orthogonal to
+    # FIRE (which is additive on logits) — FIRE changes *which* key wins,
+    # FoX changes *how much mass* even the winners keep. Identity-init:
+    # W_f^h = 0, b_f^h = +10 (pinned at `models/fox.py:FOX_BF_INIT`) →
+    # f ≈ 0.99995 at init, D[i,j] within 9% of 1 over the full T=2048
+    # context, so the post-softmax decay barely fires at step 0 and the
+    # model has to *learn* to forget from scratch. Default off → baseline
+    # path bit-identical. Forces the manual attention path (the
+    # post-softmax multiply can't go through SDPA's flash kernel). See
+    # `autoresearch/ideas/020-forgetting-attn/plan.md`.
+    use_fox: bool = False
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
@@ -275,6 +303,15 @@ class LLMConfig:
     # #99 Attention sink slot (softmax-off-by-one): append a zero K/V the query
     # can attend to, so it isn't forced to dump probability on a real token.
     use_attn_sink: bool = False
+    # 017 — Sub-LN / Sandwich block (Wang et al. 2022, DeepNet §3.1; Shleifer
+    # et al. 2021, NormFormer): wrap each sublayer output with a fresh
+    # `nn.LayerNorm(d_model)` (γ=1, β=0 init → identity at step 0) so the
+    # pre-norm baseline path stays bit-identical when the flag is off.
+    # On the pre-norm path, `y = x + LN_post(Sublayer(LN_pre(x)))` for both
+    # attention and FFN. The pre-LN remains whatever norm_type/use_layernorm
+    # selected; the post-LN is always `nn.LayerNorm` (the residual-stream
+    # re-bounding role, separate from the magnitude-stabilizing pre-LN).
+    use_sub_ln: bool = False
 
     # ============================================================================
     # Query-tweaks plan (29 experiments, 6 batches). All defaults are
@@ -401,6 +438,52 @@ class LLMConfig:
     # Default off → baseline path bit-identical. See
     # autoresearch/ideas/004-retnet-retention/plan.md.
     use_retention: bool = False
+    # Lion optimizer (Chen et al. 2023, arXiv:2302.06675): sign-based
+    # optimizer that replaces Muon on the 2-D non-embedding, non-norm
+    # routing slot when use_lion=True. Default off → Muon path is
+    # bit-identical. `lion_lr=3e-4` matches Chen et al.'s default at
+    # much larger scale — do not change without sweeping. `use_lion` and
+    # the Muon path are mutually exclusive: enabling Lion routes the
+    # Muon 2-D slot to Lion (no parallel Muon instance is created).
+    # 1-D / embedding / head stay on AdamW — Lion's fixed-LR sign update
+    # is known to diverge on the embedding (Chen et al. 2023 §5). See
+    # autoresearch/ideas/011-cautious-lion/plan.md.
+    use_lion: bool = False
+    lion_lr: float = 3e-4
+    lion_beta1: float = 0.9
+    lion_beta2: float = 0.98
+    # Cautious-Lion (Liang et al. 2024, arXiv:2411.16085) — the Cautious
+    # sign-mask generalized to Lion. After computing `update = sign(c)`,
+    # zero out components whose sign disagrees with the current gradient
+    # and rescale by `1 / mask.mean().clamp(min=0.1)` to keep the effective
+    # LR constant. Default off → bare Lion, bit-identical to the
+    # use_lion=True baseline. Only takes effect when use_lion=True; the
+    # `use_cautious_lion` flag is gated by the trainer so it cannot fire
+    # on the AdamW path. See autoresearch/ideas/011-cautious-lion/plan.md.
+    use_cautious_lion: bool = False
+    # Moonlight Muon RMS rescale (Kimi / Moonshot AI, arXiv:2502.16982,
+    # Feb 2025): replaces the default `shape_aspect` per-tensor scale
+    # with `c·sqrt(max(d_in, d_out))` so every 2-D weight has an
+    # approximately unit-RMS element-wise update. Geometric calibration
+    # of step magnitude across matrix shapes (1:1 attention heads,
+    # 1:4 FFN up). Default off → Muon path is bit-identical to the
+    # `shape_aspect` baseline. `moonlight_muon_c=0.2` is the paper's
+    # tuned single global knob. See
+    # autoresearch/ideas/015-moonlight-muon-rms/plan.md.
+    use_moonlight_muon: bool = False
+    moonlight_muon_c: float = 0.2
+    # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442): apply
+    # a `nn.LayerNorm(d_head)` to Q and K along the head-dim axis, before
+    # the attention dot product. Bounds the per-head logit
+    # `Q·K/√d_head` to `|·| ≤ √d_head` — prevents logit explosion that
+    # softens the softmax at depth. Default off → Q/K stay on the existing
+    # RMSNorm (qk_norm_type="rmsnorm", the current baseline), so step-0 is
+    # bit-identical. Init γ=1, β=0 → identity at step 0. Affects ONLY the
+    # Q/K norms (the residual stream norms stay on `norm_type`); the
+    # global `use_layernorm` flag is a heavier hammer that flips every
+    # norm in the block. See
+    # autoresearch/ideas/016-qk-norm/plan.md.
+    use_qk_layernorm: bool = False
 
     # Evaluation
     eval_every: Optional[int] = None
@@ -546,6 +629,111 @@ class Tiny1M3MCautiousMuonConfig(Tiny1M3MConfig):
     """
     use_cautious_muon: bool = True
     muon_lr: float = 0.025  # +4% to compensate for masked components
+
+
+@dataclass
+class Tiny1M3MMoonlightMuonConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Moonlight per-tensor RMS rescale on orthogonalized Muon.
+
+    A/B vs the plain-Muon ctrl (`Tiny1M3MConfig`). Replaces the default
+    `shape_aspect` per-tensor scale with `c·sqrt(max(d_in, d_out))`
+    (Kimi / Moonshot AI, arXiv:2502.16982). c=0.2 is the paper's tuned
+    constant — single global knob. PASS ≤ ctrl − 0.01 on val_loss.
+    NULL band |Δ| < 0.01. See
+    autoresearch/ideas/015-moonlight-muon-rms/plan.md.
+    """
+    use_moonlight_muon: bool = True
+
+
+@dataclass
+class Tiny1M3MQKNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with QK-Norm (LayerNorm on Q,K before the attention dot product).
+
+    A/B vs the tiny1m ctrl. Replaces the default RMSNorm on Q,K with
+    `nn.LayerNorm(d_head)` (γ=1, β=0 init → identity at step 0).
+    Residual-stream norms stay on RMSNorm — the lever is strictly the
+    per-head logit bounding, not a residual-stream re-centering. PASS
+    ≤ ctrl − 0.005 on val_loss (taste review puts leverage at the low
+    end of the hypothesis range for 6 layers). NULL band |Δ| < 0.005.
+    See autoresearch/ideas/016-qk-norm/plan.md.
+    """
+    use_qk_layernorm: bool = True
+
+
+@dataclass
+class Tiny1M3MLionConfig(Tiny1M3MConfig):
+    """Tiny1M3M with bare-Lion (Chen et al. 2023) on the 2-D non-embed slot.
+
+    Required prerequisite ctrl for the Cautious-Lion idea — the A/B
+    measures `(Cautious-Lion - bare-Lion)`, not `(Cautious-Lion -
+    Muon-AdamW)`. Δ vs Muon-AdamW is logged for context but is not the
+    pass criterion. `lion_lr=3e-4` is Chen et al.'s default at much
+    larger scale; keep it pinned. See
+    autoresearch/ideas/011-cautious-lion/plan.md.
+    """
+    use_lion: bool = True
+
+
+@dataclass
+class Tiny1M3MCautiousLionConfig(Tiny1M3MLionConfig):
+    """Tiny1M3M with Cautious-Lion (Liang et al. 2024 sign-mask on Lion).
+
+    A/B vs the bare-Lion ctrl (`Tiny1M3MLionConfig`).
+    PASS ≤ −0.015 vs bare-Lion ctrl. NULL band |Δ| < 0.01. DRIFT > +0.01.
+    Δ vs Muon-AdamW is a secondary number for context only. See
+    autoresearch/ideas/011-cautious-lion/plan.md.
+    """
+    use_cautious_lion: bool = True
+
+
+@dataclass
+class Tiny1M3MCoPEOnFireConfig(Tiny1M3MConfig):
+    """Tiny1M3M with FIRE + CoPE (stacked content-conditional position).
+
+    A/B vs the FIRE-equipped baseline (no `Tiny1M3MFIREConfig` class — the
+    FIRE ctrl is just `Tiny1M3MConfig` with `use_fire_pe=True` passed at
+    run time; the 009 WIN landed at 6.3234 per `closed.md`). The
+    treatment stacks `use_cope=True` on top: CoPE is a *content-
+    conditional* positional bias (count of "important" tokens per head,
+    Golovneva et al. 2024, arXiv:2405.18719) that REPLACES RoPE and is
+    added to attention scores in addition to the FIRE bias. The Q/K
+    RMSNorm still runs (it's the magnitude stabilizer, separate from
+    position). Probe `p ~ N(0, 0.02)` (mirrors FIRE's per-head content
+    init at `models/fire_pe.py:60`); threshold τ pinned at 0
+    (one-seed-only rule forbids the τ sweep).
+
+    PASS ≤ −0.01 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.01.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/013-cope/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_cope: bool = True
+
+
+@dataclass
+class Tiny1M3MFOXOnFireConfig(Tiny1M3MConfig):
+    """Tiny1M3M with FIRE + Forgetting Transformer (multiplicative decay).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
+    per `closed.md:40`). The treatment stacks `use_fox=True` on top:
+    FoX is a *multiplicative* per-head, per-token learnable decay on
+    attention *probabilities* (post-softmax), with row-renorm. Strictly
+    orthogonal to FIRE (which is *additive* on logits): FIRE changes
+    *which* key wins the softmax; FoX changes *how much mass* even the
+    winners keep. Conservative extension of softmax attention — softmax
+    stays, projection stays, V path is unchanged. b_f = +10 init → D is
+    within 9% of all-ones over the full T=2048 context at step 0, so
+    the model has to *learn* to forget from scratch (gates start near
+    1.0 and can only go down). See
+    `models/fox.py` for the identity-init derivation.
+
+    PASS ≤ −0.02 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.02.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/020-forgetting-attn/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_fox: bool = True
+
 
 @dataclass
 class Tiny1M3MVQGainConfig(Tiny1M3MConfig):

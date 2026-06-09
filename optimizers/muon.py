@@ -72,8 +72,8 @@ class Muon(torch.optim.Optimizer):
     (the project default bump is 0.024 → 0.025, +4%). Bit-identical to
     baseline when cautious=False (default).
     """
-    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5, orthogonalize=True, coeffs_mode="polar_express", shape_scale=True, scale_mode="shape_aspect", adamw_lr=0.006, lazy_ortho_steps=1, cautious=False):
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps, orthogonalize=orthogonalize, coeffs_mode=coeffs_mode, shape_scale=shape_scale, scale_mode=scale_mode, adamw_lr=adamw_lr, lazy_ortho_steps=lazy_ortho_steps, cautious=cautious)
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5, orthogonalize=True, coeffs_mode="polar_express", shape_scale=True, scale_mode="shape_aspect", adamw_lr=0.006, lazy_ortho_steps=1, cautious=False, moonlight_c=0.2):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps, orthogonalize=orthogonalize, coeffs_mode=coeffs_mode, shape_scale=shape_scale, scale_mode=scale_mode, adamw_lr=adamw_lr, lazy_ortho_steps=lazy_ortho_steps, cautious=cautious, moonlight_c=moonlight_c)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -143,6 +143,18 @@ class Muon(torch.optim.Optimizer):
                     scale = max(1, p.size(-2) / p.size(-1)) ** 0.5
                 elif group["scale_mode"] == "spectral":
                     scale = 0.2 * (max(p.size(-2), p.size(-1)) ** 0.5)
+                elif group["scale_mode"] == "moonlight":
+                    # #15 Moonlight Muon (Kimi / Moonshot AI, arXiv:2502.16982).
+                    # Per-tensor RMS rescale `c·sqrt(max(d_in, d_out))` so every
+                    # 2-D weight has an approximately unit-RMS element-wise
+                    # update — geometric calibration across matrix shapes
+                    # (1:1 attention heads vs 1:4 FFN up). Mathematically the
+                    # same family as `spectral` but with the paper's tuned
+                    # constant carried on the group as `moonlight_c` (default
+                    # 0.2) and a paper-named key for traceability. See
+                    # autoresearch/ideas/015-moonlight-muon-rms/plan.md.
+                    c = float(group.get("moonlight_c", 0.2))
+                    scale = c * (max(p.size(-2), p.size(-1)) ** 0.5)
                 elif group["scale_mode"] == "rms_match":
                     adamw_lr = group.get("adamw_lr", 0.006)
                     g_flat = g.view_as(p)

@@ -26,7 +26,7 @@ Step-0 (flag OFF) — `use_schedule_free_adamw=False`, the AdamW path is unchang
 ## Cost
 - **Params**: 0 (re-routes the existing AdamW params).
 - **FLOPs/step**: per SF param, ~1× Adam update on `z` + 1× EMA on `x` + 1× `y = (1-β1)·z + β1·x` reconstruction ≈ 1× AdamW. Plus the eval/train swaps, which are O(num_params) byte copies — paid at most every `eval_milestones` step.
-- **Memory**: per SF param, 4 new state tensors: `z` (param-shaped), `x` (param-shaped), `exp_avg` (param-shaped), `exp_avg_sq` (param-shaped). For tiny1m3m the AdamW path is 407,488 params, so SF carries ~6.4 MB extra state (vs ~3.2 MB for AdamW's two state buffers).
+- **Memory**: per SF param, 3 new state tensors: `z` (param-shaped), `x` (param-shaped), `v` (param-shaped, the second-moment). For tiny1m3m the AdamW path is 407,488 params, so SF carries ~4.8 MB extra state (vs ~3.2 MB for AdamW's two state buffers).
 - **Schedule cost**: forcing `schedule_type='constant'` removes the cosine/warmup-decay-to-zero LR decay. The SF optimizer's internal `c = 1/(k-warmup+1)` averaging takes over the late-training stabilization.
 
 ## Run

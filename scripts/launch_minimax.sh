@@ -28,18 +28,20 @@ fi
 
 # Detached, wide enough that the TUI doesn't wrap weirdly.
 tmux new-session -d -s "$NAME" -x 200 -y 50
+sleep 0.3
 
-# 1) Send the cmf command with the prompt as a single arg.
-#    We use `claude-minimax-free` (the launcher that scrubs the parent-agent
-#    env and points at api.minimaxi.com). The prompt is passed via -p so the
-#    agent starts working immediately instead of waiting at an empty prompt.
-# We use `claude-minimax-free` (the launcher that scrubs the parent-agent
-#    env and points at api.minimaxi.com). The prompt is passed via -p so the
-#    agent starts working immediately instead of waiting at an empty prompt.
-#    NOTE: use literal send (-l) for the whole command line, not printf %q —
-#    printf %q over-escapes em-dashes / apostrophes / spaces, leaving visible
-#    backslashes in the pane. send-keys -l already does the right escaping.
-tmux send-keys -t "$NAME" -l "claude-minimax-free -p \"$PROMPT\""
+# 1) Write the prompt to a temp file and type ONLY `cmf "$(cat file)"`.
+#    WHY: passing the prompt inline (`-p "$PROMPT"` via send-keys) breaks
+#    whenever the prompt contains backticks, quotes, or `$(...)` — the pane's
+#    shell evaluates them, dropping zsh into `dquote>`/`quote>` and corrupting
+#    the launch. Reading from a file means the prompt bytes never pass through
+#    a typed command line, so any characters are safe. The `$(cat file)` output
+#    is NOT re-scanned by the shell, so backticks inside the file stay literal.
+#    `cmf` is the claude-minimax-free launcher (scrubs parent-agent env, points
+#    at api.minimaxi.com) and takes the prompt as its first positional arg.
+PROMPT_FILE="$(mktemp /tmp/cmf-prompt.XXXXXX)"
+printf '%s' "$PROMPT" > "$PROMPT_FILE"
+tmux send-keys -t "$NAME" -l "cmf \"\$(cat $PROMPT_FILE)\""
 
 # 2) Send Enter as a SEPARATE send-keys call. Bundling it with the previous
 #    call (or sending keys while the agent is mid-turn) registers as an

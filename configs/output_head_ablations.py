@@ -4,7 +4,7 @@
 Aux terms (ZLoss, ConfPenalty, LabelSmooth) are train-only; eval stays plain CE.
 
 Knob families (kept small on purpose — diversity comes from cross-family combos):
-  - Loss-side aux:    use_z_loss + z_loss_lambda, label_smooth, conf_penalty_beta
+  - Loss-side aux:    use_z_loss + z_loss_lambda, label_smooth, conf_penalty_beta, use_poly_loss + poly_eps1
   - Logit ops:        use_output_temp, use_vocab_bias, logit_softcap
   - Head structure:   use_untied_head, output_adapter_rank
   - Embed init probe: embedding_scale
@@ -60,6 +60,20 @@ class Tiny1M3MLogitSoftcapConfig(Tiny1M3MConfig):
 class Tiny1M3MUntieHeadConfig(Tiny1M3MConfig):
     """A7 anchor — UntieHead. Head structure baseline (NOT budget-matched)."""
     use_untied_head: bool = True
+
+
+@dataclass
+class Tiny1M3MPolyLossConfig(Tiny1M3MConfig):
+    """A8 anchor — PolyLoss ε₁=1.0. Loss-side aux baseline.
+
+    Adds the j=1 Taylor correction `ε₁·(1 - p_t)` to CE in the train path
+    only. ε₁=1.0 is the paper's "strong default" (Leng et al. 2022,
+    arXiv:2204.12511) — the principled next-Taylor-term value, not a tuned
+    hyperparameter. Eval stays plain CE. See
+    autoresearch/ideas/010-polyloss/plan.md.
+    """
+    use_poly_loss: bool = True
+    poly_eps1: float = 1.0
 
 
 # ---- Loss-side + logit op (4 combos) ----------------------------------------

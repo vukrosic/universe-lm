@@ -1,8 +1,8 @@
 ---
 id: 014-sigmoid-loss
-status: needs-taste
+status: rejected
 round: 1
-updated: 2026-06-09T09:35:00Z
+updated: 2026-06-09T11:36:34Z
 ---
 
 # 014 — Sigmoid Loss (with z-loss regularization)

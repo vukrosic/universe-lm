@@ -1,0 +1,6 @@
+## r1 — 2026-06-09 — verdict: approve
+- **Source**: arXiv:2203.00555 (Wang et al. 2022, DeepNet §3.1) — real, with related NormFormer (Shleifer et al. 2021). Cites verified.
+- **Mechanism**: add `LN_post(Sublayer(LN_pre(x)))` to each sublayer. `LN_post` is a fresh `nn.LayerNorm(d_model)` with γ=1, β=0, so at step 0 it collapses to identity and the residual stream is bit-identical to the pre-norm baseline. < 20 LoC net new on `models/layers.py` — one LN per attention block, one per FFN block.
+- **Duplicate check**: pre-norm is the *baseline*, post-norm is closed. Sub-LN is the *interior* of that axis (gradient-preserving midpoint that bounds each sublayer's contribution to unit-RMS). Closed norm-zoo is residual-stream *re-centering*; 017 is residual-stream *re-bounding* — different function, not a duplicate.
+- **Scope**: tiny1m3m only, single seed 42. Per DeepNet ablations the win is at 100+ layers; at 6 layers leverage is bounded. PASS bar ~-0.005 (treat the result as a depth-stability probe; null is the more informative outcome).
+- **Composition**: pairs with 016 — orthogonal sites (residual stream vs attention logit) that partition the depth-stability axis. A clean double-null would itself be informative.

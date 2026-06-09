@@ -1,0 +1,13 @@
+{"ts":"2026-06-09T11:36:15Z","agent":"taste","idea":"013-cope","from":"needs-taste","to":"needs-review","round":1,"note":"accept: content-conditional position is orthogonal to 009 FIRE (fixed-decay); clean ablation against the same ctrl; null still informative. Reviewer should tighten PASS bar to ≤ -0.01 (hypothesis low end is sub-noise)."}
+{"ts":"2026-06-09T11:47:55Z","agent":"reviewer","idea":"013-cope","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise — tighten PASS bar; pin τ=0 and probe init; use FIRE-equipped ctrl"}
+{"ts":"2026-06-09T12:07:34Z","agent":"reviser","idea":"013-cope","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:08:29Z","agent":"reviser","idea":"013-cope","from":"revising","to":"needs-review","round":2,"note":"applied 5 findings: PASS tightened to -0.01, NULL band |Δ|<0.01, τ pinned at 0 (no sweep), probe init pinned to N(0,0.02), RoPE call-site audit with 7 sites, ctrl now FIRE-equipped (009 WIN) not V+q+SWA+HighRoPE"}
+{"ts":"2026-06-09T12:12:30Z","agent":"reviewer","idea":"013-cope","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-09T12:12:46Z","agent":"reviewer","idea":"013-cope","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T12:51:19Z","agent":"code-impl","idea":"013-cope","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:54:13Z","agent":"orchestrator","idea":"013-cope","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (29683494m)"}
+{"ts":"2026-06-09T12:58:43Z","agent":"code-impl","idea":"013-cope","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T13:02:36Z","agent":"code-impl","idea":"013-cope","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T13:03:13Z","agent":"code-impl","idea":"013-cope","from":"needs-codereview","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T13:48:46Z","agent":"code-rev","idea":"013-cope","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T13:49:25Z","agent":"code-rev","idea":"013-cope","from":"codereviewing","to":"needs-run","round":1,"note":"accept: mechanism faithful, identity-safe at OFF, treatment path exercised, single-flag pinned, RoPE call-sites all gated, no HP drift, no coord conflicts"}

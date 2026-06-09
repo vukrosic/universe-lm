@@ -1,8 +1,8 @@
 ---
 id:010-polyloss
-status: needs-review
-round: 2
-updated: 2026-06-09T09:41:26Z
+status: done
+round: 1
+updated: 2026-06-09T12:13:40Z
 ---
 
 #010 — PolyLoss (polynomial expansion of cross-entropy)

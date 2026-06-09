@@ -1,0 +1,6 @@
+## r1 — 2026-06-09 — verdict: approve
+- **Source**: arXiv:2502.16982 (Moonlight/Kimi, Feb 2025) — real, current, plausible authors. Cite verified.
+- **Mechanism**: post-mul `c·sqrt(max(d_in,d_out))·O` on top of orthogonalized Muon update. Single new scalar, structural geometric-calibration lever (element-wise step re-balance across 1:1 attention heads and 1:4 FFN up). Step-0 = identity (NS5 of zero grad = zero), so baseline preserved cleanly. < 10 LoC on `optimizers/muon.py`.
+- **Duplicate check**: closed Muon-family levers are cautious-muon (001, sign-mask), soap (003, eigenbasis precond), decoupled-qkv-muon (005, routing), cautious-adamw (002), schedule-free-adamw (006, iterate averaging), ademamix (018). None touch per-tensor magnitude rescale — 015 is orthogonal on the mechanism axis.
+- **Scope**: tiny1m3m only, single seed 42, ~92 step budget. PASS bar should sit at the upper end of the hypothesis range given the family history of optimizer nulls at this scale — call it trt ≤ plain-Muon ctrl − 0.01 to be a real win, since family variance is ~±0.01.
+- **Concerns (forwarded to plan gate, not blocking)**: the family history at tiny1m3m is poor (5 of 8 recent optimizer A/Bs null), so the A/B should be dispatched only when the GPU isn't being chewed up by the active optimizer queue. The mechanism is real and falsifiable regardless.

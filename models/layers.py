@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
 from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward
 from .fire_pe import FIREBias
+from .cope import CoPE
+from .fox import FoX
 
 
 class Rotary(nn.Module):
@@ -425,9 +427,36 @@ class MultiHeadAttention(nn.Module):
         # baseline path bit-identical. f is zero-init so step-0 bias = 0.
         use_fire_pe: bool = False,
         fire_pe_d_phi: int = 4,
+        # 013 — CoPE (Golovneva et al. 2024, arXiv:2405.18719):
+        # content-aware positional bias replacing RoPE. When on, the
+        # Rotary construction is gated off and the attention path is
+        # forced to manual (CoPE bias is added to the [B,H,T,T] score
+        # tensor). Default off → pre-norm baseline path bit-identical.
+        # use_qk_norm_post_rope must be off when use_cope is on
+        # (asserted in forward).
+        use_cope: bool = False,
+        # 020 — Forgetting Transformer (FoX, Lin et al., arXiv:2503.02130):
+        # per-head, per-token learnable forget gate that multiplicatively
+        # decays the attention probabilities post-softmax, then
+        # row-renormalizes. Conservative extension of softmax attention
+        # (softmax stays). Identity-init: W_f=0, b_f=+10 → D ≈ 1 within
+        # 9% over the full T=2048 context, so the model has to *learn*
+        # to forget from scratch. Default off → baseline path
+        # bit-identical. Forces the manual attention path (the
+        # post-softmax multiply can't go through SDPA's flash kernel).
+        use_fox: bool = False,
         norm_type: str = "rmsnorm",
         qk_norm_type: str = "rmsnorm",
         v_norm_type: str = "",
+        # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442):
+        # override the default Q/K norm (RMSNorm) with `nn.LayerNorm(d_head)`
+        # on the head-dim axis, before the attention dot product. Bounds
+        # the per-head logit `Q·K/√d_head` to `|·| ≤ √d_head`. Init γ=1, β=0
+        # → identity at step 0. Default off → Q/K stay on RMSNorm, the
+        # current baseline path is bit-identical. Only the Q/K norms are
+        # affected; the residual stream norms stay on `norm_type`/
+        # `use_layernorm`. See autoresearch/ideas/016-qk-norm/plan.md.
+        use_qk_layernorm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -536,8 +565,16 @@ class MultiHeadAttention(nn.Module):
         
         # #91 Robust QK-norm: q_norm/k_norm can use any invented norm (e.g.
         # pnorm1.5) so the attention-logit dot product is outlier-robust.
-        self.q_norm = make_norm(self.d_k, qk_norm_type, self.use_layernorm)
-        self.k_norm = make_norm(self.d_k, qk_norm_type, self.use_layernorm)
+        # #16 QK-Norm (Dehghani et al. 2023, ViT-22B): the Q/K norms
+        # default to RMSNorm (`qk_norm_type="rmsnorm"`), but when
+        # `use_qk_layernorm=True` we override to `nn.LayerNorm(d_head)` —
+        # a stricter bound on per-head logit magnitude. The override is
+        # OR'd with the global `use_layernorm` so either flag flips the
+        # Q/K norm; the residual stream norms stay on `norm_type`/
+        # `use_layernorm` (the Q/K override is strictly local).
+        _qk_use_ln = bool(self.use_layernorm) or bool(use_qk_layernorm)
+        self.q_norm = make_norm(self.d_k, qk_norm_type, _qk_use_ln)
+        self.k_norm = make_norm(self.d_k, qk_norm_type, _qk_use_ln)
         # #92 Robust V-norm: optionally normalize V (per head) before the
         # softmax-weighted sum, so outlier value channels don't dominate the
         # aggregated output. Off by default ("" / "none").
@@ -545,7 +582,29 @@ class MultiHeadAttention(nn.Module):
         if self.use_v_norm:
             self.v_norm = make_norm(self.d_k, v_norm_type, self.use_layernorm)
 
-        self.rotary = Rotary(self.d_k, max_seq_len, base=rope_base)
+        # 013 — CoPE: gate the Rotary construction. When on, RoPE is
+        # replaced by a content-aware bias (CoPE) added to the
+        # attention logits. When off, the baseline Rotary is built
+        # unchanged. Saves a few KB/block of cache when CoPE is on.
+        self.use_cope = use_cope
+        if self.use_cope:
+            self.rotary = None
+            self.cope = CoPE(d_model, n_heads, max_seq_len)
+        else:
+            self.rotary = Rotary(self.d_k, max_seq_len, base=rope_base)
+            self.cope = None
+        # 020 — Forgetting Transformer (FoX). Built unconditionally when
+        # the flag is on; never called when off. FoX is a CONSERVATIVE
+        # extension of softmax — the softmax stays, the projection
+        # stays, the V path is unchanged. The per-head gate W_f is
+        # zero-init and b_f = +10 (see `models/fox.py` for the
+        # identity-init derivation at T=2048), so step-0 D is within
+        # 9% of all-ones over the full context — the row-renorm after
+        # D*attn_w makes the attention output within ~1e-2 of the
+        # no-FoX baseline (test (e) in plan.md pins this).
+        self.use_fox = use_fox
+        if self.use_fox:
+            self.fox = FoX(d_model, n_heads)
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
@@ -752,7 +811,12 @@ class MultiHeadAttention(nn.Module):
         # Q-side normalization. Defaults to qk_norm_type at the
         # LLMConfig level, so existing configs are bit-identical.
         # Batch 4 sets this flag directly per experiment.
-        self.q_norm = make_norm(self.d_k, q_norm_type, self.use_layernorm)
+        # #16 QK-Norm: the Q-side override at line 772 REPLACES the
+        # line-556 q_norm (this attribute is what `forward()` uses).
+        # Apply the same LayerNorm override here so `use_qk_layernorm=True`
+        # actually flips BOTH Q and K to LayerNorm — without this the
+        # Q-side `make_norm` would silently leave Q on RMSNorm.
+        self.q_norm = make_norm(self.d_k, q_norm_type, _qk_use_ln)
 
         # Q1 ALiBi-style per-head distance bias. scores += -m_h*(i-j).
         # m_h init 0 → step-0 == baseline.
@@ -1110,7 +1174,14 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x, ve=None):
         batch_size, seq_len = x.size(0), x.size(1)
-        
+        # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
+        # to post-norm. Reject the misconfiguration loudly so the
+        # runner doesn't accidentally launch it.
+        assert not (self.use_cope and self.use_qk_norm_post_rope), (
+            "use_cope=True is mutually exclusive with use_qk_norm_post_rope=True "
+            "(CoPE replaces RoPE; the post-RoPE norm has nothing to act on)."
+        )
+
         # ============ MERGED QKV PROJECTION ============
         # Single matmul instead of 3 separate projections
         qkv = F.linear(x, self.qkvo_proj[:self.qkv_size])
@@ -1194,7 +1265,11 @@ class MultiHeadAttention(nn.Module):
         # #53 NoPE: when use_nope is set, skip the rotary call entirely.
         # RMSNorm still runs (it's a Q/K magnitude stabilizer, separate
         # from position), but the rotation is bypassed.
-        if self.use_nope:
+        # 013 — CoPE: when use_cope is set, also skip the rotary call
+        # (CoPE replaces RoPE). The Q/K RMSNorm still runs (same
+        # magnitude-stabilizer role). The CoPE bias is added to the
+        # attention scores in the manual branch below.
+        if self.use_nope or self.use_cope:
             # RMSNorm still runs (it's a Q/K magnitude stabilizer,
             # separate concern from position), but the rotation is
             # bypassed.
@@ -1331,6 +1406,10 @@ class MultiHeadAttention(nn.Module):
             scores = torch.matmul(Q, K.transpose(-1, -2)) * scale
             fire_bias = self.fire_bias(x)  # [B, H, T, T]
             scores = scores + fire_bias
+            # 013 — CoPE stacks on top of FIRE: add the content-aware
+            # positional bias to scores (additive, just like FIRE).
+            if self.use_cope:
+                scores = scores + self.cope(x)
             if self.use_sliding_window:
                 window = self._sliding_window_mask[:seq_len, :seq_len]
             else:
@@ -1340,6 +1419,17 @@ class MultiHeadAttention(nn.Module):
                 ~window.view(1, 1, seq_len, seq_len), -1e9
             )
             attn_w = torch.softmax(scores, dim=-1)
+            # 020 — FoX: multiplicative decay on probabilities (post-softmax),
+            # then row-renorm. Strictly orthogonal to FIRE (which is additive
+            # on logits). Stacks on top of FIRE: when both flags are on, the
+            # order is scores += fire_bias → softmax → attn_w *= D → row-
+            # renorm. D is causal (lower-tri) and ≤ 1 on init, so a
+            # row-renorm of D * softmax gives a valid attention map. See
+            # `models/fox.py` for the identity-init derivation.
+            if self.use_fox:
+                d = self.fox(x)  # [B, H, T, T], causal, ≤ 1
+                attn_w = attn_w * d
+                attn_w = attn_w / attn_w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
         elif (
@@ -1347,6 +1437,8 @@ class MultiHeadAttention(nn.Module):
             or self.use_qk_bilinear or self.use_talking_heads_q
             or self.use_decoupled_content_pos or self.use_antisym_qk
             or self.use_q_feature_map or self.use_per_head_rope_base
+            or self.use_cope  # 013 — CoPE forces the manual attention path.
+            or self.use_fox  # 020 — FoX: post-softmax multiply can't go through SDPA.
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -1424,6 +1516,9 @@ class MultiHeadAttention(nn.Module):
                 Qp = self.q_fm_phi(Q)
                 Kp = self.q_fm_phi(K)
                 scores = torch.matmul(Qp, Kp.transpose(-1, -2)) * scale
+            # ---- 013 CoPE: content-aware positional bias added to scores ----
+            if self.use_cope:
+                scores = scores + self.cope(x)
             # ---- Mask (causal / SWA) ----
             scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
             # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
@@ -1435,6 +1530,15 @@ class MultiHeadAttention(nn.Module):
                 )
             # Softmax
             attn_w = torch.softmax(scores, dim=-1)
+            # 020 — FoX: multiplicative decay on probabilities (post-softmax),
+            # then row-renorm. Strictly orthogonal to the score-side tweaks
+            # above (which modify logits, not probs). Manual branch: same
+            # recipe as the FIRE branch. See `models/fox.py` for
+            # identity-init derivation.
+            if self.use_fox:
+                d = self.fox(x)  # [B, H, T, T], causal, ≤ 1
+                attn_w = attn_w * d
+                attn_w = attn_w / attn_w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
             # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
@@ -1636,9 +1740,21 @@ class TransformerBlock(nn.Module):
         norm_type: str = "rmsnorm",
         qk_norm_type: str = "rmsnorm",
         v_norm_type: str = "",
+        # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442):
+        # forward to MHA — see MultiHeadAttention.use_qk_layernorm for the
+        # mechanism description. Default off → Q/K stay on RMSNorm,
+        # baseline path is bit-identical.
+        use_qk_layernorm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
+        # 017 — Sub-LN / Sandwich block (Wang et al. 2022, DeepNet §3.1):
+        # wrap each sublayer output with a fresh `nn.LayerNorm(d_model)`
+        # (γ=1, β=0 init → identity at step 0). When off, the pre-norm
+        # baseline path stays bit-identical. Pre-LN stays as whatever
+        # `norm_type`/`use_layernorm` selected; the post-LN is always a
+        # plain `nn.LayerNorm` (residual-stream re-bounding role).
+        use_sub_ln: bool = False,
         # R1 ReZero: per-sublayer scalar gate x = x + α·f(x), α=0 init.
         # Replaces the baseline residual add; lever is the *learning* of α.
         # 2 params/block (one for attention, one for FFN).
@@ -1681,6 +1797,16 @@ class TransformerBlock(nn.Module):
         use_q_noise_reg: bool = False,
         use_fire_pe: bool = False,
         fire_pe_d_phi: int = 4,
+        # 013 — CoPE: passed through to MultiHeadAttention (see note
+        # at the MHA `use_cope` kwarg). Default off → baseline path
+        # bit-identical. Mutually exclusive with use_qk_norm_post_rope
+        # (enforced by the assert in the MHA's forward).
+        use_cope: bool = False,
+        # 020 — Forgetting Transformer (FoX). Passed through to
+        # MultiHeadAttention (see note at the MHA `use_fox` kwarg).
+        # Default off → baseline path bit-identical. Identity-init
+        # clean (W_f=0, b_f=+10 → D ≈ 1 within 9% over T=2048).
+        use_fox: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -1717,6 +1843,8 @@ class TransformerBlock(nn.Module):
             rope_base=rope_base,
             use_fire_pe=use_fire_pe,
             fire_pe_d_phi=fire_pe_d_phi,
+            use_cope=use_cope,
+            use_fox=use_fox,
             use_tied_qk=use_tied_qk,
             use_mla=use_mla,
             mla_latent_dim=mla_latent_dim,
@@ -1731,6 +1859,9 @@ class TransformerBlock(nn.Module):
             use_attn_sink=use_attn_sink,
             qk_norm_type=qk_norm_type,
             v_norm_type=v_norm_type,
+            # #16 QK-Norm pass-through: when set, MHA's Q/K norms are
+            # LayerNorm (not RMSNorm) — see MultiHeadAttention.use_qk_layernorm.
+            use_qk_layernorm=use_qk_layernorm,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,
@@ -1788,6 +1919,16 @@ class TransformerBlock(nn.Module):
         if self.use_layerscale:
             self.attn_layerscale = nn.Parameter(torch.zeros(d_model))
             self.ffn_layerscale = nn.Parameter(torch.zeros(d_model))
+        # 017 — Sub-LN / Sandwich block: one fresh `nn.LayerNorm(d_model)`
+        # per sublayer (γ=1, β=0 init → identity at step 0). When off,
+        # the modules are not constructed and the pre-norm baseline is
+        # bit-identical (no parameter overhead, no FLOPs overhead).
+        # Cost when on: 2 × d_model² = 2 × 144² = 41,472 params per block
+        # (screen10m); 2 × 64² = 8,192 per block (tiny1m3m).
+        self.use_sub_ln = use_sub_ln
+        if self.use_sub_ln:
+            self.sub_ln_attn = nn.LayerNorm(d_model, elementwise_affine=True)
+            self.sub_ln_ffn = nn.LayerNorm(d_model, elementwise_affine=True)
         # R1 ReZero: one α per sublayer, zero-init (no-op at step 0).
         # Mirrors the use_layerscale wiring: declared as nn.Parameter
         # scalars so they get routed to AdamW by the optimizer setup.
@@ -1960,6 +2101,12 @@ class TransformerBlock(nn.Module):
             attn_out = self.attention(x, ve)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
+            # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity
+            # at step 0, so post-norm baseline path stays bit-identical
+            # when use_sub_ln=False). When on, this constrains each
+            # sublayer's contribution to the residual stream to unit-RMS.
+            if self.use_sub_ln:
+                attn_out = self.sub_ln_attn(attn_out)
             x = self.norm1(x + self.dropout(attn_out))
 
             ffn_in = x
@@ -1968,12 +2115,20 @@ class TransformerBlock(nn.Module):
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            if self.use_sub_ln:
+                ff_out = self.sub_ln_ffn(ff_out)
             x = self.norm2(x + self.dropout(ff_out))
         else:
             # Pre-norm (default): norm before sublayer, residual after.
             attn_out = self.attention(self.norm1(x), ve)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
+            # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity
+            # at step 0, so pre-norm baseline path stays bit-identical
+            # when use_sub_ln=False). When on, this constrains each
+            # sublayer's contribution to the residual stream to unit-RMS.
+            if self.use_sub_ln:
+                attn_out = self.sub_ln_attn(attn_out)
             # R1 ReZero (pre-norm branch): x = x + α·f(x). α=0 init ⇒
             # zero contribution at step 0; lever is α's learning. Replaces
             # the baseline add (x = x + dropout(attn_out)).
@@ -1990,6 +2145,8 @@ class TransformerBlock(nn.Module):
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            if self.use_sub_ln:
+                ff_out = self.sub_ln_ffn(ff_out)
             # R1 ReZero (pre-norm branch, FFN): same gate on the FFN add.
             if self.use_re_zero:
                 x = x + self.re_zero_alpha_ffn * self.dropout(ff_out)

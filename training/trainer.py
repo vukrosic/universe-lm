@@ -15,6 +15,7 @@ from optimizers.muon import Muon
 from optimizers.cautious_adamw import CautiousAdamW
 from optimizers.soap import SOAP
 from optimizers.schedule_free_adamw import ScheduleFreeAdamW
+from optimizers.lion import Lion
 from training.checkpointing import (
     capture_git_metadata,
     capture_rng_state,
@@ -94,6 +95,16 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     muon_params = []
     adamw_params = []
     soap_params = []
+    lion_params = []
+
+    # Lion (Chen et al. 2023) — see autoresearch/ideas/011-cautious-lion.
+    # Replaces Muon on the 2-D non-embedding, non-norm routing slot when
+    # `use_lion=True`. Lion's sign-update with a fixed LR has known
+    # divergence risk on the embedding, so the routing keeps `token_embedding`
+    # / `emb_proj` / `*.norm.weight` / 1-D scalars on AdamW — same 2-D / 1-D
+    # split as Muon. Default off → Muon path is unchanged.
+    use_lion = getattr(config, "use_lion", False)
+    use_cautious_lion = getattr(config, "use_cautious_lion", False)
 
     for name, param in model.named_parameters():
         is_muon_candidate = (
@@ -150,28 +161,69 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             soap_params.append(param)
             continue
         if is_muon_candidate:
-            muon_params.append(param)
+            # Lion routing: when use_lion=True, the 2-D non-embedding,
+            # non-norm slot goes to Lion (sign-based optimizer) instead
+            # of Muon. The 1-D / embedding path stays on AdamW — Lion's
+            # fixed-LR sign update is known to diverge on the embedding
+            # (Chen et al. 2023 §5). Default off → bit-identical to the
+            # Muon-AdamW path.
+            if use_lion:
+                lion_params.append(param)
+            else:
+                muon_params.append(param)
         else:
             adamw_params.append(param)
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
+    print(f"  Lion parameters: {sum(p.numel() for p in lion_params):,}")
     print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
     print(f"  SOAP parameters: {sum(p.numel() for p in soap_params):,}")
 
-    muon_optimizer = Muon(
-        muon_params,
-        lr=config.muon_lr,
-        momentum=config.muon_momentum,
-        ns_steps=getattr(config, "muon_ns_steps", 5),
-        orthogonalize=getattr(config, "muon_orthogonalize", True),
-        coeffs_mode=getattr(config, "muon_coeffs_mode", "polar_express"),
-        shape_scale=getattr(config, "muon_shape_scale", True),
-        scale_mode=getattr(config, "muon_scale_mode", "shape_aspect"),
-        adamw_lr=getattr(config, "adamw_lr", 0.006),
-        nesterov=getattr(config, "muon_nesterov", True),
-        lazy_ortho_steps=getattr(config, "muon_lazy_ortho_steps", 1),
-        cautious=getattr(config, "use_cautious_muon", False),
-    )
+    if use_lion:
+        # Lion replaces Muon on the 2-D non-embedding, non-norm slot
+        # when use_lion=True. The 1-D / embedding / head path stays on
+        # AdamW below. `use_cautious_lion` mirrors the cautious-Muon
+        # flag — Liang et al. 2024 sign-mask on the sign-update with
+        # `1 / mask.mean().clamp(min=0.1)` rescale. Default cautious=False
+        # → bare Lion, bit-identical to Chen et al. 2023. See
+        # autoresearch/ideas/011-cautious-lion/plan.md.
+        lion_optimizer = Lion(
+            lion_params,
+            lr=getattr(config, "lion_lr", 3e-4),
+            betas=(getattr(config, "lion_beta1", 0.9),
+                   getattr(config, "lion_beta2", 0.98)),
+            weight_decay=config.weight_decay,
+            cautious=use_cautious_lion,
+        )
+        muon_optimizer = None
+    else:
+        lion_optimizer = None
+        muon_optimizer = Muon(
+            muon_params,
+            lr=config.muon_lr,
+            momentum=config.muon_momentum,
+            ns_steps=getattr(config, "muon_ns_steps", 5),
+            orthogonalize=getattr(config, "muon_orthogonalize", True),
+            coeffs_mode=getattr(config, "muon_coeffs_mode", "polar_express"),
+            shape_scale=getattr(config, "muon_shape_scale", True),
+            # #15 Moonlight Muon RMS rescale: when use_moonlight_muon=True,
+            # override the default `shape_aspect` scale with the paper's
+            # `c·sqrt(max(d_in, d_out))` formula. The Muon optimizer's
+            # `moonlight_c` defaults to 0.2 (the paper's tuned constant)
+            # and `c` can be overridden via `LLMConfig.moonlight_muon_c`.
+            # Default off → `scale_mode="shape_aspect"` bit-identical
+            # baseline. See autoresearch/ideas/015-moonlight-muon-rms/plan.md.
+            scale_mode=(
+                "moonlight"
+                if getattr(config, "use_moonlight_muon", False)
+                else getattr(config, "muon_scale_mode", "shape_aspect")
+            ),
+            adamw_lr=getattr(config, "adamw_lr", 0.006),
+            nesterov=getattr(config, "muon_nesterov", True),
+            lazy_ortho_steps=getattr(config, "muon_lazy_ortho_steps", 1),
+            cautious=getattr(config, "use_cautious_muon", False),
+            moonlight_c=getattr(config, "moonlight_muon_c", 0.2),
+        )
     device = resolve_device(getattr(config, "device", "auto"))
     # Cautious-AdamW gate (Liang et al. 2024) — see
     # autoresearch/ideas/002-cautious-adamw/plan.md. "none" = baseline
@@ -227,7 +279,8 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             fused=device.type == "cuda",
         )
 
-    optimizers = [muon_optimizer, adamw_optimizer]
+    optimizers = ([lion_optimizer, adamw_optimizer] if use_lion
+                  else [muon_optimizer, adamw_optimizer])
     # SOAP gate (Vyas et al. 2024) — see
     # autoresearch/ideas/003-soap/plan.md. `use_soap=True` swaps the
     # eligible 2-D params (`token_embedding`, `emb_proj`, `out_proj`)
@@ -430,7 +483,28 @@ def train_model(
                         conf_penalty = -conf_penalty_beta * ent
                     else:
                         conf_penalty = logits.new_zeros(())
-                    loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty) / config.gradient_accumulation_steps
+                    # OH4 PolyLoss (output-head ablation #4): train-only
+                    # correction L_poly = L_CE + ε₁·(1 - p_t) — the j=1
+                    # Taylor term in the `-log p_t` expansion. Mask respects
+                    # ignore_index=-100. See autoresearch/ideas/010-polyloss.
+                    # ε₁=1.0 is the paper's "strong default" (Leng et al. 2022,
+                    # arXiv:2204.12511). Train-only; eval stays plain CE.
+                    # Flag off / ε₁=0 → no-op (zero scalar added).
+                    use_poly_loss = getattr(config, "use_poly_loss", False)
+                    poly_eps1 = getattr(config, "poly_eps1", 1.0)
+                    if use_poly_loss and poly_eps1 > 0.0:
+                        flat_logits = logits.view(-1, config.vocab_size).float()
+                        flat_labels = shift_labels.view(-1)
+                        poly_mask = (flat_labels != -100).float()
+                        safe_labels = flat_labels.clamp(min=0)
+                        p_t = flat_logits.softmax(-1).gather(
+                            -1, safe_labels.unsqueeze(-1)
+                        ).squeeze(-1)
+                        n_valid = poly_mask.sum().clamp_min(1.0)
+                        poly_loss = poly_eps1 * ((1.0 - p_t) * poly_mask).sum() / n_valid
+                    else:
+                        poly_loss = logits.new_zeros(())
+                    loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty + poly_loss) / config.gradient_accumulation_steps
                 loss.backward()
             else:
                 logits = model(x)
@@ -461,7 +535,26 @@ def train_model(
                     conf_penalty = -conf_penalty_beta * ent
                 else:
                     conf_penalty = logits.new_zeros(())
-                loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty) / config.gradient_accumulation_steps
+                # OH4 PolyLoss (output-head ablation #4): train-only
+                # correction L_poly = L_CE + ε₁·(1 - p_t) — the j=1
+                # Taylor term in the `-log p_t` expansion. Mask respects
+                # ignore_index=-100. See autoresearch/ideas/010-polyloss.
+                # Flag off / ε₁=0 → no-op (zero scalar added).
+                use_poly_loss = getattr(config, "use_poly_loss", False)
+                poly_eps1 = getattr(config, "poly_eps1", 1.0)
+                if use_poly_loss and poly_eps1 > 0.0:
+                    flat_logits = logits.view(-1, config.vocab_size).float()
+                    flat_labels = shift_labels.view(-1)
+                    poly_mask = (flat_labels != -100).float()
+                    safe_labels = flat_labels.clamp(min=0)
+                    p_t = flat_logits.softmax(-1).gather(
+                        -1, safe_labels.unsqueeze(-1)
+                    ).squeeze(-1)
+                    n_valid = poly_mask.sum().clamp_min(1.0)
+                    poly_loss = poly_eps1 * ((1.0 - p_t) * poly_mask).sum() / n_valid
+                else:
+                    poly_loss = logits.new_zeros(())
+                loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty + poly_loss) / config.gradient_accumulation_steps
                 loss.backward()
 
             # Detach z-loss to a python float for logging only
@@ -472,6 +565,9 @@ def train_model(
 
             # Detach conf penalty to a python float for logging only (graph no longer needed)
             conf_penalty_val = conf_penalty.detach().item()
+
+            # Detach poly loss to a python float for logging only (graph no longer needed)
+            poly_loss_val = poly_loss.detach().item()
 
             # Optimizer step
             if (step + 1) % config.gradient_accumulation_steps == 0:
@@ -508,11 +604,12 @@ def train_model(
                     'acc': f'{accuracy:.3f}',
                     'ent': f'{entropy_reg_val:+.2e}',
                     'cp': f'{conf_penalty_val:+.2e}',
+                    'pl': f'{poly_loss_val:+.2e}',
                     'lr': f'{current_lr:.5f}'
                 })
                 # Console print for visibility
                 if step % (log_every * 10) == 0 or stopped_early:
-                    print(f" [Step {step}] Loss: {current_loss_val:.4f} | EntReg: {entropy_reg_val:+.2e} | ConfPen: {conf_penalty_val:+.2e} | Acc: {accuracy:.3f} | LR: {current_lr:.6f}")
+                    print(f" [Step {step}] Loss: {current_loss_val:.4f} | EntReg: {entropy_reg_val:+.2e} | ConfPen: {conf_penalty_val:+.2e} | PolyLoss: {poly_loss_val:+.2e} | Acc: {accuracy:.3f} | LR: {current_lr:.6f}")
             
             pbar.update(batch_tokens)
             tokens_seen += batch_tokens

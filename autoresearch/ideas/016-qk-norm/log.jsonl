@@ -1,0 +1,9 @@
+{"ts":"2026-06-09T12:26:40Z","agent":"taste","idea":"016-qk-norm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:27:08Z","agent":"taste","idea":"016-qk-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: per-head logit bounding is a clean mechanism (LN on Q/K head-dim, drop-in < 15 LoC, identity-init), categorically distinct from closed residual-stream norm-zoo. Sharp bet: pre-norm drift grows Q/K magnitudes with depth → bounding at head-dim keeps softmax sharp. Null closes 'is QK-Norm a depth-only lever?' Informative either way. Orthogonal to 017 (per-sublayer vs per-head)."}
+{"ts":"2026-06-09T12:34:56Z","agent":"reviewer","idea":"016-qk-norm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:35:09Z","agent":"reviewer","idea":"016-qk-norm","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T12:46:20Z","agent":"code-impl","idea":"016-qk-norm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:50:51Z","agent":"code-impl","idea":"016-qk-norm","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T12:54:50Z","agent":"code-rev","idea":"016-qk-norm","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T12:58:47Z","agent":"code-rev","idea":"016-qk-norm","from":"codereviewing","to":"needs-run","round":1,"note":"accept: LN(d_head) on Q,K before dot-product, default OFF, OFF path bit-identical, single bool, no HP drift"}
+{"ts":"2026-06-09T13:47:10Z","agent":"runner","idea":"016-qk-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queuing on vast-34386"}

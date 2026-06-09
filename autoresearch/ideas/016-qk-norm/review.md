@@ -1,0 +1,6 @@
+## r1 — 2026-06-09 — verdict: approve
+- **Source**: arXiv:2302.05442 (Dehghani et al. 2023, ViT-22B) — real, widely-cited, also adopted in Chameleon / Stable LM 2. Cite verified.
+- **Mechanism**: two `nn.LayerNorm(d_head)` on Q and K after the q/k_proj reshape into `(B,H,T,d_head)`, before the attention dot product. Bounds the per-head logit `Q·K/√d_head` to `|·| ≤ √d_head`, preventing logit explosion that softens the softmax. Init γ=1, β=0 → step-0 bit-identical to baseline. < 15 LoC, drop-in to `MHA.forward`.
+- **Duplicate check**: closed norm-zoo (pnorm/manhattan/center/squash/clip/channelscale) all at the *residual-stream* site with the reduce-then-normalize template — 016 is at the *attention-logit* site with a different function (logit bounding, not activation re-centering). Not a duplicate.
+- **Scope**: tiny1m3m only, single seed 42. PASS bar at the low end of hypothesis range (~-0.005 to -0.01) — leverage is bounded at 6 layers per the paper's deeper-stack wins. Treat the result as a depth-stability upper bound, not a headline bet.
+- **Composition**: pairs cleanly with 017 in the same batch — orthogonal sites (attention logit vs residual stream) that partition the depth-stability axis.
