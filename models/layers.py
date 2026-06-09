@@ -1679,6 +1679,8 @@ class TransformerBlock(nn.Module):
         use_q_per_token_rope: bool = False,
         q_per_token_rope_hidden: int = 32,
         use_q_noise_reg: bool = False,
+        use_fire_pe: bool = False,
+        fire_pe_d_phi: int = 4,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -1713,6 +1715,8 @@ class TransformerBlock(nn.Module):
             sliding_window_size=sliding_window_size,
             use_nope=use_nope,
             rope_base=rope_base,
+            use_fire_pe=use_fire_pe,
+            fire_pe_d_phi=fire_pe_d_phi,
             use_tied_qk=use_tied_qk,
             use_mla=use_mla,
             mla_latent_dim=mla_latent_dim,
