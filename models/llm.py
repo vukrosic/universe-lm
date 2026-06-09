@@ -212,6 +212,8 @@ class MinimalLLM(nn.Module):
         # magnitude stabilizer, separate concern from position), but
         # the rotary is bypassed.
         self.use_nope = getattr(config, "use_nope", False)
+        self.use_fire_pe = getattr(config, "use_fire_pe", False)
+        self.fire_pe_d_phi = getattr(config, "fire_pe_d_phi", 4)
         self.rope_base = getattr(config, "rope_base", 10000)
         self.use_tied_qk = getattr(config, "use_tied_qk", False)
         self.use_mla = getattr(config, "use_mla", False)
@@ -315,6 +317,8 @@ class MinimalLLM(nn.Module):
                     use_sliding_window=_block_uses_swa(i),
                     sliding_window_size=self.sliding_window_size,
                     use_nope=self.use_nope,
+                    use_fire_pe=self.use_fire_pe,
+                    fire_pe_d_phi=self.fire_pe_d_phi,
                     rope_base=self.rope_base,
                     use_tied_qk=self.use_tied_qk,
                     use_mla=self.use_mla,

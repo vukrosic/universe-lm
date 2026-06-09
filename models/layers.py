@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
 from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward
+from .fire_pe import FIREBias
 
 
 class Rotary(nn.Module):
@@ -418,6 +419,12 @@ class MultiHeadAttention(nn.Module):
         use_nsa_global: bool = False,
         nsa_block: int = 64,
         use_hybrid_heads: bool = False,
+        # 009 FIRE positional encoding (Li et al., NeurIPS 2023,
+        # arXiv:2306.02613): drop-in for RoPE. Content-aware additive
+        # logit bias γ(|t-s|) · f([φ(x_t); φ(x_s)]). Default off →
+        # baseline path bit-identical. f is zero-init so step-0 bias = 0.
+        use_fire_pe: bool = False,
+        fire_pe_d_phi: int = 4,
         norm_type: str = "rmsnorm",
         qk_norm_type: str = "rmsnorm",
         v_norm_type: str = "",
@@ -622,6 +629,15 @@ class MultiHeadAttention(nn.Module):
         # magnitude stabilizer, separate concern from position), but
         # the rotary is bypassed.
         self.use_nope = use_nope
+        # 009 FIRE positional encoding — build the FIREBias module
+        # unconditionally (zero FLOPs when use_fire_pe=False, the
+        # forward branch is gated). f weights are zero-init so step-0
+        # bias = 0 even with the flag on.
+        self.use_fire_pe = use_fire_pe
+        self.fire_bias = FIREBias(
+            d_model=d_model, n_heads=n_heads, max_seq_len=max_seq_len,
+            d_phi=fire_pe_d_phi,
+        )
         # #63 RoPE base: control the wavelength of the rotary. The
         # default base=10000 is GPT-Neo style; Llama uses 500000 which
         # extends the useful positional range. Tests whether the
@@ -1179,6 +1195,9 @@ class MultiHeadAttention(nn.Module):
         # RMSNorm still runs (it's a Q/K magnitude stabilizer, separate
         # from position), but the rotation is bypassed.
         if self.use_nope:
+            # RMSNorm still runs (it's a Q/K magnitude stabilizer,
+            # separate concern from position), but the rotation is
+            # bypassed.
             Q = self.q_norm(Q)
             K = self.k_norm(K)
         elif self.use_qk_norm_post_rope:
@@ -1304,7 +1323,26 @@ class MultiHeadAttention(nn.Module):
         # The O1 talking_heads_out lever (docs/research/attention_output/)
         # lives on the OUTPUT side of softmax (post-matmul(attn_w, V)),
         # so it also forces the manual path.
-        if (
+        if self.use_fire_pe:
+            # 009 FIRE PE — drop-in for RoPE. Manual path: scores
+            # = Q K^T / √d_k + FIRE bias, then mask + softmax + @V.
+            # x is the original input [B, T, d_model] (still in scope).
+            scale = 1.0 / (float(self.d_k) ** 0.5)
+            scores = torch.matmul(Q, K.transpose(-1, -2)) * scale
+            fire_bias = self.fire_bias(x)  # [B, H, T, T]
+            scores = scores + fire_bias
+            if self.use_sliding_window:
+                window = self._sliding_window_mask[:seq_len, :seq_len]
+            else:
+                ar = torch.arange(seq_len, device=Q.device)
+                window = ar[None, :] <= ar[:, None]
+            scores = scores.masked_fill(
+                ~window.view(1, 1, seq_len, seq_len), -1e9
+            )
+            attn_w = torch.softmax(scores, dim=-1)
+            attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
+            attn_output = torch.matmul(attn_w, V)
+        elif (
             self.use_alibi_bias or self.use_cosine_attn
             or self.use_qk_bilinear or self.use_talking_heads_q
             or self.use_decoupled_content_pos or self.use_antisym_qk

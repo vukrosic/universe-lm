@@ -141,6 +141,14 @@ class LLMConfig:
     # injection via V-embed may be partially substituting for RoPE).
     # If NoPE << baseline, RoPE is critical and there's no slack.
     use_nope: bool = False
+    # FIRE positional encoding (Li et al., NeurIPS 2023, arXiv:2306.02613):
+    # content-aware additive logit bias `bias(t,s) = γ(|t-s|) · f([φ(x_t); φ(x_s)])`
+    # with fixed γ (Lp-norm kernel) and small per-head learnable φ/f. Drop-in
+    # for RoPE when ON. Default off → baseline path bit-identical. f is
+    # zero-init so step-0 bias = 0 even with the flag on.
+    # See autoresearch/ideas/009-fire-pe/plan.md.
+    use_fire_pe: bool = False
+    fire_pe_d_phi: int = 4
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
