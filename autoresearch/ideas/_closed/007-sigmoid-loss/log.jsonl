@@ -1,0 +1,12 @@
+{"ts":"2026-06-09T01:42:45Z","agent":"taste","idea":"007-sigmoid-loss","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T01:43:08Z","agent":"taste","idea":"007-sigmoid-loss","from":"tasting","to":"needs-review","round":1,"note":"accept: loss-shape ablation diversifies optimizer-heavy queue; clean bet; small but bounded"}
+{"ts":"2026-06-09T01:46:46Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"needs-review","to":"reviewing","round":1,"note":"claimed r1"}
+{"ts":"2026-06-09T01:47:29Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-09T01:49:54Z","agent":"reviser","idea":"007-sigmoid-loss","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T02:01:00Z","agent":"reviser","idea":"007-sigmoid-loss","from":"revising","to":"needs-review","round":2,"note":"applied 4 of 5 findings (bar, tier, z-loss, transfer); arXiv ID unverifiable this session — see Reviser note r1"}
+{"ts":"2026-06-09T02:06:39Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"needs-review","to":"reviewing","round":2,"note":"claimed r2"}
+{"ts":"2026-06-09T02:07:11Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"reviewing","to":"needs-revision","round":2,"note":"verdict: revise"}
+{"ts":"2026-06-09T03:26:18Z","agent":"reviser","idea":"007-sigmoid-loss","from":"needs-revision","to":"revising","round":2,"note":"claimed (r2)"}
+{"ts":"2026-06-09T03:29:42Z","agent":"reviser","idea":"007-sigmoid-loss","from":"revising","to":"needs-review","round":3,"note":"applied r2 arXiv ID (2309.06965 from r2 reviewer proposal); also fixed tier screen20m→tiny1m3m + bar + seed per new pipeline rules (🔴 one tier / one seed)"}
+{"ts":"2026-06-09T03:32:56Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"needs-review","to":"reviewing","round":3,"note":"claimed r3"}
+{"ts":"2026-06-09T03:34:16Z","agent":"reviewer","idea":"007-sigmoid-loss","from":"reviewing","to":"rejected","round":3,"note":"verdict: reject — arXiv ID unverifiable after 3 rounds"}

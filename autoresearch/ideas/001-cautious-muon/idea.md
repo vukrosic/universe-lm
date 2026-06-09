@@ -1,8 +1,8 @@
 ---
 id: 001-cautious-muon
-status: running
+status: done
 round: 1
-updated: 2026-06-08T16:50
+updated: 2026-06-09T09:36:28Z
 ---
 
 # 001 — Cautious Muon

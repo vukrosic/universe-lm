@@ -1,0 +1,14 @@
+{"ts":"2026-06-09T03:16:06Z","agent":"taste","idea":"009-fire-pe","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T03:17:02Z","agent":"taste","idea":"009-fire-pe","from":"tasting","to":"needs-review","round":1,"note":"accept: first positional ablation; clean drop-in for RoPE; diversifies optimizer+loss queue"}
+{"ts":"2026-06-09T03:20:50Z","agent":"reviewer","idea":"009-fire-pe","from":"needs-review","to":"reviewing","round":1,"note":"claimed r1"}
+{"ts":"2026-06-09T03:21:23Z","agent":"reviewer","idea":"009-fire-pe","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-09T03:29:43Z","agent":"reviser","idea":"009-fire-pe","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T03:31:09Z","agent":"reviser","idea":"009-fire-pe","from":"revising","to":"needs-review","round":2,"note":"applied 5 findings (tier, seed, bar, expected-Δ, length-extrap moved to transfer arg, staleness acknowledged)"}
+{"ts":"2026-06-09T03:32:57Z","agent":"reviewer","idea":"009-fire-pe","from":"needs-review","to":"reviewing","round":2,"note":"claimed r2"}
+{"ts":"2026-06-09T03:34:40Z","agent":"reviewer","idea":"009-fire-pe","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T03:36:33Z","agent":"code-impl","idea":"009-fire-pe","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T03:47:55Z","agent":"code-impl","idea":"009-fire-pe","from":"planning","to":"needs-codereview","round":1,"note":"plan+kernel+wiring done; FIRE is additive on RoPE (not drop-in); bit-identity caveat documented"}
+{"ts":"2026-06-09T04:16:59Z","agent":"code-rev","idea":"009-fire-pe","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T04:18:33Z","agent":"code-rev","idea":"009-fire-pe","from":"codereviewing","to":"needs-run","round":1,"note":"accept: faithful, flag-OFF bit-identical, f zero-init bias=0 at step0, additive-on-RoPE matches plan, ~127 LoC"}
+{"ts":"2026-06-09T06:05:01Z","agent":"runner","idea":"009-fire-pe","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq (tiny1m3m seed42)"}
+{"ts":"2026-06-09T09:36:32Z","agent":"runner","idea":"009-fire-pe","from":"running","to":"done","round":1,"note":"WIN: trt=6.3234 vs ctrls 6.3875/6.4050 (Δ -0.064/-0.082 ≫ gap 0.0175; far exceeds plan bar 6.4237; largest win of today's A/Bs — see evidence.md)"}

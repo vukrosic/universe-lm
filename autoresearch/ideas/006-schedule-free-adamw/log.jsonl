@@ -1,0 +1,3 @@
+{"ts":"2026-06-09T06:05:01Z","agent":"runner","idea":"006-schedule-free-adamw","from":"needs-run","to":"needs-codereview","round":1,"note":"cannot run: no schedule_free flag/code implemented anywhere in repo — needs implementation before it can be queued"}
+{"ts":"2026-06-09T06:58:46Z","agent":"code-impl","idea":"006-schedule-free-adamw","from":"needs-codereview","to":"planning","round":1,"note":"claimed: full implementation"}
+{"ts":"2026-06-09T10:19:18Z","agent":"code-impl","idea":"006-schedule-free-adamw","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done: SF optimizer wires into AdamW path; schedule_type forced to constant; eval/train swap around evaluate_model; smoke passes (CPU)"}

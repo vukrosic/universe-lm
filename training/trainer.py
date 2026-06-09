@@ -14,6 +14,7 @@ from models.llm import MinimalLLM
 from optimizers.muon import Muon
 from optimizers.cautious_adamw import CautiousAdamW
 from optimizers.soap import SOAP
+from optimizers.schedule_free_adamw import ScheduleFreeAdamW
 from training.checkpointing import (
     capture_git_metadata,
     capture_rng_state,
@@ -48,6 +49,21 @@ class EarlyStopping:
                 print(f"   Best loss: {self.best_loss:.4f} at step {self.best_step}")
                 return True
             return False
+
+
+def _swap_optimizers_eval_mode(optimizers, mode: str) -> None:
+    """Swap Schedule-Free AdamW optimizers between train (y) and eval (x)
+    iterates. The optimizer's `train_mode` group flag is idempotent, so
+    repeated calls are safe. Other optimizers (Muon, AdamW, Cautious,
+    SOAP) are no-ops here — they don't have an eval/train swap.
+
+    The Schedule-Free paper requires eval at the averaged iterate `x`,
+    not the gradient-following iterate `y`. We call `optimizer.eval()`
+    before `evaluate_model(...)` and `optimizer.train()` after.
+    """
+    for opt in optimizers:
+        if hasattr(opt, "eval") and hasattr(opt, "train"):
+            getattr(opt, mode)()
 
 
 def load_exact_step_baseline(config: LLMConfig) -> Dict[int, float]:
@@ -162,7 +178,28 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     # `torch.optim.AdamW` (bit-identical to today); other values select
     # which AdamW bucket(s) the sign-mask fires on.
     _cautious_mode = getattr(config, "use_cautious_adamw", "none")
-    if _cautious_mode != "none":
+    # Schedule-Free AdamW (Defazio et al. 2024) — see
+    # autoresearch/ideas/006-schedule-free-adamw/plan.md. Drop-in
+    # replacement for the AdamW path only; Muon path is unchanged.
+    # `use_schedule_free_adamw=True` overrides `use_cautious_adamw`
+    # (SF has no sign-mask variant yet; the cautious mask and SF
+    # averaging are independent levers and can be co-tested in a
+    # future PR). The LR schedule must be flat — see comment in
+    # `train_minimal_llm` below.
+    use_sf = getattr(config, "use_schedule_free_adamw", False)
+    if use_sf:
+        # SF replaces the AdamW path entirely. It carries its own
+        # internal averaging schedule (`c = 1/(k-warmup+1)` after
+        # warmup), so the external LR schedule must be constant.
+        adamw_optimizer = ScheduleFreeAdamW(
+            adamw_params,
+            lr=config.adamw_lr,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=config.weight_decay,
+            warmup_steps=0,
+        )
+    elif _cautious_mode != "none":
         if _cautious_mode == "embedding":
             _mask_buckets = ("token_embedding", "emb_proj")
         elif _cautious_mode == "gain":
@@ -492,7 +529,12 @@ def train_model(
                 is_milestone = True
 
             if is_milestone:
+                # Schedule-Free AdamW: swap p.data from y (train) to x
+                # (Polyak-Ruppert average) before eval, then back to y.
+                # No-op for non-SF optimizers.
+                _swap_optimizers_eval_mode(optimizers, "eval")
                 eval_metrics = evaluate_model(model, val_loader, config)
+                _swap_optimizers_eval_mode(optimizers, "train")
                 elapsed_time = (time.time() - train_start_time) / 60
                 current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
                 
@@ -596,7 +638,9 @@ def train_model(
                 'train_loss': current_loss_val,
             }
         else:
+            _swap_optimizers_eval_mode(optimizers, "eval")
             final_eval = evaluate_model(model, val_loader, config)
+            _swap_optimizers_eval_mode(optimizers, "train")
             final_eval['train_loss'] = current_loss_val
             elapsed_time = (time.time() - train_start_time) / 60
             current_lr = schedulers[0].get_last_lr()[0] if schedulers else optimizers[0].param_groups[0]['lr']
@@ -830,6 +874,14 @@ def train_minimal_llm(
     total_steps = config.train_tokens // tokens_per_opt
     warmup_steps = max(1, int(total_steps * config.warmup_ratio))
     schedule_type = getattr(config, 'schedule_type', 'cosine')
+    # Schedule-Free AdamW (Defazio et al. 2024) carries its own internal
+    # averaging schedule (`c = 1/(k-warmup+1)` after warmup). Forcing
+    # the external schedule to constant keeps the LR flat — the
+    # optimizer's internal averaging does the late-training stabilization
+    # that the lr_lambda would otherwise provide. See
+    # autoresearch/ideas/006-schedule-free-adamw/plan.md.
+    if getattr(config, "use_schedule_free_adamw", False):
+        schedule_type = 'constant'
     
     schedulers = []
     for optimizer in optimizers:

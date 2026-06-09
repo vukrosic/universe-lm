@@ -1,8 +1,8 @@
 ---
 id: 003-soap
-status: needs-run
+status: done
 round: 3
-updated: 2026-06-09T01:35:40Z
+updated: 2026-06-09T10:55:03Z
 ---
 
 # 003 — Soap (Shampoo + Adam)

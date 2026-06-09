@@ -1,0 +1,10 @@
+{"ts":"2026-06-09T03:16:06Z","agent":"taste","idea":"010-polyloss","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T03:17:03Z","agent":"taste","idea":"010-polyloss","from":"tasting","to":"needs-repitch","round":1,"note":"revise: 2nd loss-shape in a row after 007; re-pitch with mechanism-distinct framing (Taylor-truncation, not 'another over-confidence fix')"}
+{"ts":"2026-06-09T03:20:28Z","agent":"miner","idea":"010-polyloss","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-09T03:20:53Z","agent":"miner","idea":"010-polyloss","from":"repitching","to":"needs-taste","round":2,"note":"applied: bet reframed as Taylor-truncation correction (orthogonal to 007's bounded-gradient story)"}
+{"ts":"2026-06-09T04:02:48Z","agent":"taste","idea":"010-polyloss","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-09T04:03:04Z","agent":"taste","idea":"010-polyloss","from":"tasting","to":"needs-review","round":1,"note":"accept: distinct Taylor-truncation framing now crisp; 007 rejected so no loss-shape crowding; clean cheap loss-only A/B"}
+{"ts":"2026-06-09T09:29:53Z","agent":"reviewer","idea":"010-polyloss","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T09:29:57Z","agent":"reviewer","idea":"010-polyloss","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise (6 findings: pin eps_1, name pass/fail bar, train-only reporting, ignore_index mask handling, LoC budget note, disambiguation risk note)"}
+{"ts":"2026-06-09T09:39:37Z","agent":"reviser","idea":"010-polyloss","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T09:41:26Z","agent":"reviser","idea":"010-polyloss","from":"revising","to":"needs-review","round":2,"note":"applied6 findings; pinned eps1=1.0, pass/fail bar, train-only rule, mask rule, diff sites, LabelSmooth disambiguation"}

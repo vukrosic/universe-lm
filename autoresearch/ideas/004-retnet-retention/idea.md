@@ -1,8 +1,8 @@
 ---
 id: 004-retnet-retention
-status: needs-run
+status: done
 round: 3
-updated: 2026-06-09T01:35:41Z
+updated: 2026-06-09T09:36:29Z
 ---
 
 # 004 — RetNet retention (linear-attention alternative)

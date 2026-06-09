@@ -91,8 +91,8 @@ class SOAP(Optimizer):
                 if weight_decay != 0:
                     p.mul_(1 - lr * weight_decay)
 
-                if p.ndim < 2:
-                    # 1D path: pure AdamW. Eigendecomp is meaningless.
+                if p.ndim < 2 or state.get("use_adamw_fallback", False):
+                    # 1D or oversized-dim path: pure AdamW.
                     self._adamw_step(p, grad, state, step_t,
                                      beta1, beta2, lr, eps)
                     continue
@@ -137,12 +137,22 @@ class SOAP(Optimizer):
 
         return loss
 
+    # Skip SOAP preconditioning for any dimension > this threshold.
+    # Vocab-sized params (e.g. token_embedding d_out=49152) would require
+    # a 49152×49152 fp32 preconditioner (~9 GB) — fall back to AdamW instead.
+    MAX_PRECONDITIONER_DIM = 2048
+
     def _init_state(self, p, state):
         state["step"] = 0
         state["exp_avg"] = torch.zeros_like(p)
         state["exp_avg_sq"] = torch.zeros_like(p)
         if p.ndim >= 2:
             d_out, d_in = p.shape[0], p.shape[1]
+            if max(d_out, d_in) > self.MAX_PRECONDITIONER_DIM:
+                # Dimension too large — AdamW fallback, no preconditioner state.
+                state["use_adamw_fallback"] = True
+                return
+            state["use_adamw_fallback"] = False
             # Preconditioner stats in fp32 — the running averages are
             # the source of truth, and bf16 in this product is
             # lossy enough to skew the eigenbasis.

@@ -1,8 +1,8 @@
 ---
 id: 005-decoupled-qkv-muon
-status: needs-run
+status: done
 round: 1
-updated: 2026-06-08T17:05
+updated: 2026-06-09T09:36:31Z
 ---
 
 # 005 — Decoupled Q/K/V for Muon routing

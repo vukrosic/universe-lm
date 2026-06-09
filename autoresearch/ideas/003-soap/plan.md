@@ -57,3 +57,48 @@ Seed 42, single seed. |Δ| ≤ 0.05 is the noise band; a sub-noise result is log
 - `use_soap=False` reproduces the control (no numeric drift) — confirm by inspecting the routing code path: with the flag off, `soap_params=[]`, the SOAP optimizer is never instantiated, and the AdamW path is unchanged.
 - The treatment path actually exercises SOAP — confirm by a 10-step dry run on a tiny config with `use_soap=True`: `token_embedding.weight` should have non-zero `state["Q_L"]` after step 10, and the param update should be visibly different from a control dry-run.
 - `plan.md` pass/fail bar matches `idea.md` — both: pass ≤ 4.5887, fail > 4.6364, noise |Δ| ≤ 0.05.
+
+## Round-3 hotfix — `MAX_PRECONDITIONER_DIM` (OOM at vocab-sized params)
+
+The r3 code-reviewer accepted the plan; the runner then launched it on
+`tiny1m3m` and crashed with CUDA OOM in `optimizers/soap.py:_init_state`
+when allocating the preconditioner for `token_embedding.weight` (shape
+`vocab × emb_rank` = 49152×8 at tiny1m3m). The fix:
+
+- `optimizers/soap.py:143` — class constant
+  `MAX_PRECONDITIONER_DIM = 2048`. Any 2-D param with `max(d_out, d_in)
+  > 2048` is treated as "eigendecomp too expensive" and runs as plain
+  AdamW inside the same `SOAP` instance (no `L`/`R`/`Q_L`/`Q_R` state
+  allocated).
+- `optimizers/soap.py:151-155` — `_init_state` sets
+  `use_adamw_fallback = True` and returns early for those params.
+- `optimizers/soap.py:94-98` — `step()` routes the param to `_adamw_step`
+  when `use_adamw_fallback` is set.
+
+Concretely at every tier we care about:
+- **tiny1m3m** (`vocab=49152, emb_rank=8`): `token_embedding` shape
+  (49152, 8) → `max=49152 > 2048` → AdamW fallback. SOAP effectively
+  sees zero eligible 2-D non-Muon params at this tier. **The A/B at
+  tiny1m3m measures nothing on the SOAP path; only the routing
+  overhead.** The plan-tier (`screen20m`, `emb_rank=48`) has the same
+  problem: `token_embedding` is still (49152, 48), `max=49152 > 2048`.
+- **screen20m / Full10M**: only `emb_proj` (≤ 144²) and `out_proj`
+  (≤ 576²) fit under the 2048-dim ceiling. The SOAP preconditioner
+  for these is sub-megabyte. The A/B is *emb_proj + out_proj* on SOAP
+  vs AdamW; `token_embedding` falls back to AdamW math (still
+  inside the `SOAP` optimizer, so the routing is unchanged — no
+  drift vs the r3 review).
+
+Smoke test (CPU, 2026-06-09):
+- `(8, 8)` and `(64, 64)` 2-D: SOAP path, identity `Q_L` at step 1
+  ✓, non-identity after step 14 (eigh refresh fired) ✓.
+- `(2049, 4)`: `use_adamw_fallback=True` ✓.
+- 1-D `(16,)`: AdamW fallback path ✓.
+- screen20m dims: `(49152, 48)` → `use_adamw_fallback=True` (no `L`
+  state, no OOM) ✓; `(48, 144)` → full SOAP path ✓.
+- End-to-end with `MinimalLLM(Tiny1M3MConfig)`: `use_soap=False` →
+  optimizers `[Muon, AdamW]`, AdamW manages 407,488 params (incl.
+  `token_embedding`); `use_soap=True` → optimizers `[Muon, AdamW,
+  SOAP]`, AdamW manages 14,272 params (1-D only), SOAP manages
+  393,216 params (just `token_embedding` which falls back to AdamW
+  math inside SOAP). One forward+backward+step completes cleanly.

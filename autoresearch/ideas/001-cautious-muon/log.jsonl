@@ -1,1 +1,4 @@
 {"ts":"2026-06-08T16:50:00Z","agent":"backfill","idea":"001-cautious-muon","from":null,"to":"running","round":1,"note":"seeded at system migration; prior history not captured"}
+{"ts":"2026-06-09T01:46:47Z","agent":"runner","idea":"001-cautious-muon","from":"running","to":"needs-run","round":1,"note":"crash-recovery: stale 'running' lock since 2026-06-08T16:50 (~9h); run already completed in results.json (6.3922) but never closed — reset for clean re-run"}
+{"ts":"2026-06-09T06:05:01Z","agent":"runner","idea":"001-cautious-muon","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq (tiny1m3m seed42)"}
+{"ts":"2026-06-09T09:36:28Z","agent":"runner","idea":"001-cautious-muon","from":"running","to":"done","round":1,"note":"NULL: trt=6.4125 vs ctrls 6.3875/6.4050 (loses to both ctrls; previous orphan-sweep pass was inside noise — see evidence.md)"}

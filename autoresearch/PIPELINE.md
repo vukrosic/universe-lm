@@ -229,7 +229,7 @@ Verdict is exactly one of `accept` (definition gate calls it `approve`) /
 
 | Agent | Prompt | Greps | Writes |
 |---|---|---|---|
-| miner | `autoresearch/prompts/idea-miner.md` | `needs-repitch`, then Step 0 WIP gate + mine | `idea.md` (`needs-taste`); re-pitches `needs-repitch`; skips mining if `active≥6` |
+| miner | `autoresearch/prompts/idea-miner.md` | `needs-repitch`, then Step 0 WIP gate + mine | `idea.md` (`needs-taste`); re-pitches `needs-repitch`; skips mining if `upstream≥6` (GPU-queued ideas don't count) |
 | taste-reviewer | `autoresearch/prompts/idea-taste.md` | `needs-taste` | appends `taste.md`, → `needs-review`/`needs-run`/`needs-repitch`/`rejected` |
 | reviewer | `autoresearch/prompts/idea-reviewer.md` | `needs-review` | appends `review.md`, flips status |
 | reviser | `autoresearch/prompts/idea-reviser.md` | `needs-revision` | edits `idea.md`, `round++` |

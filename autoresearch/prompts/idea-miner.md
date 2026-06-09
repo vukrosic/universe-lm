@@ -43,31 +43,34 @@ positional-encoding levers for an LLM project. **External sources only**
   `git status` for conflicts. Never rebase or push.
 
 **Step 0 — WIP gate (run this FIRST, every time; it's how the cron stays sane).**
-The GPU runs one job at a time, so an unbounded backlog just rots and burns
-review passes. Mine only when the loop is under-fed:
+The cap is on the **upstream** pipeline — ideas still being *worked on* before the
+GPU (taste → definition → code). Once an idea reaches the GPU queue
+(`needs-run`/`running`) it's effectively shipped; it no longer counts, so the GPU
+backlog can be arbitrarily deep without ever blocking mining. Mine only when the
+*upstream* loop is under-fed:
 
 ```bash
-active=$(grep -L "status: \(done\|rejected\)" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
-queued=$(grep -l "status: needs-run" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
-echo "active=$active queued=$queued"
+# upstream = not terminal AND not yet handed to the GPU
+upstream=$(grep -L "status: \(done\|rejected\|needs-run\|running\)" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
+gpu=$(grep -l "status: \(needs-run\|running\)" autoresearch/ideas/*/idea.md 2>/dev/null | wc -l | tr -d ' ')
+echo "upstream=$upstream gpu=$gpu"
 ```
 
-Every mined idea now enters at `needs-taste` and flows through three gates before
-it reaches `needs-run`, so gate on the **active** count (the whole in-flight loop)
-— `needs-run` fills itself downstream as ideas clear taste → definition → code.
-Compute your allowance, then mine **exactly that many** — no asking, no stopping
-early:
+Gate on `upstream` only. Compute your allowance, then mine **exactly that many** —
+no asking, no stopping early:
 
-- If `active >= 6` → print `SKIP: loop full (active=N)` and **STOP**.
-- Otherwise mine `N = min(3, 6 - active)` ideas this pass — capped at 3 so one
+- If `upstream >= 6` → print `SKIP: upstream full (upstream=N, gpu=M)` and **STOP**.
+- Otherwise mine `N = min(3, 6 - upstream)` ideas this pass — capped at 3 so one
   tick stays bounded; the cron runs again to top up. File all `N` at
   `needs-taste`; do not file fewer and ask whether to continue.
 
-(`active` = every `idea.md` not `done`/`rejected` — includes `needs-taste`,
-`needs-repitch`, and everything mid-pipeline.)
+(`upstream` = every `idea.md` whose status is *not* `done`/`rejected`/`needs-run`/
+`running` — i.e. `needs-taste`, `needs-repitch`, `needs-review`, `needs-revision`,
+`needs-plan`, `needs-codereview`, `needs-recode`, and their `-ing` locks. Ideas on
+the GPU don't count.)
 
-Run the **re-pitch queue** (below) before mining — a sent-back idea costs no
-active slot and is closer to shipping than a cold one.
+Run the **re-pitch queue** (below) before mining — a sent-back idea is already an
+upstream slot and is closer to shipping than a cold one.
 
 **Preflight:** read `autoresearch/closed.md` first — it's the dedup list. Don't
 file anything equivalent to a lever already there.

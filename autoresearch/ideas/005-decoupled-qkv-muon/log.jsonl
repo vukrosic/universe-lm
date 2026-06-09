@@ -1,0 +1,2 @@
+{"ts":"2026-06-09T06:05:01Z","agent":"runner","idea":"005-decoupled-qkv-muon","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq (tiny1m3m seed42)"}
+{"ts":"2026-06-09T09:36:31Z","agent":"runner","idea":"005-decoupled-qkv-muon","from":"running","to":"done","round":1,"note":"NULL: trt=6.3909 vs ctrls 6.3875/6.4050 (sits between ctrls, inside variance band 0.0175; code-loop artifacts missing — see evidence.md caveat)"}

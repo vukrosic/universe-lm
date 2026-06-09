@@ -1,8 +1,43 @@
 # Code-review log — 003 soap
 
+## r4 — 2026-06-09 — verdict: accept
+
+**Re-review after r3.5 hotfix. Code is unchanged from the r3 review; the r3.5 patch added `MAX_PRECONDITIONER_DIM=2048` + `use_adamw_fallback` in `optimizers/soap.py:94-98,143-168` to dodge the OOM the runner hit on `tiny1m3m`'s vocab-sized `token_embedding`. The mechanism, routing, and identity properties are all preserved. Accepting to `needs-run` for the screen20m A/B.**
+
+**Re-check of r3.5 hotfix (`MAX_PRECONDITIONER_DIM=2048`):**
+
+- **Faithful.** The fallback path is plain AdamW (eigh skipped, `L`/`R`/`Q_L`/`Q_R` state not allocated), still inside the `SOAP` class. The treatment path is the *intended* mechanism for the small params (`emb_proj` ≤ 144², `out_proj` ≤ 576²) and the fallback is the *intended* mechanism for oversize params (`token_embedding` shape (49152, 48) at screen20m). At every tier we care about, the A/B is *emb_proj + out_proj* on SOAP vs AdamW; `token_embedding` runs the same AdamW math on both arms (just routed via `SOAP`'s fallback instead of `AdamW`). The routing doesn't change — only the optimizer object's class.
+- **Identity.** The AdamW fallback path inside `SOAP` (`_adamw_step` at lines 170-179) is bit-equivalent to `torch.optim.AdamW`'s update on a 1-D / oversize param: same decoupled weight decay, same bias correction, same `1/(sqrt(v_hat) + eps)` denominator. The trainer never routes 1-D params to `soap_params` (line 145 explicitly checks `param.ndim == 2`), so the fallback only fires for oversize 2-D params. Smoke test in `plan.md` §Round-3 hotfix confirms `(8,8)`, `(64,64)` SOAP path, `(2049,4)` AdamW fallback, end-to-end `MinimalLLM(Tiny1M3MConfig)` step.
+- **LoC.** `optimizers/soap.py` is 196 lines total (~156 LoC excluding docstrings/blanks). Within the <200 LoC budget for mined ideas.
+- **3 sources of truth for `precondition_freq` (r2 minor, still unaddressed).** `configs/llm_config.py:387` hardcodes `use_soap_precondition_freq: int = 10`; `training/trainer.py:244` passes it through; `optimizers/soap.py:49` has a constructor default. Not blocking — flag for a future cleanup PR.
+- **`use_soap_fp32_only` doc ghost (r2 minor, still unaddressed).** `plan.md` §Cost and §Run Step 0 reference a `use_soap_fp32_only` flag that doesn't exist in `configs/llm_config.py`. The code already does the equivalent (line 159-168: `L`/`R`/`Q_L`/`Q_R` are unconditionally fp32; the bf16 risk is in `grad @ grad.t()` if the param is bf16). Doc cleanup, not blocking.
+
+**Plan ↔ idea consistency:**
+- pass bar: plan ≤ 4.5887, idea ≤ 4.5887 ✓
+- fail: plan > 4.6364, idea > 4.6364 ✓
+- noise: plan |Δ| ≤ 0.05, idea |Δ| ≤ 0.05 ✓
+- control: V+q+SWA+HighRoPE on both ✓
+- tier: screen20m on both ✓
+- seed: 42 single seed, per pipeline hard rule (idea.md:39, plan.md §Step 2) ✓
+
+**Coordination:**
+- `git diff --stat` is 4 files, +75/-4: `optimizers/soap.py`, `optimizers/__init__.py`, `configs/llm_config.py`, `training/trainer.py`. No stomp of the parallel-Claude's edits in `models/layers.py` or `models/llm.py`.
+
+**Verdict:** `accept`. Status → `needs-run`.
+
 ## r3 — 2026-06-09 — verdict: accept
 
 **Round 3 cap — forced call. Blocking finding from r2 (3-seed protocol) is fixed. Code unchanged from r2 (the r2 fix was a doc fix, not a code fix; the optimizer body and routing were already correct). Accepting to `needs-run` for the screen20m A/B.**
+
+## r3.5 — 2026-06-09 — runtime hotfix (post-accept)
+
+Runner OOM at `tiny1m3m` from `token_embedding.weight` (shape 49152×8,
+`max > 2048` → would have allocated a 49152×49152 fp32 preconditioner).
+Fix in `optimizers/soap.py:143,151-155,94-98`:
+`MAX_PRECONDITIONER_DIM=2048` + `use_adamw_fallback` for oversize dims.
+Smoke-tested on CPU (tiny + screen20m-shaped params + end-to-end
+`MinimalLLM(Tiny1M3MConfig)` build + 1 forward+backward+step). Full
+notes in `plan.md` § "Round-3 hotfix — `MAX_PRECONDITIONER_DIM`".
 
 **Re-check of r2 findings:**
 
