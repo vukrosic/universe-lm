@@ -6,6 +6,7 @@ from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForwa
 from .fire_pe import FIREBias
 from .cope import CoPE
 from .fox import FoX
+from .canon_conv import CanonConv
 
 
 class Rotary(nn.Module):
@@ -20,6 +21,43 @@ class Rotary(nn.Module):
         # torchtune expects [batch, seq_len, num_heads, head_dim]
         # Our input is already [B, T, H, D] which matches torchtune's expectation
         return self.rope(x_BTHD)
+
+
+# ============================================================================
+# 022 — Softpick (Zuhri/Fuadi/Aji 2025, arXiv:2504.20966)
+# Rectified-softmax attention normalization:
+#   softpick(x_i) = relu(exp(x_i) − 1) / (Σ_j |exp(x_j) − 1| + ε)
+# Permits zero total attention mass → kills the attention-sink
+# pathology without adding a learnable sink token. The `exp − 1`
+# op is computed in **fp32** then cast back to model dtype (large
+# positive scores overflow in fp16/bf16). `mask` (bool, broadcast-
+# compatible with `scores`) zeros out both numerator and
+# denominator on masked positions — the bug class the spec calls
+# out at `idea.md:32-45`. ε=1e-6 is the paper default, pinned.
+# See `autoresearch/ideas/022-softpick-attention/plan.md`.
+# ============================================================================
+def softpick(scores: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Rectified-softmax attention normalization.
+
+    Args:
+        scores: attention logits, shape [B, H, T_q, T_k]. T_q may be 1
+            (decode); T_k is the sequence length. The query axis is
+            not reduced over, so this is also valid for cross-attn.
+        mask: bool tensor, broadcast-compatible with `scores`. True =
+            attend, False = mask out. Both numerator and denominator
+            are zeroed on False entries.
+        eps: denominator guard (paper default 1e-6).
+
+    Returns:
+        Tensor of the same shape and dtype as `scores`. Each row sums
+        to ≤ 1 (≤, not ==, because softpick permits zero total mass
+        when every score is ≤ 0).
+    """
+    z = (scores.to(torch.float32)).exp() - 1.0
+    m = mask.to(z.dtype)
+    num = torch.relu(z) * m
+    den = z.abs() * m
+    return (num / (den.sum(dim=-1, keepdim=True) + eps)).to(scores.dtype)
 
 
 # ============================================================================
@@ -427,6 +465,19 @@ class MultiHeadAttention(nn.Module):
         # baseline path bit-identical. f is zero-init so step-0 bias = 0.
         use_fire_pe: bool = False,
         fire_pe_d_phi: int = 4,
+        # 024 — Gated Attention (Qiu et al. 2025, arXiv:2505.06708):
+        # per-head *scalar* input-conditional sigmoid gate on the head
+        # output `o_h = A_h V_h`, post-AV, pre-merge. `o_h ← o_h · 2·σ(W·x+b)`
+        # with `W : nn.Linear(d_model, n_heads)` (per-head scalar, NOT
+        # the vector form — vector is 42% of the 0.94M model). Gate
+        # input `x` is the sublayer input residual (pre-LN), NOT `o_h`
+        # itself (circularity). W=0, b=0 init → 2·σ(0) = 1.0 exactly at
+        # step 0, so step-0 ≡ baseline. Default off → baseline path
+        # bit-identical. Categorically distinct from the pre-existing
+        # `use_attn_output_gate` (which is a per-head *learnable scalar
+        # gain* `o_h *= (1 + g_h)`, not input-conditional, ReZero-style).
+        # See `autoresearch/ideas/024-gated-attention/plan.md`.
+        use_gated_attn: bool = False,
         # 013 — CoPE (Golovneva et al. 2024, arXiv:2405.18719):
         # content-aware positional bias replacing RoPE. When on, the
         # Rotary construction is gated off and the attention path is
@@ -445,6 +496,50 @@ class MultiHeadAttention(nn.Module):
         # bit-identical. Forces the manual attention path (the
         # post-softmax multiply can't go through SDPA's flash kernel).
         use_fox: bool = False,
+        # 022 — Softpick (Zuhri/Fuadi/Aji 2025, arXiv:2504.20966):
+        # replace `torch.softmax` with `softpick(scores, mask, eps)` in
+        # the FIRE manual-path branch. Function swap; no params, no
+        # init, no schedule. ε=1e-6 is the paper default, pinned.
+        # Default off → softmax baseline path bit-identical. The mask
+        # argument is the same `window` tensor already used for
+        # `masked_fill` in the FIRE branch, so masked positions
+        # contribute zero to both numerator and denominator.
+        use_softpick: bool = False,
+        # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
+        # per-head learnable scalar s_h that multiplies the attention
+        # logits by `s_h · log(n)` pre-softmax, where n is the per-query
+        # causal key count. Restores per-position sharpness at long
+        # range so the softmax distribution does not flatten toward
+        # uniform as context grows. Init s_h = 1.0 (the paper's natural
+        # starting point). At flag-on, n > 1, the forward is NOT bit-
+        # identical to vanilla softmax — the log(n) scaling IS the
+        # mechanism, so this is explicitly justified, not a bug.
+        # Default off → baseline path bit-identical. Forces the manual
+        # attention path (the score-side multiply can't go through
+        # SDPA's flash kernel). See
+        # `autoresearch/ideas/025-scalable-softmax/plan.md`.
+        use_ssmax: bool = False,
+        # 021 — Value Residual Learning (Zhou/Wu/Jiang 2024,
+        # arXiv:2410.17897). Cross-layer V shortcut: stash the
+        # post-W_V, post-GQA, post-transpose V at layer 0; in every
+        # later layer l > 0, blend `V_l ← (1-λ_l)·V_l + λ_l·V_1`
+        # right after the transpose at `models/layers.py:1479`
+        # (post-`repeat_interleave` GQA expansion, post-transpose;
+        # both V and V_1 are shape `[B, n_heads, T, d_k]` here,
+        # invariant to GQA settings). `λ_l = nn.Parameter(torch.zeros(()))`
+        # per-block (0-dim scalar). λ=0 init ⇒ `(1-0)·V + 0·V_1 = V`
+        # bit-identical to baseline at step 0 within fp32 rounding
+        # noise (one extra multiply-add). `v_residual` is a forward-
+        # pass-local stash on this MHA (`self._v_residual`), passed
+        # by `MinimalLLM.forward` to blocks 1..N-1 as a positional
+        # kwarg. `.detach()` on the stash ⇒ the layer-l blend's
+        # gradient does not flow back into layer-0 W_V (each layer's
+        # W_V trains on its own attention path; the cross-layer
+        # shortcut only learns the blend weight). Default off →
+        # baseline path bit-identical (no Parameter created, no
+        # stash, no blend). See
+        # `autoresearch/ideas/021-value-residual/plan.md`.
+        use_value_residual: bool = False,
         norm_type: str = "rmsnorm",
         qk_norm_type: str = "rmsnorm",
         v_norm_type: str = "",
@@ -605,10 +700,46 @@ class MultiHeadAttention(nn.Module):
         self.use_fox = use_fox
         if self.use_fox:
             self.fox = FoX(d_model, n_heads)
+        # 022 — Softpick flag. Stored on self so the FIRE branch can
+        # branch on it at the swap site. No module to build — the
+        # `softpick` helper at the top of this file is the entire
+        # implementation.
+        self.use_softpick = use_softpick
+        # 025 — SSMax: one learnable per-head scalar s_h (init 1.0).
+        # Built lazily; the parameter is never referenced when the
+        # flag is off, so the baseline path is bit-identical. The
+        # multiplier is `s_h · log(n)` where n = (i+1) is the per-
+        # query causal key count. log_n is a length-T vector computed
+        # in the forward (no precomputed buffer — T is fixed at
+        # construction time but the multiplier is essentially free).
+        self.use_ssmax = use_ssmax
+        if self.use_ssmax:
+            self.ssmax_s = nn.Parameter(torch.ones(self.n_heads))
+        # 021 — Value Residual: per-block 0-dim scalar `lambda_v`
+        # (init 0 ⇒ identity blend at step 0). `_v_residual` is a
+        # forward-pass-local stash on this MHA (set by layer 0,
+        # read by `MinimalLLM.forward` and passed to layers 1..N-1).
+        # Initialized to `None` so the attribute always exists for
+        # the `block.attention._v_residual` readout in the model
+        # forward loop, even before the first forward pass.
+        self.use_value_residual = use_value_residual
+        if self.use_value_residual:
+            self.lambda_v = nn.Parameter(torch.zeros(()))
+            self._v_residual = None
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
             self.attn_output_gate = nn.Parameter(torch.zeros(n_heads))
+        # 024 — Gated Attention: per-head *scalar* input-conditional
+        # sigmoid gate on `o_h = A_h V_h`. `nn.Linear(d_model, n_heads)`,
+        # both weight and bias zero-init. At init: `2·σ(0) = 1.0` exactly
+        # → step-0 ≡ baseline. Cheap (H·d_model + H params per layer,
+        # 1.3% of the 0.94M model at tiny1m3m).
+        self.use_gated_attn = use_gated_attn
+        if self.use_gated_attn:
+            self.gated_attn_proj = nn.Linear(d_model, n_heads, bias=True)
+            nn.init.zeros_(self.gated_attn_proj.weight)
+            nn.init.zeros_(self.gated_attn_proj.bias)
 
         # #29 value embeddings: project the (factorized) token embedding into the
         # V subspace and add it to the values. Raw zero-init weight (not nn.Linear)
@@ -1172,7 +1303,7 @@ class MultiHeadAttention(nn.Module):
         Kr = K * cos + rotate_half(K) * sin
         return Qr, Kr
 
-    def forward(self, x, ve=None):
+    def forward(self, x, ve=None, gate_x=None, v_residual=None):
         batch_size, seq_len = x.size(0), x.size(1)
         # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
         # to post-norm. Reject the misconfiguration loudly so the
@@ -1379,6 +1510,21 @@ class MultiHeadAttention(nn.Module):
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
+        # 021 — Value Residual: stash post-transpose V on layer 0
+        # (`v_residual is None`); blend `(1-λ)·V + λ·V_1` on layer
+        # l > 0. λ=0 init ⇒ `V_l = V_l` bit-identical to baseline at
+        # step 0 (within fp32 rounding noise of one extra multiply-
+        # add). `.detach()` so gradients don't flow back into layer-0
+        # W_V from the layer-l blend. Both V and `v_residual` are
+        # shape `[B, n_heads, T, d_k]` at this site (post-GQA
+        # repeat_interleave + post-transpose), invariant to
+        # `n_kv_heads`. Site is pre-v_norm (idea.md:16-27 spec).
+        if self.use_value_residual:
+            if v_residual is None:
+                self._v_residual = V.detach()
+            else:
+                V = (1.0 - self.lambda_v) * V + self.lambda_v * v_residual
+
         # #92 Robust V-norm: normalize the value vectors per head before they
         # are mixed by attention (last dim = d_k).
         if self.use_v_norm:
@@ -1410,6 +1556,24 @@ class MultiHeadAttention(nn.Module):
             # positional bias to scores (additive, just like FIRE).
             if self.use_cope:
                 scores = scores + self.cope(x)
+            # 025 — SSMax: per-head length-dependent temperature on
+            # logits. `n = i+1` is the per-query causal key count, so
+            # `log_n[t] = log(t+1)` for the t-th query. We multiply
+            # AFTER the FIRE/CoPE additive bias and BEFORE the mask so
+            # the temperature has its natural interpretation (it
+            # rescales the per-position logit scale). The mask is
+            # applied later; `log_n[0] = log(1) = 0` so the first
+            # query's scores are unchanged (it attends only to itself,
+            # and softmax over a single element is independent of
+            # temperature).
+            if self.use_ssmax:
+                log_n = torch.log(
+                    torch.arange(1, seq_len + 1, device=Q.device, dtype=torch.float32)
+                )
+                scores = scores * (
+                    self.ssmax_s.view(1, self.n_heads, 1, 1)
+                    * log_n.view(1, 1, seq_len, 1)
+                )
             if self.use_sliding_window:
                 window = self._sliding_window_mask[:seq_len, :seq_len]
             else:
@@ -1418,7 +1582,15 @@ class MultiHeadAttention(nn.Module):
             scores = scores.masked_fill(
                 ~window.view(1, 1, seq_len, seq_len), -1e9
             )
-            attn_w = torch.softmax(scores, dim=-1)
+            # 022 — Softpick: drop-in for `torch.softmax` in the FIRE
+            # branch only. The same `window` tensor is reused as the
+            # mask argument so masked positions contribute zero to
+            # both numerator and denominator (the bug class at
+            # `idea.md:32-45`). Default off → softmax.
+            if self.use_softpick:
+                attn_w = softpick(scores, window.view(1, 1, seq_len, seq_len))
+            else:
+                attn_w = torch.softmax(scores, dim=-1)
             # 020 — FoX: multiplicative decay on probabilities (post-softmax),
             # then row-renorm. Strictly orthogonal to FIRE (which is additive
             # on logits). Stacks on top of FIRE: when both flags are on, the
@@ -1439,6 +1611,8 @@ class MultiHeadAttention(nn.Module):
             or self.use_q_feature_map or self.use_per_head_rope_base
             or self.use_cope  # 013 — CoPE forces the manual attention path.
             or self.use_fox  # 020 — FoX: post-softmax multiply can't go through SDPA.
+            or self.use_softpick  # 022 — Softpick: defensive fallback (swap site is the FIRE branch above).
+            or self.use_ssmax  # 025 — SSMax: score-side multiply, can't go through SDPA's flash kernel.
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -1519,6 +1693,17 @@ class MultiHeadAttention(nn.Module):
             # ---- 013 CoPE: content-aware positional bias added to scores ----
             if self.use_cope:
                 scores = scores + self.cope(x)
+            # ---- 025 SSMax: per-head length-dependent temperature on
+            # logits. Same recipe as the FIRE branch (after the
+            # additive bias additions, before the mask). ----
+            if self.use_ssmax:
+                log_n = torch.log(
+                    torch.arange(1, seq_len + 1, device=Q.device, dtype=torch.float32)
+                )
+                scores = scores * (
+                    self.ssmax_s.view(1, self.n_heads, 1, 1)
+                    * log_n.view(1, 1, seq_len, 1)
+                )
             # ---- Mask (causal / SWA) ----
             scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
             # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
@@ -1672,6 +1857,20 @@ class MultiHeadAttention(nn.Module):
         if self.use_attn_output_gate:
             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
             attn_output = attn_output * gate
+        # 024 — Gated Attention: input-conditional per-head scalar
+        # sigmoid gate on `o_h = A_h V_h` (Qiu et al. 2025). Applied
+        # post-AV, pre-merge. Composes cleanly with `use_attn_output_gate`
+        # (ReZero gain) since the two multiply through. Gate input is
+        # the sublayer input residual (pre-LN) — see
+        # `TransformerBlock.forward` for the `gate_x` plumbing. When
+        # `gate_x` is None, fall back to the MHA's primary input `x`
+        # (post-norm or call sites that don't plumb the raw residual).
+        # W=0, b=0 init → 2·σ(0) = 1.0 exactly at step 0 → bit-identical
+        # to the no-gate path at step 0.
+        if self.use_gated_attn:
+            _gx = gate_x if gate_x is not None else x
+            g = 2.0 * torch.sigmoid(self.gated_attn_proj(_gx))  # [B, T, H]
+            attn_output = attn_output * g.view(batch_size, seq_len, self.n_heads, 1).transpose(1, 2)
         # O-family: cheap op on the post-softmax output [B,H,T,D] (pre-merge),
         # applied for every attention branch. No-op when out_op == "".
         attn_output = self._apply_output_op(attn_output)
@@ -1797,6 +1996,13 @@ class TransformerBlock(nn.Module):
         use_q_noise_reg: bool = False,
         use_fire_pe: bool = False,
         fire_pe_d_phi: int = 4,
+        # 024 — Gated Attention (Qiu et al. 2025, arXiv:2505.06708):
+        # per-head *scalar* input-conditional sigmoid gate on the head
+        # output `o_h = A_h V_h`, post-AV, pre-merge. Pass-through to MHA
+        # (see the MHA `use_gated_attn` kwarg for the mechanism). Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/024-gated-attention/plan.md`.
+        use_gated_attn: bool = False,
         # 013 — CoPE: passed through to MultiHeadAttention (see note
         # at the MHA `use_cope` kwarg). Default off → baseline path
         # bit-identical. Mutually exclusive with use_qk_norm_post_rope
@@ -1807,6 +2013,27 @@ class TransformerBlock(nn.Module):
         # Default off → baseline path bit-identical. Identity-init
         # clean (W_f=0, b_f=+10 → D ≈ 1 within 9% over T=2048).
         use_fox: bool = False,
+        # 022 — Softpick. Passed through to MultiHeadAttention
+        # (see note at the MHA `use_softpick` kwarg). Default off →
+        # baseline path bit-identical.
+        use_softpick: bool = False,
+        # 025 — SSMax. Passed through to MultiHeadAttention (see note
+        # at the MHA `use_ssmax` kwarg). Default off → baseline path
+        # bit-identical.
+        use_ssmax: bool = False,
+        # 023 — Canon conv (Griffin/Mamba local-mixing half). One
+        # causal depthwise Conv1d (kernel=3) per block on the residual
+        # stream, immediately before the attention sublayer's pre-LN.
+        # Single scalar output gate `g` per block init 0 → step-0
+        # ≡ no-conv baseline. Pre-LN read. Default off → baseline
+        # path bit-identical (the conv module is never built, the
+        # forward branch is never taken). See
+        # `autoresearch/ideas/023-canon-conv/plan.md`.
+        use_canon_conv: bool = False,
+        # 021 — Value Residual Learning. Passed through to
+        # MultiHeadAttention (see the MHA `use_value_residual` kwarg
+        # for the mechanism). Default off → baseline path bit-identical.
+        use_value_residual: bool = False,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -1843,8 +2070,12 @@ class TransformerBlock(nn.Module):
             rope_base=rope_base,
             use_fire_pe=use_fire_pe,
             fire_pe_d_phi=fire_pe_d_phi,
+            use_gated_attn=use_gated_attn,
             use_cope=use_cope,
             use_fox=use_fox,
+            use_softpick=use_softpick,
+            use_ssmax=use_ssmax,
+            use_value_residual=use_value_residual,
             use_tied_qk=use_tied_qk,
             use_mla=use_mla,
             mla_latent_dim=mla_latent_dim,
@@ -1949,6 +2180,13 @@ class TransformerBlock(nn.Module):
             self.ffn_embed_proj = nn.Parameter(
                 torch.zeros(d_model, value_embed_rank)
             )
+        # 023 — Canon conv: gated depthwise causal Conv1d on the
+        # residual stream. Constructed lazily; never called when
+        # `use_canon_conv=False` so the baseline path is bit-
+        # identical. See `models/canon_conv.py` for the module doc.
+        self.use_canon_conv = use_canon_conv
+        if self.use_canon_conv:
+            self.canon_conv = CanonConv(d_model)
 
     def _init_resid(self, resid_mode: str, d_model: int, n_layers: int):
         """Build params for the selected residual-add lever. Each sublayer
@@ -2073,16 +2311,28 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None):
         # Re-inject the original embedding before attention/MLP (#20)
         if self.use_embed_residual:
             x = self.resid_m0 * x + self.resid_m1 * x0
+
+        # 023 — Canon conv: gated depthwise causal Conv1d on the
+        # residual stream, immediately before the attention sublayer's
+        # pre-LN. Scalar gate `g=0` at init → bit-identical to no-conv
+        # baseline at step 0. ONE conv per block (the spec's placement
+        # pin: not before FFN, not at sublayer-input, not twice per
+        # block). See `autoresearch/ideas/023-canon-conv/plan.md`.
+        if self.use_canon_conv:
+            x = self.canon_conv(x)
 
         if self.use_parallel_block:
             # #98 Parallel block: attn and FFN both read one shared normed
             # input; their outputs are summed into the residual together.
             n = self.norm1(x)
-            attn_out = self.attention(n, ve)
+            # 024 — pass the raw residual `x` to the MHA gate (pre-LN
+            # signal). `n = norm1(x)` is the post-LN signal; the spec
+            # pins the gate input as the pre-LN residual.
+            attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             ffn_in = n
@@ -2098,7 +2348,9 @@ class TransformerBlock(nn.Module):
             # x = norm(x + sublayer(x_or_norm_x))
             # We use the un-normalized x as the sublayer input (the
             # original Transformer design — sometimes called "post-norm").
-            attn_out = self.attention(x, ve)
+            # 024 — post-norm: sublayer input is already the raw residual,
+            # pass it as the gate signal.
+            attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity
@@ -2120,7 +2372,10 @@ class TransformerBlock(nn.Module):
             x = self.norm2(x + self.dropout(ff_out))
         else:
             # Pre-norm (default): norm before sublayer, residual after.
-            attn_out = self.attention(self.norm1(x), ve)
+            # 024 — pass the raw residual `x` (pre-LN signal) to the MHA
+            # gate. The MHA's primary input is `norm1(x)` (post-LN); the
+            # gate reads the pre-LN residual.
+            attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity

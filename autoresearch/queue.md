@@ -70,6 +70,8 @@ status into this file — that is exactly the drift that breaks the loop.
 | 015 | `015-moonlight-muon-rms/` | Muon per-tensor RMS rescale `c·√max(d_in,d_out)` (Moonlight paper) | −0.01 to −0.05 |
 | 016 | `016-qk-norm/` | LayerNorm on Q,K head-dim (per-head logit bounding) | −0.005 to −0.02 |
 | 017 | `017-sub-ln-sandwich/` | LN_post wrap on each sublayer output (DeepNet §3.1) | small win or null at 6L |
+| 020 | `020-forgetting-attn/` | per-head, per-token learnable forget-gate (multiplicative decay on softmax) | small win or null on top of 009 FIRE |
+| 025 | `025-scalable-softmax/` | SSMax — per-head learnable `s·log(n)` temperature on attention logits (arXiv:2501.19399) | −0.01 to −0.03 or informative null |
 
 ## PENDING — not yet foldered (migrate on first touch)
 
@@ -83,6 +85,11 @@ Loss/objective: Sigmoid loss / ET loss · PolyLoss.
 Positional: FIRE · CoPE.
 Attention stability: Forgetting Transformer per-head decay (020).
 Normalization: Dynamic Tanh / DyT (019).
+Architecture: Value Residual Learning · cross-layer V shortcut (021) · arXiv:2410.17897.
+Attention: Softpick rectified-softmax · sink-free normalization (022) · arXiv:2504.20966.
+Architecture: Canon layers · gated depthwise causal Conv1d on residual stream (023) · Griffin arXiv:2402.19427 / Physics-of-LMs Canon.
+Attention: Gated Attention · per-head sigmoid output gate post-AV (024) · arXiv:2505.06708.
+Attention: Scalable-Softmax / SSMax · length-aware attention temperature (025) · arXiv:2501.19399.
 
 ## CLOSED ideas (do not re-propose)
 

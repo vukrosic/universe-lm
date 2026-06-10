@@ -6,3 +6,4 @@
 {"ts":"2026-06-09T12:51:05Z","agent":"code-impl","idea":"017-sub-ln-sandwich","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
 {"ts":"2026-06-09T13:01:03Z","agent":"code-rev","idea":"017-sub-ln-sandwich","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: mechanism faithful (LN_post wraps sublayer output after layerscale, before residual add in both pre-norm and post-norm branches), single-bool default OFF, no HP drift, identity-safe. Plan cost-claim math is off (2*d_model not d_model²) but doesn't gate A/B."}
 {"ts":"2026-06-09T13:47:10Z","agent":"runner","idea":"017-sub-ln-sandwich","from":"needs-run","to":"running","round":1,"note":"claimed: queuing on vast-34386"}
+{"ts":"2026-06-09T16:13:26Z","agent":"runner","idea":"017-sub-ln-sandwich","from":"running","to":"done","round":1,"note":"run: ctrl 6.4044 / 6.4091 (gap 0.0047); see evidence.md"}

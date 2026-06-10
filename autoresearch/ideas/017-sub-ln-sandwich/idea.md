@@ -1,8 +1,8 @@
 ---
 id: 017-sub-ln-sandwich
-status: running
+status: done
 round: 1
-updated: 2026-06-09T13:47:10Z
+updated: 2026-06-09T16:13:26Z
 ---
 
 # 017 — Sub-LN / Sandwich block (additional LN after each sublayer)

@@ -1,0 +1,19 @@
+{"ts":"2026-06-09T16:15:56Z","agent":"taste","idea":"023-canon-conv","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:16:22Z","agent":"taste","idea":"023-canon-conv","from":"tasting","to":"needs-review","round":1,"note":"accept: local-mixing lever is the Griffin/Mamba playbook half; orthogonal to closed SWA/dilated-attn; zero-init gate gives a clean A/B with informative null; placement call (1 conv per block, not 2) is for the reviser to pin down"}
+{"ts":"2026-06-09T16:35:30Z","agent":"reviewer","idea":"023-canon-conv","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:36:01Z","agent":"reviewer","idea":"023-canon-conv","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-09T16:38:41Z","agent":"reviser","idea":"023-canon-conv","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:40:05Z","agent":"reviser","idea":"023-canon-conv","from":"revising","to":"needs-review","round":2,"note":"9 findings applied: source tightened, Definition (gate 2) section added (ctrl/trt, pass bar, seed, placement, padding, gate shape, LoC budget, DWConv shape, LN interaction); pinned to FIRE-equipped ctrl; kernel=3 only; 1 conv per block pre-attn pre-LN; scalar gate; left-pad 2 causality"}
+{"ts":"2026-06-09T16:42:09Z","agent":"reviewer","idea":"023-canon-conv","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-09T16:42:37Z","agent":"reviewer","idea":"023-canon-conv","from":"reviewing","to":"needs-revision","round":2,"note":"verdict: revise (r2) — pass bar WIN<-0.005 overlaps NULL |Δ|<0.01; tighten WIN to <-0.01 to tile cleanly with NULL; spec otherwise ready"}
+{"ts":"2026-06-09T16:43:59Z","agent":"reviser","idea":"023-canon-conv","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
+{"ts":"2026-06-09T16:44:20Z","agent":"reviser","idea":"023-canon-conv","from":"revising","to":"needs-review","round":3,"note":"1 finding applied: pass bar bands tightened to tile without overlap (WIN < ctrl-0.01, NULL |Δ| <= 0.01, FAIL > ctrl+0.01) per r2 review"}
+{"ts":"2026-06-09T16:47:14Z","agent":"reviewer","idea":"023-canon-conv","from":"needs-review","to":"reviewing","round":3,"note":"claimed"}
+{"ts":"2026-06-09T16:47:31Z","agent":"reviewer","idea":"023-canon-conv","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T22:32:40Z","agent":"code-impl","idea":"023-canon-conv","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:40:15Z","agent":"orchestrator","idea":"023-canon-conv","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
+{"ts":"2026-06-09T22:41:07Z","agent":"code-impl","idea":"023-canon-conv","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:43:50Z","agent":"code-impl","idea":"023-canon-conv","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done: CanonConv module (models/canon_conv.py, 71 LoC), wired into TransformerBlock pre-attn (one conv per block, scalar gate init 0), 6/6 tests pass (no-NaN, causality, step-0 identity, wiring-live, block step-0, placement); param delta +2316 matches 12*(3*64+1); plan.md Run section updated to runner harness convention"}
+{"ts":"2026-06-09T22:46:37Z","agent":"code-rev","idea":"023-canon-conv","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:49:27Z","agent":"code-rev","idea":"023-canon-conv","from":"codereviewing","to":"needs-recode","round":1,"note":"revise: 2 findings (silent HP drift trt vs ctrl on use_value_embed/use_q_gain/use_sliding_window/rope_base; missing _arq_023.py + _arq_023_ctrl.py)"}
+{"ts":"2026-06-10T02:02:09Z","agent":"code-impl","idea":"023-canon-conv","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}

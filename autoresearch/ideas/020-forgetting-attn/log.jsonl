@@ -8,3 +8,10 @@
 {"ts":"2026-06-09T12:59:43Z","agent":"reviewer","idea":"020-forgetting-attn","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-09T13:00:09Z","agent":"reviewer","idea":"020-forgetting-attn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-09T13:48:40Z","agent":"code-impl","idea":"020-forgetting-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:14:15Z","agent":"orchestrator","idea":"020-forgetting-attn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (145m)"}
+{"ts":"2026-06-09T16:15:30Z","agent":"code-impl","idea":"020-forgetting-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:18:12Z","agent":"code-impl","idea":"020-forgetting-attn","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done"}
+{"ts":"2026-06-09T16:38:10Z","agent":"code-rev","idea":"020-forgetting-attn","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:42:32Z","agent":"code-rev","idea":"020-forgetting-attn","from":"codereviewing","to":"needs-run","round":1,"note":"accept: mechanism+identity+tests all pass; use_fox=False path is bit-identical, step-0 MHA drift 8.9e-6 (well below 1e-2 plan tolerance), D[0,2047]=0.91 at T=2048 confirms r2 b_f=+10 correction"}
+{"ts":"2026-06-09T16:43:59Z","agent":"runner","idea":"020-forgetting-attn","from":"needs-run","to":"running","round":1,"note":"claimed: FIRE-vs-FIRE+FoX stacked A/B on vast-34386"}
+{"ts":"2026-06-09T22:31:24Z","agent":"runner","idea":"020-forgetting-attn","from":"running","to":"needs-run","round":1,"note":"reclaim: box at 220.82.52.202:34386 unreachable (SSH connection closed); 020 GPU run lost. Will relaunch when a box is reachable."}

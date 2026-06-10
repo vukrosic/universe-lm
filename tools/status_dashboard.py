@@ -13,7 +13,10 @@ import http.server, socketserver, glob, os, re, json, html, subprocess
 from urllib.parse import urlparse, parse_qs
 
 PORT = int(os.environ.get("PORT", "8080"))
-IDEAS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "autoresearch", "ideas"))
+AUTORESEARCH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "autoresearch"))
+IDEAS = os.path.join(AUTORESEARCH, "ideas")
+BRIEF = os.path.join(AUTORESEARCH, "brief.md")
+BRIEFS = os.path.join(AUTORESEARCH, "briefs")
 REMOTE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "remote-results"))
 
 # tmux sessions we never want to show as "MiniMax workers" on the board.
@@ -42,6 +45,105 @@ GROUPS = [
 ]
 
 SLUG_RE = re.compile(r"\A[\w.\-]+\Z")
+
+def read_brief():
+    """Return research brief markdown (topic / question / scope), or None."""
+    if not os.path.isfile(BRIEF):
+        return None
+    with open(BRIEF) as fh:
+        return fh.read()
+
+def _parse_frontmatter(text):
+    """Extract YAML frontmatter key: value pairs from text. Returns dict."""
+    out = {}
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return out
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"^(\w+):\s*(.+)$", line)
+        if m:
+            out[m.group(1).strip()] = m.group(2).strip().strip('"').strip("'")
+    return out
+
+def _count_done_ideas():
+    """Count ideas with status: done."""
+    count = 0
+    for f in glob.glob(os.path.join(IDEAS, "*", "idea.md")):
+        try:
+            with open(f) as fh:
+                for line in fh:
+                    m = re.match(r"\s*status:\s*(.+)", line, re.I)
+                    if m:
+                        if m.group(1).strip().strip('"').split()[0] == "done":
+                            count += 1
+                        break
+        except OSError:
+            continue
+    return count
+
+def read_campaigns():
+    """Return list of campaign dicts from autoresearch/briefs/*/brief.md."""
+    out = []
+    if not os.path.isdir(BRIEFS):
+        return out
+    for f in sorted(glob.glob(os.path.join(BRIEFS, "*", "brief.md"))):
+        parent = os.path.basename(os.path.dirname(f))
+        if parent.startswith("_"):
+            continue
+        try:
+            with open(f) as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        fm = _parse_frontmatter(text)
+        if not fm:
+            continue
+        camp = {
+            "id": fm.get("id", parent),
+            "status": fm.get("status", "?"),
+            "round": fm.get("round", ""),
+            "updated": fm.get("updated", ""),
+            "exit": fm.get("exit", ""),
+        }
+        if camp["status"] == "active":
+            dm = re.search(r"(\d+)\s+done\s+ideas", camp["exit"], re.I)
+            if dm:
+                camp["done_target"] = int(dm.group(1))
+                camp["done_count"] = _count_done_ideas()
+            xm = re.search(r"(\d{4}-\d{2}-\d{2})", camp["exit"])
+            if xm:
+                camp["exit_date"] = xm.group(1)
+        out.append(camp)
+    return out
+
+def read_activity(limit=40):
+    """Return newest `limit` events from ideas/*/log.jsonl and briefs/*/log.jsonl."""
+    events = []
+    for pattern, kind in [
+        (os.path.join(IDEAS, "*", "log.jsonl"), "idea"),
+        (os.path.join(BRIEFS, "*", "log.jsonl"), "brief"),
+    ]:
+        for f in glob.glob(pattern):
+            if os.path.basename(os.path.dirname(f)).startswith("_"):
+                continue
+            try:
+                with open(f) as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except ValueError:
+                            continue
+                        ev["kind"] = kind
+                        events.append(ev)
+            except OSError:
+                continue
+    events.sort(key=lambda e: e.get("ts", ""), reverse=True)
+    return events[:limit]
 
 def read_statuses():
     out = {}
@@ -87,22 +189,19 @@ def _tmux_capture(name):
     return r.stdout or ""
 
 def read_agents():
-    """List MiniMax-worker tmux sessions (excluding AGENT_EXCLUDE), with their tail.
-    Returns: [{name, tail, busy}]"""
+    """List MiniMax-worker tmux sessions (excluding AGENT_EXCLUDE).
+    Returns: [{name, busy}]"""
     out = []
     for name in _tmux_sessions():
         if name in AGENT_EXCLUDE:
             continue
         raw = _tmux_capture(name)
-        # last ~35 non-blank lines, joined with \n
         non_blank = [ln for ln in raw.splitlines() if ln.strip()]
-        tail_lines = non_blank[-35:]
-        tail = "\n".join(tail_lines)
         # "busy" looks only at the most recent slice (last ~10 non-blank lines),
         # so a stale spinner from earlier doesn't lock the dot on green forever.
         recent = "\n".join(non_blank[-10:])
         busy = any(tok in recent for tok in BUSY_TOKENS)
-        out.append({"name": name, "tail": tail, "busy": busy})
+        out.append({"name": name, "busy": busy})
     return out
 
 def read_idea(slug):
@@ -322,19 +421,83 @@ svg .pt{fill:#58a6ff}
 .worker .dot{width:9px;height:9px;border-radius:50%;background:#6e7681;flex:0 0 auto;box-shadow:0 0 0 2px #0d1117}
 .worker .dot.busy{background:#3fb950;box-shadow:0 0 0 2px #0d1117,0 0 6px #3fb95080}
 .worker .state{font-size:10px;color:#8b949e;font-weight:500;text-transform:uppercase;letter-spacing:.4px;margin-left:auto}
-.worker pre{margin:0;background:#010409;border:1px solid #21262d;border-radius:6px;padding:6px 8px;font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d1d9;white-space:pre-wrap;word-wrap:break-word;max-height:220px;overflow:auto;line-height:1.35}
 .workers .none{color:#484f58;font-size:12px;padding:4px 2px}
+/* research brief — paper step 0 */
+.brief{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 12px;flex:0 0 auto}
+.brief h2{font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:0;color:#8b949e;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.brief h2 .tag{font-size:10px;color:#6e7681;font-weight:500;text-transform:none;letter-spacing:0}
+.brief h2 .chev{color:#6e7681;font-size:10px;margin-left:auto;transition:transform .15s}
+.brief.collapsed h2 .chev{transform:rotate(-90deg)}
+.brief.collapsed .brief-body{display:none}
+.brief-body{margin-top:10px;max-height:28vh;overflow:auto}
+.brief .path{font-size:10px;color:#484f58;margin-bottom:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* campaigns pipeline panel */
+.campaigns{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 12px;flex:0 0 auto}
+.campaigns h2{font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;color:#8b949e}
+.camp-table{width:100%;border-collapse:collapse;font-size:12px}
+.camp-table td{padding:3px 10px 3px 0;border-bottom:1px solid #1c2129;vertical-align:middle}
+.camp-table tr:last-child td{border-bottom:0}
+.camp-hint{color:#d29922;font-size:11.5px;margin-top:8px;border-top:1px solid #30363d;padding-top:8px}
+/* activity feed panel */
+.activity{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 12px;flex:0 0 auto}
+.activity h2{font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:0;color:#8b949e;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.activity h2 .chev{color:#6e7681;font-size:10px;margin-left:auto;transition:transform .15s}
+.activity.collapsed h2 .chev{transform:rotate(-90deg)}
+.activity.collapsed .activity-body{display:none}
+.activity-body{margin-top:10px;max-height:22vh;overflow:auto}
+.act-row{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:3px 0;border-bottom:1px solid #1c2129}
+.act-row:last-child{border-bottom:0}
+.act-ts{color:#484f58;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;flex:0 0 62px}
+.act-agent{color:#8b949e;white-space:nowrap;flex:0 0 auto}
+.act-slug{color:#e6edf3;font-weight:600;white-space:nowrap;flex:0 0 auto}
+.act-trans{white-space:nowrap;flex:0 0 auto}
+.act-note{color:#6e7681;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 0;min-width:0}
 </style></head><body>
 <h1>autoresearch board <small id=meta>loading…</small></h1>
+<div class=campaigns id=campaigns>
+  <h2>Campaigns</h2>
+  <div id=campaigns-body><span class=hint>loading…</span></div>
+</div>
+<div class=activity id=activity>
+  <h2 onclick="toggleActivity()"><span>Activity</span><span class=chev>▼</span></h2>
+  <div class=activity-body id=activity-body><span class=hint>loading…</span></div>
+</div>
+<div class=brief id=brief>
+  <h2 onclick="toggleBrief()"><span>Research brief</span><span class=tag>topic · question · scope</span><span class=chev>▼</span></h2>
+  <div class=brief-body><div class=path>autoresearch/brief.md</div><div class="md" id=brief-md><span class=hint>loading…</span></div></div>
+</div>
 <div class=workers id=workers><h2><span>MiniMax workers</span><span class=ct id=workers-ct>0</span></h2><div class=row id=workers-row><div class=none>loading…</div></div></div>
 <div class=board id=board></div>
 <div class=reader id=reader><span class=hint>Click an idea above to read its idea.md here.</span></div>
 <script>
 const GROUPS = __GROUPS__;
 let sel = null;
+let lastBoardJson = '';
+let lastBriefText = '';
+function toggleBrief(){
+  document.getElementById('brief').classList.toggle('collapsed');
+}
+async function loadBrief(){
+  let txt = '';
+  try {
+    const r = await fetch('api/brief');
+    if(r.ok) txt = await r.text();
+  } catch(e) { txt = ''; }
+  if(txt === lastBriefText) return;
+  lastBriefText = txt;
+  const el = document.getElementById('brief-md');
+  if(!txt.trim()){
+    el.innerHTML = '<span class=hint>no brief yet — create autoresearch/brief.md</span>';
+    return;
+  }
+  el.innerHTML = renderMarkdown(txt);
+}
 async function load(){
   const r = await fetch('api/board'); const data = await r.json();
   const byStatus = data.ideas;            // {slug: status}
+  const json = JSON.stringify(byStatus);
+  if(json === lastBoardJson) return;
+  lastBoardJson = json;
   const total = Object.keys(byStatus).length;
   document.getElementById('meta').textContent = total + ' ideas · 7 phases · live';
   const board = document.getElementById('board'); board.innerHTML='';
@@ -561,31 +724,116 @@ async function loadAgents(){
     row.innerHTML = '<div class=none>no MiniMax workers (excluding agent, dash-coder)</div>';
     return;
   }
-  // Preserve scroll positions so the panel doesn't jump when the tail updates.
-  const scrolls = {};
-  row.querySelectorAll('.worker').forEach(w => {
-    const n = w.dataset.name, pre = w.querySelector('pre');
-    if(n && pre) scrolls[n] = {top: pre.scrollTop, height: pre.scrollHeight, atBottom: (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 8};
-  });
   row.innerHTML = '';
   for(const a of agents){
     const w = document.createElement('div');
     w.className = 'worker'; w.dataset.name = a.name;
     w.innerHTML = `<div class=hdr><span class="dot${a.busy?' busy':''}"></span>`+
       `<span>${htmlEscape(a.name)}</span>`+
-      `<span class=state>${a.busy?'busy':'idle'}</span></div>`+
-      `<pre>${htmlEscape(a.tail||'')}</pre>`;
+      `<span class=state>${a.busy?'busy':'idle'}</span></div>`;
     row.appendChild(w);
-    // Newest-at-bottom: scroll the <pre> to the end on first render or if the
-    // user was already pinned to the bottom; otherwise keep their scroll offset.
-    const pre = w.querySelector('pre');
-    const prev = scrolls[a.name];
-    if(!prev || prev.atBottom) pre.scrollTop = pre.scrollHeight;
-    else pre.scrollTop = prev.top;
   }
 }
-load(); setInterval(load, 5000);     // refresh board without disturbing the reader
-loadAgents(); setInterval(loadAgents, 5000);
+function statusPill(st){
+  const map = {
+    'active':          {bg:'#1a3a2a',fg:'#3fb950',bd:'#3fb950'},
+    'needs-blessing':  {bg:'#3a2e00',fg:'#d29922',bd:'#d29922'},
+    'retired':         {bg:'#1c1f24',fg:'#6e7681',bd:'#484f58'},
+    'rejected':        {bg:'#1c1f24',fg:'#6e7681',bd:'#484f58'},
+    'shelved':         {bg:'#1c1f24',fg:'#8b949e',bd:'#30363d'},
+  };
+  const c = map[st] || {bg:'#1c1f24',fg:'#8b949e',bd:'#30363d'};
+  return `<span style="display:inline-block;border-radius:11px;padding:1px 7px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:${c.bg};color:${c.fg};border:1px solid ${c.bd}">${htmlEscape(st)}</span>`;
+}
+async function loadCampaigns(){
+  let camps = [];
+  try {
+    const r = await fetch('api/campaigns');
+    if(r.ok) camps = await r.json();
+  } catch(e) { camps = []; }
+  const body = document.getElementById('campaigns-body');
+  if(!camps.length){
+    body.innerHTML = '<span class=hint>no campaign briefs found — create autoresearch/briefs/NNN-slug/brief.md</span>';
+    return;
+  }
+  const needsBlessing = camps.some(c => c.status === 'needs-blessing');
+  let rows = '';
+  for(const c of camps){
+    let exitCell = htmlEscape(c.exit || '—');
+    if(c.status === 'active' && c.done_count != null){
+      exitCell = `<b style="color:#e6edf3">${c.done_count}/${c.done_target} done</b>`;
+      if(c.exit_date) exitCell += ` · exit ${htmlEscape(c.exit_date)}`;
+    }
+    const upd = (c.updated||'').replace('T',' ').replace(/:\d{2}(\.\d+)?Z$/,'Z');
+    rows += `<tr>`+
+      `<td style="color:#e6edf3;font-weight:600;white-space:nowrap">${htmlEscape(c.id)}</td>`+
+      `<td style="white-space:nowrap">${statusPill(c.status)}</td>`+
+      `<td style="color:#8b949e">${exitCell}</td>`+
+      `<td style="color:#484f58;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap">${htmlEscape(upd)}</td>`+
+      `</tr>`;
+  }
+  let out = `<table class=camp-table><tbody>${rows}</tbody></table>`;
+  if(needsBlessing) out += `<div class=camp-hint>⏳ awaiting blessing — see autoresearch/briefs/BLESSING.md</div>`;
+  body.innerHTML = out;
+}
+function toggleActivity(){
+  document.getElementById('activity').classList.toggle('collapsed');
+}
+function relTime(ts){
+  if(!ts) return '?';
+  const d = Date.now() - new Date(ts).getTime();
+  if(isNaN(d)) return ts.slice(0,10);
+  const s = Math.floor(d/1000);
+  if(s < 60) return s+'s ago';
+  const m = Math.floor(s/60);
+  if(m < 60) return m+'m ago';
+  const h = Math.floor(m/60);
+  if(h < 24) return h+'h ago';
+  const days = Math.floor(h/24);
+  if(days === 1) return 'yesterday';
+  return days+'d ago';
+}
+function toStatusColor(st){
+  if(!st) return '#8b949e';
+  if(st==='done'||st==='active') return '#3fb950';
+  if(st==='rejected') return '#f85149';
+  if(st==='needs-run') return '#2f81f7';
+  if(/ing$/.test(st)) return '#d29922';
+  return '#8b949e';
+}
+async function loadActivity(){
+  let events = [];
+  try {
+    const r = await fetch('api/activity');
+    if(r.ok) events = await r.json();
+  } catch(e) { events = []; }
+  const body = document.getElementById('activity-body');
+  if(!events.length){
+    body.innerHTML = '<span class=hint>no activity yet</span>';
+    return;
+  }
+  let rows = '';
+  for(const e of events){
+    const slug = e.idea || e.brief || '';
+    const from_ = e.from || '';
+    const to_ = e.to || '';
+    const noteRaw = e.note || '';
+    const note = noteRaw.length > 60 ? noteRaw.slice(0,60)+'…' : noteRaw;
+    rows += `<div class=act-row>`+
+      `<span class=act-ts>${htmlEscape(relTime(e.ts))}</span>`+
+      `<span class=act-agent>${htmlEscape(e.agent||'')}</span>`+
+      `<span class=act-slug> ${htmlEscape(slug)}</span>`+
+      `<span class=act-trans> ${htmlEscape(from_)} → <span style="color:${toStatusColor(to_)}">${htmlEscape(to_)}</span></span>`+
+      `<span class=act-note> ${htmlEscape(note)}</span>`+
+      `</div>`;
+  }
+  body.innerHTML = rows;
+}
+load(); loadAgents(); loadBrief(); loadCampaigns(); loadActivity();
+setInterval(load, 30000);   // poll board only; skip DOM rebuild when statuses unchanged
+setInterval(loadBrief, 60000);
+setInterval(loadCampaigns, 60000);
+setInterval(loadActivity, 30000);
 </script></body></html>"""
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -603,6 +851,16 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path in ("/", "/index.html"):
             groups = [{"label": l, "color": c, "members": m, "desc": d} for (l, c, m, d) in GROUPS]
             self._send(200, PAGE.replace("__GROUPS__", json.dumps(groups)))
+        elif u.path == "/api/brief":
+            txt = read_brief()
+            if txt is None:
+                self._send(404, "not found", "text/plain")
+            else:
+                self._send(200, txt, "text/plain; charset=utf-8")
+        elif u.path == "/api/campaigns":
+            self._send(200, json.dumps(read_campaigns()), "application/json")
+        elif u.path == "/api/activity":
+            self._send(200, json.dumps(read_activity()), "application/json")
         elif u.path == "/api/board":
             self._send(200, json.dumps({"ideas": read_statuses()}), "application/json")
         elif u.path == "/api/agents":

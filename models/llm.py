@@ -222,6 +222,36 @@ class MinimalLLM(nn.Module):
         # baseline path bit-identical. See
         # `autoresearch/ideas/020-forgetting-attn/plan.md`.
         self.use_fox = getattr(config, "use_fox", False)
+        # 022 — Softpick (rectified softmax). Drop-in for `torch.softmax`
+        # in the manual attention path; default off → baseline path
+        # bit-identical. See `autoresearch/ideas/022-softpick-attention/plan.md`.
+        self.use_softpick = getattr(config, "use_softpick", False)
+        # 024 — Gated Attention (Qiu et al. 2025, arXiv:2505.06708):
+        # per-head scalar input-conditional sigmoid gate on `o_h`, post-AV,
+        # pre-merge. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/024-gated-attention/plan.md`.
+        self.use_gated_attn = getattr(config, "use_gated_attn", False)
+        # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
+        # s_h that multiplies the attention logits by s_h · log(n)
+        # pre-softmax, where n is the per-query causal key count.
+        # Init s_h=1.0 (paper default); step-0 non-bit-identical is
+        # explicitly justified (the log-scaling IS the mechanism).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/025-scalable-softmax/plan.md`.
+        self.use_ssmax = getattr(config, "use_ssmax", False)
+        # 023 — Canon conv (gated depthwise causal Conv1d on the residual
+        # stream). One conv per block, pre-attn pre-LN, scalar gate init
+        # 0 → step-0 ≡ no-conv baseline. Default off → baseline path
+        # bit-identical. See `autoresearch/ideas/023-canon-conv/plan.md`.
+        self.use_canon_conv = getattr(config, "use_canon_conv", False)
+        # 021 — Value Residual Learning (cross-layer V shortcut).
+        # Layer 0 stashes its post-W_V/post-GQA/post-transpose V on
+        # `block.attention._v_residual`; the forward loop below reads it
+        # after the layer-0 call and passes it as `v_residual=V_1` to
+        # every layer l > 0. Per-block scalar `lambda_v` (init 0) lives
+        # on each MHA; step-0 ≡ baseline. Default off → baseline path
+        # bit-identical. See `autoresearch/ideas/021-value-residual/plan.md`.
+        self.use_value_residual = getattr(config, "use_value_residual", False)
         self.rope_base = getattr(config, "rope_base", 10000)
         self.use_tied_qk = getattr(config, "use_tied_qk", False)
         self.use_mla = getattr(config, "use_mla", False)
@@ -334,8 +364,13 @@ class MinimalLLM(nn.Module):
                     use_nope=self.use_nope,
                     use_fire_pe=self.use_fire_pe,
                     fire_pe_d_phi=self.fire_pe_d_phi,
+                    use_gated_attn=self.use_gated_attn,
                     use_cope=self.use_cope,
                     use_fox=self.use_fox,
+                    use_softpick=self.use_softpick,
+                    use_ssmax=self.use_ssmax,
+                    use_canon_conv=self.use_canon_conv,
+                    use_value_residual=self.use_value_residual,
                     rope_base=self.rope_base,
                     use_tied_qk=self.use_tied_qk,
                     use_mla=self.use_mla,
@@ -493,6 +528,16 @@ class MinimalLLM(nn.Module):
                 for block in self.transformer_blocks:
                     block.attention.qkvo_proj[block.attention.qkv_size:].zero_()
                     nn.init.zeros_(block.feed_forward.down_proj.weight)
+        # 024 — Gated Attention: AFTER the global init, re-zero the gate
+        # projection (weight + bias). `_init_weights` re-inits every
+        # `nn.Linear` with `normal_(std=0.02)`, which overwrites the
+        # zero-init in MHA.__init__. We need W=0, b=0 here so 2·σ(0) = 1
+        # exactly at step 0 (spec: "step-0 ≡ baseline to floating-point").
+        if getattr(config, "use_gated_attn", False):
+            with torch.no_grad():
+                for block in self.transformer_blocks:
+                    nn.init.zeros_(block.attention.gated_attn_proj.weight)
+                    nn.init.zeros_(block.attention.gated_attn_proj.bias)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -548,6 +593,17 @@ class MinimalLLM(nn.Module):
 
         # Pass through transformer blocks
         unet_skips = []
+        # 021 — Value Residual: V_1 is a forward-pass-local stash;
+        # layer 0 writes its post-W_V/post-GQA/post-transpose V to
+        # `block.attention._v_residual`, and we then pass it as
+        # `v_residual=V_1` to every layer l > 0. The forward-pass
+        # index `i` (not the unique-block index) gates the stash so
+        # layer tying still stashes from the first physical position
+        # and blends into all later positions. None ⇒ MHA's
+        # `use_value_residual` branch is the stash branch (layer 0)
+        # or the lever is off altogether (`if self.use_value_residual:`
+        # guard in MHA).
+        v_residual = None
         for i in range(self.config.n_layers):
             block = self.transformer_blocks[i // self.tie_layer_groups]
             if self.use_unet_skips and i >= self.config.n_layers - self.unet_skip_count:
@@ -559,7 +615,12 @@ class MinimalLLM(nn.Module):
                 if self.unet_bridge_norm:
                     skip = self.unet_bridge_norms[skip_idx](skip)
                 x = x + gate * skip
-            x = block(x, x0, ve)
+            x = block(x, x0, ve, v_residual=v_residual)
+            if self.use_value_residual and i == 0:
+                # After layer-0 MHA forward, V_1 is stashed at
+                # `block.attention._v_residual` (post-transpose,
+                # shape `[B, n_heads, T, d_k]`). Capture for layers 1..N-1.
+                v_residual = block.attention._v_residual
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
 

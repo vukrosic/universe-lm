@@ -11,3 +11,5 @@
 {"ts":"2026-06-09T13:03:13Z","agent":"code-impl","idea":"013-cope","from":"needs-codereview","to":"needs-codereview","round":1,"note":"plan+code done"}
 {"ts":"2026-06-09T13:48:46Z","agent":"code-rev","idea":"013-cope","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-09T13:49:25Z","agent":"code-rev","idea":"013-cope","from":"codereviewing","to":"needs-run","round":1,"note":"accept: mechanism faithful, identity-safe at OFF, treatment path exercised, single-flag pinned, RoPE call-sites all gated, no HP drift, no coord conflicts"}
+{"ts":"2026-06-09T16:15:04Z","agent":"runner","idea":"013-cope","from":"needs-run","to":"running","round":1,"note":"claimed: queuing on vast-34386"}
+{"ts":"2026-06-09T16:36:51Z","agent":"runner","idea":"013-cope","from":"running","to":"done","round":1,"note":"run: DRIFT — trt 6.4659 vs ctrls 6.3969/6.3891 (Δ +0.069/+0.077 ≫ gap 0.0078); +0.143 vs 009 FIRE-alone (6.3234). Stacked lever (FIRE+CoPE) is destructive at tiny1m3m."}

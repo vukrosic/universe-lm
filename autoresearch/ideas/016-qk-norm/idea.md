@@ -1,8 +1,8 @@
 ---
 id: 016-qk-norm
-status: running
+status: done
 round: 1
-updated: 2026-06-09T13:47:10Z
+updated: 2026-06-09T16:13:26Z
 ---
 
 # 016 — QK-Norm (LayerNorm on Q and K head-dim before attention)

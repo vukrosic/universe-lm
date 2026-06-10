@@ -1,0 +1,17 @@
+{"ts":"2026-06-09T16:39:27Z","agent":"taste","idea":"024-gated-attention","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:40:07Z","agent":"taste","idea":"024-gated-attention","from":"tasting","to":"needs-review","round":1,"note":"accept: distinct site (head-output value gate), clean A/B, identity-init-able, sub-30-LoC, informative null; 6 attention-side levers in flight but each tests a different site"}
+{"ts":"2026-06-09T16:42:43Z","agent":"reviewer","idea":"024-gated-attention","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:43:24Z","agent":"reviewer","idea":"024-gated-attention","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-09T16:44:07Z","agent":"reviser","idea":"024-gated-attention","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:44:50Z","agent":"reviser","idea":"024-gated-attention","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings: removed Qwen mis-attribution; pinned init form (b) 2*sigmoid(W=0,b=0); pinned per-head scalar gate shape; added numeric pass bar Δ≤-0.01"}
+{"ts":"2026-06-09T16:46:59Z","agent":"reviewer","idea":"024-gated-attention","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-09T16:47:36Z","agent":"reviewer","idea":"024-gated-attention","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T18:12:44Z","agent":"code-impl","idea":"024-gated-attention","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:31:38Z","agent":"orchestrator","idea":"024-gated-attention","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (258m)"}
+{"ts":"2026-06-09T22:33:37Z","agent":"code-impl","idea":"024-gated-attention","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:43:15Z","agent":"orchestrator","idea":"024-gated-attention","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (9m)"}
+{"ts":"2026-06-09T22:45:17Z","agent":"code-impl","idea":"024-gated-attention","from":"needs-plan","to":"planning","round":1,"note":"claimed (artifact pre-existed; re-running self-checks)"}
+{"ts":"2026-06-09T22:45:23Z","agent":"code-impl","idea":"024-gated-attention","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done; self-check: ctrl bit-identical, step-0 max-abs-diff=0.0 (2*sigma(0)=1.0 exact), gate grad flows in train mode"}
+{"ts":"2026-06-09T22:49:47Z","agent":"code-rev","idea":"024-gated-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T02:00:33Z","agent":"orchestrator","idea":"024-gated-attention","from":"codereviewing","to":"needs-codereview","round":1,"note":"reclaim stale codereviewing lock (190m)"}
+{"ts":"2026-06-10T02:02:22Z","agent":"code-rev","idea":"024-gated-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}

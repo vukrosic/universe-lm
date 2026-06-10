@@ -9,3 +9,4 @@
 {"ts":"2026-06-09T12:56:05Z","agent":"code-rev","idea":"015-moonlight-muon-rms","from":"codereviewing","to":"needs-run","round":1,"note":"accept: faithful c·sqrt(max(d_in,d_out)) post-mul on ortho'd update, OFF path bit-identical, no HP drift, LoC well under cap"}
 {"ts":"2026-06-09T13:00:36Z","agent":"runner","idea":"015-moonlight-muon-rms","from":"needs-run","to":"running","round":1,"note":"claimed: queuing on vast-34386"}
 {"ts":"2026-06-09T13:47:10Z","agent":"runner","idea":"015-moonlight-muon-rms","from":"running","to":"needs-run","round":1,"note":"reclaim: stale running (no live tmux queue, GPU idle); relaunch with 016+017"}
+{"ts":"2026-06-09T16:13:26Z","agent":"runner","idea":"015-moonlight-muon-rms","from":"needs-run","to":"done","round":1,"note":"run: ctrl 6.4044 / 6.4091 (gap 0.0047); see evidence.md"}

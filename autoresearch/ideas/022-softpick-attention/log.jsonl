@@ -1,0 +1,20 @@
+{"ts":"2026-06-09T16:15:34Z","agent":"taste","idea":"022-softpick-attention","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:16:00Z","agent":"taste","idea":"022-softpick-attention","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp attention-function bet; drop-in swap, 30 LoC, parameter-free; null still informative (sink benign at tiny scale)"}
+{"ts":"2026-06-09T16:34:52Z","agent":"reviewer","idea":"022-softpick-attention","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:35:25Z","agent":"reviewer","idea":"022-softpick-attention","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-09T16:38:10Z","agent":"reviser","idea":"022-softpick-attention","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-09T16:39:27Z","agent":"reviser","idea":"022-softpick-attention","from":"revising","to":"needs-review","round":2,"note":"applied 8 findings: added Definition (ctrl/trt/pass-bar/seed/LoC), pinned ε=1e6 fp32, fixed mask interaction bug spec, added step-0 smoke test, named swap site layers.py:1421"}
+{"ts":"2026-06-09T16:42:06Z","agent":"reviewer","idea":"022-softpick-attention","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-09T16:42:06Z","agent":"reviewer","idea":"022-softpick-attention","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-09T16:44:14Z","agent":"code-impl","idea":"022-softpick-attention","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-09T18:12:11Z","agent":"orchestrator","idea":"022-softpick-attention","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (87m)"}
+{"ts":"2026-06-09T21:53:38Z","agent":"code-impl","idea":"022-softpick-attention","from":"needs-plan","to":"planning","round":1,"note":"claimed (prior worker exited without flipping; code+plan already in tree)"}
+{"ts":"2026-06-09T22:31:37Z","agent":"orchestrator","idea":"022-softpick-attention","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (37m)"}
+{"ts":"2026-06-09T22:38:52Z","agent":"code-impl","idea":"022-softpick-attention","from":"needs-plan","to":"needs-codereview","round":1,"note":"plan + softpick helper + flag wiring (MHA/Block/LLM/Config) + Tiny1M3MSoftpickOnFireConfig + 8 tests (all green); trt builds at 0.949M, fwd+bwd finite, Q/K/V grads non-zero"}
+{"ts":"2026-06-09T22:40:50Z","agent":"code-rev","idea":"022-softpick-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:45:29Z","agent":"code-rev","idea":"022-softpick-attention","from":"codereviewing","to":"needs-recode","round":1,"note":"revise: 1 finding — Tiny1M3MSoftpickOnFireConfig extends Tiny1M3MConfig (vanilla) but ctrl is Tiny1M3MVQGainSWAHighRoPE250KConfig + FIRE; trt is silently missing VQGain+SWA+RoPE250K (4-field HP drift). Fix: change parent to Tiny1M3MVQGainSWAHighRoPE250KConfig."}
+{"ts":"2026-06-09T22:48:33Z","agent":"code-impl","idea":"022-softpick-attention","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
+{"ts":"2026-06-09T22:48:40Z","agent":"code-impl","idea":"022-softpick-attention","from":"recoding","to":"needs-codereview","round":2,"note":"1 finding applied: changed Tiny1M3MSoftpickOnFireConfig parent from Tiny1M3MConfig to Tiny1M3MVQGainSWAHighRoPE250KConfig; ctrl/trt now agree on VQGain+SWA+RoPE250K; 8/8 softpick tests green; trt smoke 0.9522M loss=10.80 finite Q/K/V grads live"}
+{"ts":"2026-06-09T22:49:51Z","agent":"code-rev","idea":"022-softpick-attention","from":"needs-codereview","to":"codereviewing","round":2,"note":"claimed r2"}
+{"ts":"2026-06-10T02:00:32Z","agent":"orchestrator","idea":"022-softpick-attention","from":"codereviewing","to":"needs-codereview","round":2,"note":"reclaim stale codereviewing lock (190m)"}
+{"ts":"2026-06-10T02:01:12Z","agent":"code-rev","idea":"022-softpick-attention","from":"needs-codereview","to":"codereviewing","round":2,"note":"claimed"}

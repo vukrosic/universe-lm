@@ -28,6 +28,10 @@ The code-implementer never closes — if blocked it bounces the idea back to
 ## Closed by the loop (append below, newest first)
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 013-cope — drift: trt=6.4659 vs ctrls 6.3969/6.3891 (Δ +0.069/+0.077 ≫ gap 0.0078); +0.143 vs 009 FIRE-alone (6.3234); stacked FIRE+CoPE is destructive at tiny1m3m — 2026-06-09
+- 015-moonlight-muon-rms — WIN: trt=6.3906 vs ctrls 6.4044/6.4091 (Δ -0.0138/-0.0185 ≫ gap 0.0047; passes plan bar -0.01) at tiny1m3m — 2026-06-09
+- 016-qk-norm — WIN: trt=6.3906 vs ctrls 6.4044/6.4091 (Δ -0.0138/-0.0185 ≫ gap 0.0047; passes plan bar -0.005) at tiny1m3m — 2026-06-09
+- 017-sub-ln-sandwich — null: trt=6.4084 vs ctrls 6.4044/6.4091 (Δ +0.0040/-0.0007 inside gap 0.0047; expected null at 6L, lever fires at 100+ layers per DeepNet) at tiny1m3m — 2026-06-09
 - 019-dyt — reject: mathematical duplicate of closed `squash` lever (models/layers.py:52-61 SquashNorm is `g·tanh(α·x)`, no reduction, operationally identical); closed.md:24 + findings.md:60/165 already mark `squash/DyT` as falsified (val 7.6278, diverged); α-shape tweak (per-dim→scalar, 1.0→0.5) is an init HP, not a mechanism change — 2026-06-09
 - 018-ademamix — taste-reject: bet cannot fire at tiny1m3m (slow EMA half-life ~7k steps vs ~92 step run; 99% init-weighted; lever only fires at ≥100k steps per paper) — 2026-06-09
 - 010-polyloss — null: trt=6.5938 vs ctrls 6.5991/6.6050 (Δ-0.0053 < ctrl-gap 0.0059, inside variance) at tiny1m3m — 2026-06-09

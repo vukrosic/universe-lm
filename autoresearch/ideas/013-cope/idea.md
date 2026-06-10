@@ -1,8 +1,8 @@
 ---
 id: 013-cope
-status: needs-run
+status: done
 round: 1
-updated: 2026-06-09T13:49:25Z
+updated: 2026-06-09T16:36:51Z
 ---
 
 # 013 — CoPE (Contextual Position Encoding)

@@ -177,6 +177,64 @@ class LLMConfig:
     # post-softmax multiply can't go through SDPA's flash kernel). See
     # `autoresearch/ideas/020-forgetting-attn/plan.md`.
     use_fox: bool = False
+    # 022 — Softpick (Zuhri/Fuadi/Aji 2025, arXiv:2504.20966):
+    # rectified-softmax attention `softpick(x) = relu(exp(x)−1) /
+    # (Σ|exp(x)−1| + ε)`. Drop-in for `torch.softmax` in the FIRE
+    # manual-path branch. Permits zero total attention mass → kills
+    # the attention-sink pathology without adding a learnable sink
+    # token. ε=1e-6 pinned (paper default). `exp−1` is computed in
+    # fp32 then cast back, otherwise large positive scores overflow
+    # in fp16/bf16. No new params, no schedule, no init tuning.
+    # Default off → softmax baseline path bit-identical. See
+    # `autoresearch/ideas/022-softpick-attention/plan.md`.
+    use_softpick: bool = False
+    # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
+    # per-head learnable scalar s_h that scales the attention logits
+    # by `s_h · log(n)` pre-softmax, where n is the per-query causal
+    # key count. Restores per-position sharpness at long range so the
+    # softmax distribution does not flatten toward uniform as context
+    # grows. Drop-in to the manual attention branch; forces the
+    # manual path (score-side tweak, can't go through SDPA's flash
+    # kernel). Init s_h = 1.0 — the paper's natural starting point
+    # and an effective identity on the operator. NOT bit-identical to
+    # vanilla softmax at flag-on, n > 1: the log(n) scaling IS the
+    # mechanism (paper §3.1), so the step-0 numerical drift is
+    # explicitly justified, not a bug. Default off → baseline path
+    # bit-identical. See
+    # `autoresearch/ideas/025-scalable-softmax/plan.md`.
+    use_ssmax: bool = False
+    # 023 — Canon conv (Griffin / Mamba local-mixing, De/Smith/Fernando
+    # 2024, arXiv:2402.19427; Allen-Zhu et al. Canon-layer line):
+    # one causal depthwise Conv1d (kernel=3, left-pad 2) on the
+    # residual stream per block, immediately before the attention
+    # sublayer's pre-LN. Single scalar output gate `g` per block
+    # init 0 → step-0 ≡ no-conv baseline. Pre-LN read (no extra
+    # norm on the conv path). Strictly orthogonal to the attention-
+    # side levers (FIRE/CoPE/FoX/Softpick all live inside the
+    # attention computation; canon conv is on the residual stream
+    # itself). Default off → baseline path bit-identical. See
+    # `autoresearch/ideas/023-canon-conv/plan.md`.
+    use_canon_conv: bool = False
+    # 021 — Value Residual Learning (Zhou/Wu/Jiang 2024,
+    # arXiv:2410.17897). Cross-layer V shortcut: stash the projected V
+    # from layer 0 (post-W_V, post-GQA repeat_interleave, post-transpose,
+    # shape `[B, n_heads, T, d_k]`); in every later layer l > 0, blend
+    # `V_l ← (1 - λ_l)·V_l + λ_l·V_1` BEFORE `attn_weights @ V`, with
+    # `λ_l = nn.Parameter(torch.zeros(()))` per-block on MHA. λ=0 init ⇒
+    # `V_l = V_l` bit-identical to baseline at step 0; the model has to
+    # *learn* to mix in the cross-layer shortcut. `.detach()` on the
+    # layer-0 stash so the layer-l blend's gradient does not flow back
+    # into layer-0 W_V (each layer's W_V trains on its own attention
+    # path). Distinct from the closed V/Q/K/O *embedding* axis (input-
+    # side projection scaling) and from every active attention-side lever
+    # (020-FoX is post-softmax A·D, 022-softpick is the softmax swap,
+    # 024-gated-attn is post-AV o_h gate, 025-SSMax is logit temperature).
+    # 021 is the only lever on the *projected V stream*, and the cross-
+    # layer formulation is what makes it orthogonal to the closed
+    # value-embed axis. Default off → baseline path bit-identical
+    # (no `nn.Parameter` created, no stash, no blend). See
+    # `autoresearch/ideas/021-value-residual/plan.md`.
+    use_value_residual: bool = False
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
@@ -312,6 +370,21 @@ class LLMConfig:
     # selected; the post-LN is always `nn.LayerNorm` (the residual-stream
     # re-bounding role, separate from the magnitude-stabilizing pre-LN).
     use_sub_ln: bool = False
+    # 024 — Gated Attention (Qiu et al. 2025, arXiv:2505.06708): per-head
+    # *scalar* sigmoid gate on the head output `o_h = A_h V_h`, applied
+    # post-AV and pre-merge with the O projection: `o_h ← o_h · 2·σ(W_g·x+b)`.
+    # `W_g : nn.Linear(d_model, n_heads)` (one scalar gate per head —
+    # NOT the per-head vector form, which would blow the parameter budget
+    # at this tier). Gate input is the **sublayer input residual** (pre-LN,
+    # NOT `o_h` itself — that would be circular). Identity-init: W=0, b=0
+    # → 2·σ(0) = 1.0 exactly at step 0, so the pre-norm baseline path
+    # stays bit-identical when the flag is off AND when the flag is on
+    # at step 0. Categorically distinct from the pre-existing
+    # `use_attn_output_gate` (which is a per-head *learnable scalar gain*
+    # `o_h *= (1 + g_h)`, not input-conditional, ReZero-style). Default
+    # off → baseline path bit-identical. See
+    # `autoresearch/ideas/024-gated-attention/plan.md`.
+    use_gated_attn: bool = False
 
     # ============================================================================
     # Query-tweaks plan (29 experiments, 6 batches). All defaults are
@@ -777,6 +850,166 @@ class Tiny1M3MVQGainSWAHighRoPE250KConfig(Tiny1M3MConfig):
     use_sliding_window: bool = True
     sliding_window_size: int = 512
     rope_base: int = 250000
+
+
+@dataclass
+class Tiny1M3MSoftpickOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
+    """Tiny1M3M with FIRE + Softpick (rectified-softmax normalization).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
+    6.3234 per `closed.md:40`). Parent is
+    `Tiny1M3MVQGainSWAHighRoPE250KConfig` so VQ-gain + SWA(512) +
+    RoPE 250K carry over from the ctrl recipe — the A/B isolates the
+    softpick swap (function-level normalization tweak) on top of the
+    same FIRE-equipped foundation, not silent HP drift. The treatment
+    replaces `torch.softmax` in the manual attention path with softpick
+    `relu(exp(x)−1) / (Σ|exp(x)−1| + ε)`. Permits zero total
+    attention mass → kills the attention-sink pathology without
+    adding a learnable sink token (categorically distinct from
+    the closed `attn-sink` lever, which *added* a sink token;
+    distinct from 020-FoX, which multiplies post-softmax; distinct
+    from 013-CoPE, which adds a content-aware bias on logits).
+    ε=1e-6 pinned; `exp−1` computed in fp32 then cast back.
+
+    PASS ≤ −0.005 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.01.
+    DRIFT > +0.01. Step-0 smoke gate (see plan.md) — build trt,
+    run one fwd+bwd, assert loss is finite and Q/K/V grads are
+    non-zero (zero attn output at step 0 ⇒ zero grad ⇒ lever
+    dead on arrival). See
+    `autoresearch/ideas/022-softpick-attention/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_softpick: bool = True
+
+
+@dataclass
+class Tiny1M3MSSMaxConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Scalable-Softmax (per-head log(n) attention temperature).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`).
+    SSMax multiplies the attention logits by `s_h · log(n)` pre-softmax,
+    where n is the per-query causal key count (i.e. n = i+1 at query
+    position i) and s_h is a single learnable per-head scalar (init
+    1.0). At max_seq_len=2048 the late-position queries attend over
+    hundreds-to-thousands of keys, where vanilla softmax provably
+    flattens (denominator scales with n, logit variance is fixed).
+    SSMax restores per-position sharpness with one scalar per head.
+    Distinct from the closed logit-softcap (clamps) and from 020-FoX
+    (content decay on probabilities, post-softmax); SSMax is a
+    *length-dependent temperature* on logits, an orthogonal axis.
+    Stacks on FIRE and on qk-norm cleanly (per-tensor multiplies on
+    `scores`; follow-up A/Bs gated on the primary clearing).
+
+    PASS ≤ −0.01 vs the tiny1m3m ctrl. NULL band |Δ| < 0.01.
+    DRIFT > +0.01. Anti-cheat: in-bracket ±0.0053 outcomes do not
+    count as WIN. See
+    `autoresearch/ideas/025-scalable-softmax/plan.md`.
+    """
+    use_ssmax: bool = True
+
+
+@dataclass
+class Tiny1M3MCanonOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
+    """Tiny1M3M with FIRE + Canon conv (gated depthwise causal Conv1d).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
+    6.3234 per `closed.md:40`). Parent is
+    `Tiny1M3MVQGainSWAHighRoPE250KConfig` so VQ-gain + SWA(512) +
+    RoPE 250K carry over from the ctrl recipe — the A/B isolates
+    the canon-conv swap (one depthwise causal Conv1d per block on
+    the residual stream) on top of the same FIRE-equipped
+    foundation, not silent HP drift. The treatment stacks
+    `use_canon_conv=True` on top: one causal depthwise Conv1d
+    (kernel=3) per block on the residual stream, immediately
+    before the attention sublayer's pre-LN, with a single scalar
+    output gate `g` (init 0 → step-0 ≡ no-conv baseline). Pre-LN
+    read (no extra LN on the conv path). Strictly orthogonal to
+    FIRE (additive on logits) and to CoPE/FoX/Softpick (all live
+    inside the attention computation); this is an *outside-
+    attention* local-mixing lever on the residual stream — the
+    Griffin/Mamba local-mixing half. Default off → baseline path
+    bit-identical. Cost: n_layers × (3·d_model + 1) extra params
+    (~2.3K at tiny1m3m, +0.25%).
+
+    PASS ≤ −0.01 vs the FIRE-equipped ctrl. NULL band |Δ| ≤ 0.01.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/023-canon-conv/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_canon_conv: bool = True
+
+
+@dataclass
+class Tiny1M3MGatedAttnOnFireConfig(Tiny1M3MConfig):
+    """Tiny1M3M with FIRE + Gated Attention (Qiu et al. 2025).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
+    per `closed.md:40`). The treatment stacks `use_gated_attn=True` on
+    top: a per-head *scalar* input-conditional sigmoid gate on the head
+    output `o_h = A_h V_h`, applied post-AV and pre-merge with the O
+    projection: `o_h ← o_h · 2·σ(W_g·x+b)`. `W_g : nn.Linear(d_model, H)`
+    (per-head scalar, NOT the per-head vector form — vector would be
+    42% of the 0.94M model). Gate input is the sublayer input residual
+    `x` (pre-LN), NOT `o_h` itself (circularity). Identity-init: W=0,
+    b=0 → 2·σ(0) = 1.0 exactly at step 0, so the gated forward graph
+    is bit-identical to the no-gate forward graph at step 0; the new
+    params start receiving gradient from step 1. Categorically
+    distinct from every closed lever and every active attention-side
+    lever (020-FoX → A-prob decay, 021-V-residual → cross-layer V,
+    022-softpick → softmax swap, 023-canon-conv → pre-attn conv,
+    025-SSMax → logit temperature) — 024 is the *only* lever on the
+    post-AV head-output value site. 009's additive position bias is
+    additive on logits; the head-output gate is multiplicative on
+    `o_h`; the two compose cleanly when both are on.
+
+    PASS ≤ −0.01 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.01.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/024-gated-attention/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_gated_attn: bool = True
+
+
+@dataclass
+class Tiny1M3MVResidualOnFireConfig(Tiny1M3MConfig):
+    """Tiny1M3M with FIRE + Value Residual Learning (cross-layer V shortcut).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
+    6.3234 per `closed.md:44`; ctrl spread 6.3875–6.4050 per
+    `closed.md:41-44`). The treatment stacks `use_value_residual=True`
+    on top: stash the projected V at layer 0 (post-W_V, post-GQA
+    repeat_interleave, post-transpose, shape `[B, n_heads, T, d_k]`);
+    in every later layer l > 0, blend
+    `V_l ← (1 - λ_l)·V_l + λ_l·V_1` BEFORE `attn_weights @ V`, with
+    `λ_l = nn.Parameter(torch.zeros(()))` per-block on MHA (identity-
+    init at step 0 ⇒ baseline-bit-identical at flag-on, step 0).
+    `.detach()` on the V_1 stash ⇒ each layer's W_V trains on its own
+    attention path; the cross-layer shortcut only learns the blend
+    weight, not the layer-0 projection. Strictly orthogonal to FIRE
+    (which is *additive* on logits): FIRE chooses *which* key wins;
+    021 changes *which* value-stream the winners read from. The bet
+    is that tiny1m3m's narrow heads (d_k=32 at H=8) suffer attention
+    concentration, and a direct shortcut to the first-layer value
+    representation gives later blocks a cleaner value signal.
+
+    Categorically distinct from the closed V/Q/K/O *embedding* axis
+    (input-side projection scaling, an added embedding to the value
+    *source*; 021 is a cross-layer residual on the value *stream*)
+    and from every active attention-side lever (020-FoX = post-softmax
+    A·D, 022-softpick = softmax swap, 024-gated-attn = post-AV o_h
+    gate, 025-SSMax = logit temperature) — 021 is the only lever on
+    the projected V stream.
+
+    PASS ≤ −0.005 vs the FIRE-equipped ctrl (low-to-moderate bar; the
+    bet is at the small end of the paper's reported effect — the
+    taste r1 reviewer asked for exactly this band). NULL band
+    `|Δ| < 0.01` (sub-noise; the lever does not fire on top of FIRE
+    at this scale). DRIFT > +0.01 (cross-layer mix hurts attention
+    concentration rather than helping). See
+    `autoresearch/ideas/021-value-residual/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_value_residual: bool = True
 
 
 @dataclass

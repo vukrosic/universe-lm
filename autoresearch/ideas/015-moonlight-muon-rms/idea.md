@@ -1,8 +1,8 @@
 ---
 id: 015-moonlight-muon-rms
-status: needs-run
+status: done
 round: 1
-updated: 2026-06-09T13:47:10Z
+updated: 2026-06-09T16:13:26Z
 ---
 
 # 015 — Moonlight Muon (per-tensor RMS scaling on orthogonalized update)
