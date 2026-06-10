@@ -1,8 +1,8 @@
 ---
 id: 021-value-residual
-status: needs-codereview
+status: running
 round: 1
-updated: 2026-06-10T02:00:31Z
+updated: 2026-06-10T07:59:38Z
 ---
 
 # 021 — Value Residual Learning (cross-layer V shortcut)

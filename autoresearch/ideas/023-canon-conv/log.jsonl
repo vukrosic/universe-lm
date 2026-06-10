@@ -17,3 +17,9 @@
 {"ts":"2026-06-09T22:46:37Z","agent":"code-rev","idea":"023-canon-conv","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-09T22:49:27Z","agent":"code-rev","idea":"023-canon-conv","from":"codereviewing","to":"needs-recode","round":1,"note":"revise: 2 findings (silent HP drift trt vs ctrl on use_value_embed/use_q_gain/use_sliding_window/rope_base; missing _arq_023.py + _arq_023_ctrl.py)"}
 {"ts":"2026-06-10T02:02:09Z","agent":"code-impl","idea":"023-canon-conv","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
+{"ts":"2026-06-10T03:27:59Z","agent":"orchestrator","idea":"023-canon-conv","from":"recoding","to":"needs-recode","round":1,"note":"reclaim stale recoding lock (85m)"}
+{"ts":"2026-06-10T03:29:57Z","agent":"code-impl","idea":"023-canon-conv","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
+{"ts":"2026-06-10T03:30:49Z","agent":"code-impl","idea":"023-canon-conv","from":"recoding","to":"needs-codereview","round":2,"note":"2 findings applied: F1 trt parent → Tiny1M3MVQGainSWAHighRoPE250KConfig (single-axis A/B verified by dataclass diff, only use_canon_conv differs); F2 _arq_023.py + _arq_023_ctrl.py exist, mirror _arq_020 precedent; 6/6 tests still pass"}
+{"ts":"2026-06-10T03:32:06Z","agent":"code-rev","idea":"023-canon-conv","from":"needs-codereview","to":"codereviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-10T03:34:06Z","agent":"code-rev","idea":"023-canon-conv","from":"codereviewing","to":"needs-run","round":2,"note":"accept: F1 single-axis A/B verified (dataclass diff = 1 key use_canon_conv); F2 runner scripts exist"}
+{"ts":"2026-06-10T07:59:38Z","agent":"runner","idea":"023-canon-conv","from":"needs-run","to":"running","round":2,"note":"claimed: queued in arq tmux batch with 020-025"}

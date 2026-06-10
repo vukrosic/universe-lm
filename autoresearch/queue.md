@@ -19,9 +19,26 @@ launches and pulls. Raw results land in `remote-results/<date>-vast-<tier>/`.
 
 | Slot | Folder | Run | Run state |
 |---|---|---|---|
-| 1 | `011-cautious-lion/` | tiny1m3m + cautious-lion, s42 | DONE (**WIN**) 12:37Z, see evidence.md |
-| 2 | empty | — | — (box idle, waiting on 015 code-impl) |
-| 3 | empty | — | — |
+| 1 | `020-forgetting-attn/` | tiny1m3m + FoX, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z, arq queue launched on vast-81.45.65.189) |
+| 2 | `021-value-residual/` | tiny1m3m + V-residual, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z) |
+| 3 | `022-softpick-attention/` | tiny1m3m + softpick, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z) |
+
+> **arq queue (10 jobs, detached tmux) — launched 2026-06-10T08:03:46Z on box vast-81.45.65.189 (V100-PCIE-32GB, compute_cap 7.0):**
+>
+> ```
+> 1. ctrl_fire   — _arq_020_ctrl.py  (Tiny1M3MVQGainSWAHighRoPE250KConfig + use_fire_pe=True; ctrl for 020-023)
+> 2. 020-fox     — _arq_020.py       (Tiny1M3MFOXOnFireConfig)
+> 3. 021-vres    — _arq_021.py       (Tiny1M3MVResidualOnFireConfig)
+> 4. 022-soft    — _arq_022.py       (Tiny1M3MSoftpickOnFireConfig)
+> 5. 023-canon   — _arq_023.py       (Tiny1M3MCanonOnFireConfig)
+> 6. 024-ctrl    — _arq_024_ctrl.py  (Tiny1M3MConfig + use_fire_pe=True; plan-024 ctrl)
+> 7. 024-gated   — _arq_024.py       (Tiny1M3MGatedAttnOnFireConfig)
+> 8. 025-ctrl    — _arq_025_ctrl.py  (Tiny1M3MConfig plain; plan-025 ctrl)
+> 9. 025-ssmax   — _arq_025.py       (Tiny1M3MSSMaxConfig)
+> 10. ctrl_fire2 — _arq_020_ctrl.py  (variance bracket)
+> ```
+>
+> Box env: `/venv/main/bin/python` + `PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (torchtune). All 9 configs build-smoke OK on CPU (params 949K-954K). Wall-clock target: ~5 min/job × 10 = ~50 min.
 
 > 006-schedule-free-adamw finalized 2026-06-09T12:01Z — NULL (trt 6.8056 vs ctrls
 > 6.5953/6.6091, +0.21 worse). 010-polyloss finalized 2026-06-09T12:11Z — NULL
@@ -72,6 +89,11 @@ status into this file — that is exactly the drift that breaks the loop.
 | 017 | `017-sub-ln-sandwich/` | LN_post wrap on each sublayer output (DeepNet §3.1) | small win or null at 6L |
 | 020 | `020-forgetting-attn/` | per-head, per-token learnable forget-gate (multiplicative decay on softmax) | small win or null on top of 009 FIRE |
 | 025 | `025-scalable-softmax/` | SSMax — per-head learnable `s·log(n)` temperature on attention logits (arXiv:2501.19399) | −0.01 to −0.03 or informative null |
+| 026 | `026-fire-x-qknorm/` | Composition: FIRE positional bias × QK-Norm — stack both attention levers (009 × 016) | −0.07 to −0.09 (additive) or informative null |
+| 027 | `027-moonlight-x-qknorm/` | Composition: Moonlight Muon RMS × QK-Norm — stack optimizer scale-align + per-head logit bound (015 × 016) | −0.02 to −0.03 (additive) or informative null |
+| 028 | `028-deep-thin-config/` | Deep-and-thin config: more layers, smaller d_model at fixed ~0.94M param budget (MobileLLM ICML 2024) | +2.7% on benchmarks at 125M per paper |
+| 029 | `029-v-norm/` | V-Norm: per-head LayerNorm on Value projections before AV product (symmetric to QK-Norm 016) | −0.005 to −0.015 or informative null |
+| 030 | `030-unet-skip-sigmoid/` | U-Net skip gates with sigmoid(−1.5) init fix — ~5 LoC fix to existing unet_skip_gates code (modded-nanogpt PR #125) | +1.25% speedrun equivalent |
 
 ## PENDING — not yet foldered (migrate on first touch)
 
@@ -90,6 +112,12 @@ Attention: Softpick rectified-softmax · sink-free normalization (022) · arXiv:
 Architecture: Canon layers · gated depthwise causal Conv1d on residual stream (023) · Griffin arXiv:2402.19427 / Physics-of-LMs Canon.
 Attention: Gated Attention · per-head sigmoid output gate post-AV (024) · arXiv:2505.06708.
 Attention: Scalable-Softmax / SSMax · length-aware attention temperature (025) · arXiv:2501.19399.
+
+## Scale-tier backlog (NOT tiny1m3m ideas — tested on the 10M+ ladder)
+
+Data-mix, LR-schedule, and tokenizer levers land here, not in idea folders
+(see `plans/beat-smollm2-135m.md` Phases 1-2). Format: `<lever> · <source> ·
+needs ≥10M tier`.
 
 ## CLOSED ideas (do not re-propose)
 

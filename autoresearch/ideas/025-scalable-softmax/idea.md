@@ -1,8 +1,8 @@
 ---
 id: 025-scalable-softmax
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-09T22:45:29Z
+updated: 2026-06-10T07:59:38Z
 ---
 
 # 025 — Scalable-Softmax (SSMax, length-aware attention temperature)

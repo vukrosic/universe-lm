@@ -1,8 +1,8 @@
 ---
 id: 024-gated-attention
-status: codereviewing
+status: running
 round: 1
-updated: 2026-06-10T02:02:22Z
+updated: 2026-06-10T07:59:38Z
 ---
 
 # 024 — Gated Attention (per-head sigmoid output gate)

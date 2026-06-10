@@ -15,3 +15,7 @@
 {"ts":"2026-06-09T22:49:47Z","agent":"code-rev","idea":"024-gated-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-10T02:00:33Z","agent":"orchestrator","idea":"024-gated-attention","from":"codereviewing","to":"needs-codereview","round":1,"note":"reclaim stale codereviewing lock (190m)"}
 {"ts":"2026-06-10T02:02:22Z","agent":"code-rev","idea":"024-gated-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T03:27:59Z","agent":"orchestrator","idea":"024-gated-attention","from":"codereviewing","to":"needs-codereview","round":1,"note":"reclaim stale codereviewing lock (85m)"}
+{"ts":"2026-06-10T03:40:52Z","agent":"code-rev","idea":"024-gated-attention","from":"needs-codereview","to":"codereviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T03:43:16Z","agent":"code-rev","idea":"024-gated-attention","from":"codereviewing","to":"needs-run","round":1,"note":"accept: mechanism + site + init + plumbing all faithful; one plan-prose discrepancy (gate placed before _apply_output_op, not after as plan stated) is a no-op at default out_op=\"\""}
+{"ts":"2026-06-10T07:59:38Z","agent":"runner","idea":"024-gated-attention","from":"needs-run","to":"running","round":1,"note":"claimed: queued in arq tmux batch with 020-025"}

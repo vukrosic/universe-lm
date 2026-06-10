@@ -1,8 +1,8 @@
 ---
 id: 023-canon-conv
-status: recoding
-round: 1
-updated: 2026-06-10T02:02:09Z
+status: running
+round: 2
+updated: 2026-06-10T07:59:38Z
 ---
 
 # 023 — Canon layers (gated depthwise causal Conv1d on the residual stream)
