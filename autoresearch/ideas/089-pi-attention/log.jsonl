@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T01:05:40Z","agent":"taste","idea":"089-pi-attention","from":"needs-taste","to":"needs-review","round":1,"note":"accept: periodic sparse attention is distinct from the existing sparse queue"}
+{"ts":"2026-06-11T01:17:52Z","agent":"reviewer","idea":"089-pi-attention","from":"needs-review","to":"needs-plan","round":1,"note":"approve: periodic sparse attention is ready for planning"}

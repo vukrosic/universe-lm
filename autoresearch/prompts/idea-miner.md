@@ -38,7 +38,11 @@ positional-encoding levers for an LLM project. **External sources only**
 
 **Project context (read first):**
 - Repo: `/Users/vukrosic/my-life/llm-research-kit-scaling`.
-- Goal: find mechanisms that lower val loss, screened cheaply.
+- Goal: find mechanisms that lower val loss, screened cheaply — **in service of
+  the program in `plans/beat-smollm2-135m.md`**: levers screened here feed a
+  recipe that must survive the 10M → 37M → 135M ladder and beat SmolLM2-135M's
+  released checkpoint. Prefer levers with **published evidence at 100M+ scale**;
+  a lever only ever demonstrated at toy scale is a worse bet at equal cost.
 - **🔴 ONE TIER ONLY — `tiny1m3m` (0.94M params · 3M tokens), seed 42.** Every
   idea in this pipeline is run *only* at tiny1m3m. Do not propose, scope, or
   reference `screen20m`, the full ladder, or any larger tier — those are out of
@@ -84,6 +88,10 @@ upstream slot and is closer to shipping than a cold one.
 file anything equivalent to a lever already there.
 
 **Search these (rotate weekly):**
+- **`plans/litrev-sub200m.md` § "recipe levers that mattered"** — the standing
+  internal source (sole exception to the external-only rule): levers that
+  repeatedly showed up in winning sub-400M recipes. Check it every pass; an
+  unfiled lever from this list outranks a cold external find.
 - **USE the `mcp__bing-search__bing_web_search` tool** for every query — do not stop at zero searches. If a tick returns 0 candidates, the next tick queries more keywords. Multiple queries per pass are fine; do not cap yourself at 1.
 - arXiv `cs.LG`, `cs.CL` — filter keywords: `Muon`, `orthogonal`, `spectral`, `MoE`, `state space`, `Mamba`, `DeltaNet`, `linear attention`, `cautious`, `RoPE`, `relative position`, `MoE routing`, `MoE auxiliary loss`, `MoE expert collapse`
 - **科学空间 / kexue.fm — Su Jianlin (苏剑林)**, https://kexue.fm — the RoPE author; one of the densest single sources for *mechanism* ideas (attention variants, optimizers like Muon/Tiger, normalization, length extrapolation, softmax alternatives). Chinese — read it natively, translate the mechanism into our English idea.md. Note: anti-bot JS wall blocks plain WebFetch/curl; if a fetch returns a redirect stub, use a browser tool or ask the user to paste the article text. When the user hands you a specific `kexue.fm/archives/<id>` link, treat it as a priority lead.
@@ -92,15 +100,24 @@ file anything equivalent to a lever already there.
 - HF papers: https://huggingface.co/papers
 - Papers With Code: https://paperswithcode.com/task/language-modelling
 
-**For each candidate idea, output ONE 3-field spec:**
+**For each candidate idea, output ONE 4-field spec:**
 
 1. **Source** — paper title + arXiv ID, repo link, or X post URL. Date matters; prefer 2025-2026 work.
 2. **Mechanism** — 1-2 sentences. What the lever does, mathematically or operationally. Must be implementable in < 200 LoC in this repo.
-3. **Status** — `PENDING` by default. If the mechanism is mathematically equivalent to something in `autoresearch/closed.md`, mark `DUPLICATE` and cite the closed entry instead of filing a new one.
+3. **Scale evidence** — the largest scale the source demonstrated gains at
+   ("showed +X at 125M/1B/7B" or "toy-scale only"), and a `transfer-risk`
+   call: `low` (gains shown ≥100M), `med` (gains shown 10–100M or strong
+   mechanistic argument), `high` (toy-scale only or mechanism plausibly
+   exploits tiny-model artifacts). One-line justification required.
+4. **Status** — `PENDING` by default. If the mechanism is mathematically equivalent to something in `autoresearch/closed.md`, mark `DUPLICATE` and cite the closed entry instead of filing a new one.
 
 **Skip these (no filing):**
 - Pure hyperparameter tuning (LR, momentum, schedule constants, init scale)
 - Tokenizer / vocab changes
+- **Data-mix / LR-schedule / tokenizer levers are NOT tiny1m3m ideas** — but
+  don't drop them: append one line to the "Scale-tier backlog" section of
+  `autoresearch/queue.md` (`<lever> · <source> · needs ≥10M tier`). They get
+  tested on the 10M+ ladder by the program, not by this pipeline.
 - Quantization / inference-time tricks (we train, not deploy)
 - Anything requiring a different data prep that breaks `max_seq_len=2048`
 - Anything that needs > 200 LoC of new code
@@ -125,6 +142,7 @@ id: NNN-<slug>
 status: needs-taste
 round: 1
 updated: <ISO timestamp>
+transfer-risk: <low|med|high>
 ---
 
 # NNN — <Title Case Name>
@@ -134,6 +152,11 @@ updated: <ISO timestamp>
 
 ## Mechanism
 <1-2 sentences. Math or operation. Implementable in < 200 LoC.>
+
+## Scale evidence
+<largest scale the source showed gains at, and the one-line justification for
+the frontmatter transfer-risk tag. "Toy-scale only" is a valid entry but makes
+the taste gate's transfer criterion hard to pass.>
 
 ## Why it's worth a slot
 <the bet, in one sharp sentence: we expect X because Y. The leverage, and why a

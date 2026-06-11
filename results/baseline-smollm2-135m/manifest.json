@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-06-10T05:57:03Z",
+  "harness_repo": "https://github.com/EleutherAI/lm-evaluation-harness",
+  "harness_commit": "6d642546f4688648fced259eb3302efd36ece5af",
+  "model_id": "HuggingFaceTB/SmolLM2-135M",
+  "mode": "smoke",
+  "device": "cpu",
+  "dtype": "float32",
+  "seed": 42,
+  "tasks_0shot": "hellaswag,arc_easy,arc_challenge,piqa,winogrande,openbookqa,commonsense_qa",
+  "tasks_mmlu_5shot": "mmlu",
+  "limit": "",
+  "git_head": "c6bb6a3c73e69daac77b8fcdbd5412fa3cf6c3e5"
+}

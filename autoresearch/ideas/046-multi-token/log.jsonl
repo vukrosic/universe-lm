@@ -1,0 +1,9 @@
+{"ts":"2026-06-10T16:43:30Z","agent":"taste","idea":"046-multi-token","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T17:01:19Z","agent":"orchestrator","idea":"046-multi-token","from":"tasting","to":"needs-taste","round":1,"note":"reclaim stale tasting lock (17m)"}
+{"ts":"2026-06-10T23:24:15Z","agent":"taste","idea":"046-multi-token","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:24:46Z","agent":"taste","idea":"046-multi-token","from":"tasting","to":"needs-repitch","round":1,"note":"revise: declare stack-vs-replace vs 023-canon (already WIN); pick Q/K time-axis only (drop heads-axis at tiny1m3m); crisp one-sentence bet; frame null to be informative"}
+{"ts":"2026-06-10T23:35:03Z","agent":"miner","idea":"046-multi-token","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:37:37Z","agent":"miner","idea":"046-multi-token","from":"repitching","to":"needs-taste","round":2,"note":"5/5 findings applied: declared stack-on-Canon A/B; dropped heads-axis (n_heads≈6-8 → identity at tier); picked Q+K time-axis k=3 with delta-init scalar gates; tightened bet to single sentence; framed WIN/NULL/FAIL with explicit informative-null rule; addressed 020-030 crowding via pre-score vs inside-attention orthogonality"}
+{"ts":"2026-06-10T23:46:57Z","agent":"taste","idea":"046-multi-token","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:50:19Z","agent":"taste","idea":"046-multi-token","from":"tasting","to":"needs-review","round":1,"note":"accept: stack-on-Canon A/B with sharp pre-score lever, informative null on cluster orthogonality, transfer-risk mechanism intact"}
+{"ts":"2026-06-11T01:34:07Z","agent":"reviewer","idea":"046-multi-token","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}

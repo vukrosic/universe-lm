@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:23Z","agent":"taste","idea":"095-bhyt","from":"needs-taste","to":"needs-review","round":1,"note":"accept: strong source evidence and a distinct norm-free-ish mechanism"}
+{"ts":"2026-06-11T01:18:16Z","agent":"reviewer","idea":"095-bhyt","from":"needs-review","to":"needs-plan","round":1,"note":"approve: bounded-tanh Pre-LN alternative is ready for planning"}

@@ -1,0 +1,16 @@
+{
+  "model": "HuggingFaceTB/SmolLM2-135M",
+  "dataset": "HuggingFaceFW/fineweb-edu",
+  "subset": "sample-10BT",
+  "split": "train",
+  "max_bytes": 51200,
+  "actual_bytes": 56704,
+  "tokens_evaluated": 22259,
+  "nll_nats": 59892.2392578125,
+  "bpb": 1.5238120161713704,
+  "ppl": 14.741957236525966,
+  "seq_len": 2048,
+  "stride": 1024,
+  "device": "cpu",
+  "dtype": "float32"
+}

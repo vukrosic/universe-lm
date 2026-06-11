@@ -1,0 +1,7 @@
+# Taste log — 077 FNet Fourier Mixer
+
+## r1 — 2026-06-11 — verdict: reject
+- **Causality break.** FNet's FFT-along-token-axis (arXiv:2105.03824) is an encoder/BERT mechanism: at position t the FFT output mixes tokens at positions > t. Our pipeline is causal LM (tiny1m3m, next-token CE). The zero-init residual gate modulates magnitude only — it does not mask future tokens. Outcome is binary-bad: either (a) future-token leak produces a phantom-low loss that is not a real LM result, or (b) the implementer slaps a causal mask on the FFT, at which point this idea has been silently rewritten into 078-fnetar.
+- **Direct duplicate of an in-queue idea.** 078-fnetar (needs-taste, same batch) is explicitly the causal Fourier variant (FNetAR, arXiv:2107.10932). Running 077 as written either leaks or collapses onto 078 — there is no path where 077 produces information 078 wouldn't. Portfolio-fit fail: two slots, one bet.
+- **Niche-fit weak even if causality were fixed.** FFT mixing's selling point is global O(n log n) mixing for long sequences; tiny1m3m sequences are short, so the structural advantage is muted. transfer-risk: med-high (idea's own tag) with no mechanistic argument for why it survives the 135M jump — the section just restates encoder evidence and waves at "causal LM transfer is open", which 078 already owns.
+- **Action:** kill 077; route the family through 078-fnetar where the causal form is on-spec.

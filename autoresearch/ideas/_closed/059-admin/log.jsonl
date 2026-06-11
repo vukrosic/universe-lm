@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:45:09Z","agent":"taste","idea":"059-admin","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:48:42Z","agent":"taste","idea":"059-admin","from":"tasting","to":"rejected","round":1,"note":"reject: depth-aware NMT init; lever can't fire at 6L (same family as 017 null per DeepNet); crowded queue (055/056/058/060)"}

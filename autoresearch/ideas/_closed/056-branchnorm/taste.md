@@ -1,0 +1,9 @@
+# Taste review — 056-branchnorm
+
+## r1 — 2026-06-11 — verdict: reject
+
+- **Tier-mismatch (kill condition).** BranchNorm is explicitly a "scale extremely deep" lever (paper title: "Robustly Scaling Extremely Deep Transformers"). At tiny1m3m we have **6 layers**; the depth-induced residual-stream drift that motivates β(t) doesn't accumulate here. The slot would re-prove what 017-sub-ln-sandwich already proved on 2026-06-09: the DeepNet-family stability levers (sub-LN, DeepNorm α/β, and now BranchNorm's time-scheduled version) are **null at 6L** because the failure mode they fix is depth-bound. The single A/B teaches us nothing new — its only informative outcome is "null, as expected."
+- **Information value ≈ 0.** The bet is "BranchNorm helps at tiny1m3m," which contradicts the paper's own thesis. The lever firing here would be a *surprise*, not a confirmation. Tier-mismatch ideas (per 008-gated-deltanet, 018-ademamix precedents) get rejected, not revised — the miner can't re-pitch a "this is for 6L" version of a 100+-layer paper.
+- **Crowding (corroborating signal, not the reason).** 051/052/057/058/060 are all in active norm-variant review/repitch — but BranchNorm isn't even a norm, it's a residual-branch multiplier, and 017 already closed the 6L null for this family. Crowd status would be a `revise` reason; the tier-mismatch is a `reject` reason.
+- **Not niche-fit for the screen.** The screen exists to feed `plans/beat-smollm2-135m.md`. BranchNorm pays off at 100+ layers; even if we promoted it from a 6L null, it would carry zero weight in the 12–24L 135M recipe because the depth regime is still ~10× short of "extremely deep." No transfer story.
+- **Verdict: reject** — branch-multiply-with-time-schedule, the lever's only informative regime is ≥100 layers; at tiny1m3m it's a guaranteed null that closes nothing and tests nothing new.

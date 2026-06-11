@@ -1,0 +1,8 @@
+{"ts":"2026-06-10T16:46:13Z","agent":"taste","idea":"060-ngpt","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:49:54Z","agent":"taste","idea":"060-ngpt","from":"tasting","to":"needs-review","round":1,"note":"accept: hypersphere geometry is end-to-end and mechanistically distinct from qk-norm/sub-ln/squash; sharp two-sided bet, informative null"}
+{"ts":"2026-06-10T23:27:30Z","agent":"reviewer","idea":"060-ngpt","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:28:02Z","agent":"reviewer","idea":"060-ngpt","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise (no pass/fail bar, spec ambiguity on subset, ctrl unnamed, LR-rescale not addressed, LoC budget unenumerated, scale-evidence cite to tighten)"}
+{"ts":"2026-06-10T23:38:19Z","agent":"reviser","idea":"060-ngpt","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:41:09Z","agent":"reviser","idea":"060-ngpt","from":"revising","to":"needs-review","round":2,"note":"6 findings applied: pass/fail bar added, spec subset committed (5 sites, dropped α/s_z/sqrt(d_k)), ctrl named, LR-keep decision recorded, LoC per-site enumerated (~33), scale-evidence citation softened"}
+{"ts":"2026-06-10T23:50:40Z","agent":"reviewer","idea":"060-ngpt","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-11T01:19:47Z","agent":"reviewer","idea":"060-ngpt","from":"reviewing","to":"needs-plan","round":2,"note":"approve: nGPT core subset is now explicit and plan-ready"}

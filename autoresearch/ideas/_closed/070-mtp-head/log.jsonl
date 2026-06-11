@@ -1,0 +1,4 @@
+{"ts":"2026-06-10T16:50:56Z","agent":"taste-reviewer","idea":"070-mtp-head","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T17:01:27Z","agent":"orchestrator","idea":"070-mtp-head","from":"tasting","to":"needs-taste","round":1,"note":"reclaim stale tasting lock (10m)"}
+{"ts":"2026-06-10T23:24:33Z","agent":"taste-reviewer","idea":"070-mtp-head","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:24:47Z","agent":"taste-reviewer","idea":"070-mtp-head","from":"tasting","to":"rejected","round":1,"note":"reject: paper's own Fig 3 says MTP HURTS at <3B (~13000x larger than tiny1m3m); param-budget injection biases A/B; info-free either way; off-niche on tier"}

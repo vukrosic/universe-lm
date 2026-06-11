@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:50:20Z","agent":"taste","idea":"084-peri-ln","from":"needs-taste","to":"needs-review","round":1,"note":"accept: sublayer-wrap norm placement is distinct and cheap to test"}
+{"ts":"2026-06-11T01:17:26Z","agent":"reviewer","idea":"084-peri-ln","from":"needs-review","to":"needs-plan","round":1,"note":"approve: peri-normalization placement change is ready for planning"}

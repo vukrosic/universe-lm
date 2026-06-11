@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:49:29Z","agent":"taste","idea":"072-t5-rpe","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:34Z","agent":"taste","idea":"072-t5-rpe","from":"tasting","to":"needs-review","round":1,"note":"accept: bucketed-RPE vs FIRE smooth-kernel counterfactual; zero-init exact; transfer-risk low (T5 11B); canonical PE reference anchors crowded family"}
+{"ts":"2026-06-10T23:27:31Z","agent":"reviewer","idea":"072-t5-rpe","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:28:37Z","agent":"reviewer","idea":"072-t5-rpe","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-10T23:42:11Z","agent":"reviser","idea":"072-t5-rpe","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:43:52Z","agent":"reviser","idea":"072-t5-rpe","from":"revising","to":"needs-review","round":2,"note":"3 findings applied: named control (closed-009 fire ctrl=6.3234) + bar Δ∈[−0.005,−0.02] with pass/fail/noise=±0.005; pinned n_buckets=32 shared-across-heads; source-staleness sentence added"}
+{"ts":"2026-06-11T01:22:23Z","agent":"reviewer","idea":"072-t5-rpe","from":"needs-review","to":"needs-plan","round":2,"note":"approve: numeric bar and bucket config now pinned"}

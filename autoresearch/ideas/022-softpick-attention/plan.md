@@ -189,3 +189,52 @@ across these files is clean.
   the prior 0.9491M because V-embed and q_gain are now wired in,
   matching the ctrl), loss=10.80 finite, `qkvo_proj`/FIRE/V-embed
   grads all non-zero across all layers. Lever is alive.
+
+## r2 recode (2026-06-10) — fp32-overflow stabilization
+- Runner bounced from `running`: both runs (`022-soft.log` and
+  `022-soft-r.log`) NaN'd mid-training at step ~400/732 (last finite
+  loss 6.5851). `evidence.md` correctly identified an impl bug, not
+  a mechanism failure (the paper is reported drop-in).
+- Root cause: `softpick` computed `exp(scores.to(fp32)) - 1.0`
+  *without* a per-row max-subtraction. fp32's exp ceiling is x ≈
+  88.7 (e^88.7 = fp32 max ≈ 3.4e38). When even a single attention
+  score grew past that mid-training, `exp(score) = +inf`, then
+  `relu(inf)` in the numerator and `|inf|` in the denominator both
+  blow up — `inf / inf = NaN` propagates through `matmul(attn_w, V)`
+  to the loss. The mask multiply doesn't save it because the
+  overflow is on UNMASKED entries.
+- Fix in `models/layers.py:39-86` (softpick helper) — apply the
+  closed-form identity:
+
+    relu(exp(x) − 1) / Σ|exp(x) − 1|
+    ≡ relu(exp(x − M) − exp(−M)) / Σ|exp(x − M) − exp(−M)|
+
+  for M = per-row max over UNMASKED positions (the masked_fill
+  −inf + amax pattern), clamped to ≥ 0. The clamp_min(0) keeps the
+  identity exact when M_true ≤ 0 (subtracting 0 is a no-op) and
+  bounds `exp(x − M) ≤ 1` and `exp(−M) ≤ 1` when M > 0 — overflow
+  becomes impossible. No spec change (the function value is
+  mathematically identical at every input, just stably computed).
+  No new params, no LR/schedule change, no init drift.
+- New regression test `test_no_nan_under_fp32_exp_overflow` in
+  `tests/test_softpick.py` — plants scores up to 200 (well past
+  fp32 exp ceiling 88.7) and asserts softpick stays finite with
+  valid row sums. Pinned so a future refactor can't re-introduce
+  the bug.
+- Verified `tests/test_softpick.py` → 9/9 pass (8 prior + new
+  overflow regression). Numerical equivalence against the naive
+  form on normal-range scores: max-diff ≈ 1e-6 (float precision
+  noise; mathematically identical). Adversarial check with a
+  single planted score=95.0: naive emits NaN, stable returns 1.0
+  (correct — only positive score, all mass there).
+- Re-ran step-0 smoke on trt: 0.9522M params, loss finite, grads
+  finite, finite under 20× weight inflation (synthetic over-stress
+  to exercise overflow regime end-to-end).
+- LoC delta: +28 LoC inside the softpick helper (mostly comments
+  explaining the identity); +35 LoC for the new regression test.
+  Active softpick code remains under the 50-LoC cap.
+- Coordination: parallel agent moved FoX op to pre-softmax
+  (logit-add) at `models/layers.py:1596-1608` and added 029-V-norm
+  wiring. Neither conflicts with the softpick fix — the change is
+  purely internal to the `softpick` helper at lines 39-86; the
+  swap site at line 1622 is unchanged.

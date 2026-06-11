@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:50:20Z","agent":"taste","idea":"081-scale-invariant-attn","from":"needs-taste","to":"needs-review","round":1,"note":"accept: attention-side logit transform with long-context evidence"}
+{"ts":"2026-06-11T01:17:26Z","agent":"reviewer","idea":"081-scale-invariant-attn","from":"needs-review","to":"needs-plan","round":1,"note":"approve: distinct attention-logit transform ready for planning"}

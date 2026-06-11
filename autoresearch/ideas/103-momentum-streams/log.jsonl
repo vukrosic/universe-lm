@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:45Z","agent":"taste","idea":"103-momentum-streams","from":"needs-taste","to":"needs-review","round":1,"note":"accept: optimizer structure inside the model is a real bet"}
+{"ts":"2026-06-11T01:18:41Z","agent":"reviewer","idea":"103-momentum-streams","from":"needs-review","to":"needs-plan","round":1,"note":"approve: optimizer-like residual streams are ready for planning"}

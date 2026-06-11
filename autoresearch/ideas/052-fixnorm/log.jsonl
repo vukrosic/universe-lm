@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:48:12Z","agent":"taste","idea":"052-fixnorm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:50:40Z","agent":"taste","idea":"052-fixnorm","from":"tasting","to":"needs-review","round":1,"note":"accept: embedding-side norm clamp, sharp falsifiable bet, niche-fit at tiny1m3m where embedding table dominates; isolates cheapest member of the normalization family ahead of 051/060"}
+{"ts":"2026-06-10T23:29:16Z","agent":"reviewer","idea":"052-fixnorm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:29:22Z","agent":"reviewer","idea":"052-fixnorm","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise — 4 findings: missing falsifiable bar, step-0 ≠ baseline unjustified, spec under-specified (radius, embedding_scale, emb_rank, output side), name control config"}
+{"ts":"2026-06-10T23:41:40Z","agent":"reviser","idea":"052-fixnorm","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:45:24Z","agent":"reviser","idea":"052-fixnorm","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings: pass-bar named, step-0 magnitude shift justified, Spec section added (radius/emb_scale/emb_rank/output/op), ctrl = Tiny1M3MConfig trt = same + use_fixnorm=True"}
+{"ts":"2026-06-11T01:22:23Z","agent":"reviewer","idea":"052-fixnorm","from":"needs-review","to":"needs-plan","round":2,"note":"approve: recipe fully pinned and pass bar numeric"}

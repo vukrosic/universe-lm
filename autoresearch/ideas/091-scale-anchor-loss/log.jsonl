@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T01:05:40Z","agent":"taste","idea":"091-scale-anchor-loss","from":"needs-taste","to":"needs-review","round":1,"note":"accept: cheap auxiliary scale anchor is a useful diagnostic"}
+{"ts":"2026-06-11T01:17:52Z","agent":"reviewer","idea":"091-scale-anchor-loss","from":"needs-review","to":"needs-plan","round":1,"note":"approve: auxiliary scale anchor is ready for planning"}

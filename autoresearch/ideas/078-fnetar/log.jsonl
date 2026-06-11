@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:48:09Z","agent":"taste","idea":"078-fnetar","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:01Z","agent":"taste","idea":"078-fnetar","from":"tasting","to":"needs-repitch","round":1,"note":"revise: portfolio overlap w/ 077-fnet; leverage claim missing; AR construction unspecified; short-seq fit unargued"}
+{"ts":"2026-06-10T23:27:09Z","agent":"miner","idea":"078-fnetar","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:28:55Z","agent":"miner","idea":"078-fnetar","from":"repitching","to":"needs-taste","round":2,"note":"4 findings applied: 077 nonexistent so portfolio overlap moot; added val-loss Δ≤-0.01 bet w/ SSMax mechanistic parallel; named paper's lower-tri causal-DFT construction; fixed wrong short-seq premise (seq_len=2048)"}
+{"ts":"2026-06-10T23:36:18Z","agent":"taste","idea":"078-fnetar","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:36:43Z","agent":"taste","idea":"078-fnetar","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp Δ≤-0.01 bet vs FIRE ctrl; orthogonal axis to 023/025; zero-init gated → bounded null; sole Fourier slot"}
+{"ts":"2026-06-11T01:21:40Z","agent":"reviewer","idea":"078-fnetar","from":"needs-review","to":"needs-plan","round":1,"note":"approve: causal Fourier residual lever is ready for planning"}

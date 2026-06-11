@@ -1,0 +1,5 @@
+Read autoresearch/prompts/runner.md (and autoresearch/PIPELINE.md) and execute ONE full runner pass exactly as specified. You are in /Users/vukrosic/my-life/llm-research-kit-scaling.
+
+Box (live, rented): ssh -p 22179 root@81.45.65.189 (-o StrictHostKeyChecking=accept-new). Repo on box: /root/universe-lm (already cloned). Python: /venv/main/bin/python (export PATH=/venv/main/bin:$PATH). Dataset ready at /root/universe-lm/processed_data/pretrain_1B (~15G). A setup agent may still be finishing CPU smoke checks on the box — ignore it, it won't touch the GPU.
+
+Remember the runner prompt's non-negotiables: detached remote tmux queue named arq, ctrl first and ctrl2 last, _arq_<NNN>.py config-subclass pattern for idea flags (NOT CLI flags), MinimalLLM build-smoke for ctrl + every treatment before training, fail-isolated run() wrapper, no orphan runs. If a queue is already live on the box (tmux session arq exists), do NOT relaunch — poll STATUS, pull finished logs, finalize evidence.md + flips, then exit. This prompt is re-invoked every ~10 minutes by cron; one pass per invocation, no waiting loops longer than a few minutes.

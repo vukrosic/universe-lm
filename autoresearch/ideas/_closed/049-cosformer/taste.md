@@ -1,0 +1,8 @@
+# Taste — 049-cosformer
+
+## r1 — 2026-06-11 — verdict: reject
+
+- **Family is closed by prior nulls.** Linear-attention variants have been screened three times at tiny1m3m and the family is dead at this tier: `004-retnet-retention` NULL (+0.029/+0.011 vs ctrls), `008-gated-deltanet` taste-reject (off-niche on tier), `012-gated-deltanet` taste-reject (miner conceded mechanism "doesn't fire at this scale"). cosFormer is the same bet — swap softmax for a kernel that's linear-time — with no mechanistic argument for why cosine reweighting escapes the same tier mismatch.
+- **Lever is long-seq efficiency, not val loss at 512 tokens.** cosFormer's published wins are throughput/LRA at long context; on the same causal LM benchmarks at small scale the paper shows parity, not gains. At tiny1m3m (512 seq · 0.94M params · 3M tokens) softmax attention already concentrates and is not the bottleneck — there is no leverage for the kernel choice to express. `transfer-risk: med` is too optimistic; this is `high` once you score against our tier.
+- **Duplicate filing in the same mining round.** `079-cosformer/idea.md` is the same paper (arXiv:2202.08791), filed 2 minutes later (16:21Z vs 16:19Z), with a cleaner zero-gate framing and an honest `transfer-risk: med-high`. If any cosFormer slot is spent it should be 079, not 049. Killing 049 also removes the dup from the queue.
+- **Info-free bet.** The "what we'd learn" sentence — "cosine reweighting does not help beyond the existing attention stack" — is already on record from 004/008/012. Another null in this family teaches nothing new; a win is implausible at 512 seq where the kernel choice barely matters.

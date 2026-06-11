@@ -1,0 +1,10 @@
+{"ts":"2026-06-10T16:43:26Z","agent":"taste","idea":"038-swan","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:46:47Z","agent":"taste","idea":"038-swan","from":"tasting","to":"needs-review","round":1,"note":"accept: stateless gradient whitening, most distinct optimizer in 031-040 queue, sharp SWAN-vs-Muon bet on matrix params"}
+{"ts":"2026-06-10T23:27:26Z","agent":"reviewer","idea":"038-swan","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:28:30Z","agent":"reviewer","idea":"038-swan","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise — pin Muon-slot control, add pass-bar, name LR/momentum + non-matrix routing"}
+{"ts":"2026-06-10T23:33:46Z","agent":"reviser","idea":"038-swan","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:37:09Z","agent":"reviser","idea":"038-swan","from":"revising","to":"needs-review","round":2,"note":"5 findings applied"}
+{"ts":"2026-06-10T23:47:56Z","agent":"reviewer","idea":"038-swan","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:50:19Z","agent":"reviewer","idea":"038-swan","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-11T01:19:15Z","agent":"code-implementer","idea":"038-swan","from":"needs-plan","to":"needs-codereview","round":1,"note":"plan written for SWAN matrix whitening A/B"}
+{"ts":"2026-06-11T01:51:33Z","agent":"code-reviewer","idea":"038-swan","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: SWAN wired and tests pass"}

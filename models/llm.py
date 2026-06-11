@@ -272,6 +272,12 @@ class MinimalLLM(nn.Module):
         # bounding the per-head logit. Default off → bit-identical
         # baseline. See autoresearch/ideas/016-qk-norm/plan.md.
         self.use_qk_layernorm = getattr(config, "use_qk_layernorm", False)
+        # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
+        # when True, add a per-head `nn.LayerNorm(d_head)` on V before
+        # the AV product, the symmetric partner of 016's QK-Norm. Default
+        # off → bit-identical baseline (no v_norm module built). See
+        # autoresearch/ideas/029-v-norm/plan.md.
+        self.use_v_layernorm = getattr(config, "use_v_layernorm", False)
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
         self.use_attn_sink = getattr(config, "use_attn_sink", False)
@@ -388,6 +394,8 @@ class MinimalLLM(nn.Module):
                     v_norm_type=self.v_norm_type,
                     # #16 QK-Norm pass-through to the block.
                     use_qk_layernorm=self.use_qk_layernorm,
+                    # 029 — V-Norm pass-through to the block.
+                    use_v_layernorm=self.use_v_layernorm,
                     use_multiscale_heads=self.use_multiscale_heads,
                     use_parallel_block=self.use_parallel_block,
                     use_attn_sink=self.use_attn_sink,

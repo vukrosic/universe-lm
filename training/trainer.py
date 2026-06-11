@@ -12,6 +12,7 @@ from typing import List, Optional, Callable, Dict, Any
 from configs.llm_config import LLMConfig
 from models.llm import MinimalLLM
 from optimizers.muon import Muon
+from optimizers.swan import SWAN
 from optimizers.cautious_adamw import CautiousAdamW
 from optimizers.soap import SOAP
 from optimizers.schedule_free_adamw import ScheduleFreeAdamW
@@ -93,6 +94,7 @@ def default_metrics_history() -> Dict[str, list]:
 def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
+    swan_params = []
     adamw_params = []
     soap_params = []
     lion_params = []
@@ -104,6 +106,7 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
     # / `emb_proj` / `*.norm.weight` / 1-D scalars on AdamW — same 2-D / 1-D
     # split as Muon. Default off → Muon path is unchanged.
     use_lion = getattr(config, "use_lion", False)
+    use_swan = getattr(config, "use_swan", False)
     use_cautious_lion = getattr(config, "use_cautious_lion", False)
 
     for name, param in model.named_parameters():
@@ -169,12 +172,15 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             # Muon-AdamW path.
             if use_lion:
                 lion_params.append(param)
+            elif use_swan:
+                swan_params.append(param)
             else:
                 muon_params.append(param)
         else:
             adamw_params.append(param)
 
     print(f"  Muon parameters: {sum(p.numel() for p in muon_params):,}")
+    print(f"  SWAN parameters: {sum(p.numel() for p in swan_params):,}")
     print(f"  Lion parameters: {sum(p.numel() for p in lion_params):,}")
     print(f"  AdamW parameters: {sum(p.numel() for p in adamw_params):,}")
     print(f"  SOAP parameters: {sum(p.numel() for p in soap_params):,}")
@@ -196,8 +202,19 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             cautious=use_cautious_lion,
         )
         muon_optimizer = None
+    elif use_swan:
+        # SWAN replaces Muon on the same 2-D non-embedding, non-norm
+        # slot. The routing keeps 1-D / embedding / norm on AdamW so the
+        # delta isolates whitening vs Newton-Schulz orthogonalization.
+        swan_optimizer = SWAN(
+            swan_params,
+            lr=config.muon_lr,
+            weight_decay=config.weight_decay,
+        )
+        muon_optimizer = None
     else:
         lion_optimizer = None
+        swan_optimizer = None
         muon_optimizer = Muon(
             muon_params,
             lr=config.muon_lr,
@@ -280,6 +297,7 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
         )
 
     optimizers = ([lion_optimizer, adamw_optimizer] if use_lion
+                  else [swan_optimizer, adamw_optimizer] if use_swan
                   else [muon_optimizer, adamw_optimizer])
     # SOAP gate (Vyas et al. 2024) — see
     # autoresearch/ideas/003-soap/plan.md. `use_soap=True` swaps the

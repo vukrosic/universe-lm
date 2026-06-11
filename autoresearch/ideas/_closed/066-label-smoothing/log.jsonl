@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:48:49Z","agent":"taste","idea":"066-label-smoothing","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:58Z","agent":"taste","idea":"066-label-smoothing","from":"tasting","to":"rejected","round":1,"note":"reject: same family as 010-polyloss (null 2026-06-09); LabelSmooth already in configs/output_head_ablations.py; portfolio crowded with 067-confidence-penalty; sub-noise outcome expected"}

@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:49:13Z","agent":"taste","idea":"075-adaptive-input","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:58Z","agent":"taste","idea":"075-adaptive-input","from":"tasting","to":"rejected","round":1,"note":"reject: scale-dependent lever (validated at WT-103/1B-Word ~30-300× our 3M-token budget); long-tail Zipf signal absent at tiny1m3m so frequency-bucketed capacity has nothing to bite on; embed-capacity family already closed at screen20m"}

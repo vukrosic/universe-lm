@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:23Z","agent":"taste","idea":"097-asentmax","from":"needs-taste","to":"needs-review","round":1,"note":"accept: adaptive sparse attention has strong long-context evidence"}
+{"ts":"2026-06-11T01:18:16Z","agent":"reviewer","idea":"097-asentmax","from":"needs-review","to":"needs-plan","round":1,"note":"approve: adaptive sparse entmax attention is ready for planning"}

@@ -1,0 +1,9 @@
+{"ts":"2026-06-10T16:43:21Z","agent":"taste","idea":"044-attnres","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:44:58Z","agent":"taste","idea":"044-attnres","from":"tasting","to":"needs-repitch","round":1,"note":"revise: scale arg backwards (paper at 48B is transfer-up; gate asks if lever fires at L=6); no Δ-prediction; must differentiate vs 023-canon WIN"}
+{"ts":"2026-06-10T17:02:33Z","agent":"miner","idea":"044-attnres","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T17:11:39Z","agent":"orchestrator","idea":"044-attnres","from":"repitching","to":"needs-repitch","round":1,"note":"reclaim stale repitching lock (8m)"}
+{"ts":"2026-06-10T23:23:41Z","agent":"miner","idea":"044-attnres","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:26:21Z","agent":"miner","idea":"044-attnres","from":"repitching","to":"needs-taste","round":2,"note":"5 findings applied: depth-axis fires-at-L=6 mechanism, vs-023-canon differentiation, sharp Δ bet, identity-init story, stable URL"}
+{"ts":"2026-06-10T23:35:32Z","agent":"taste","idea":"044-attnres","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:36:58Z","agent":"taste","idea":"044-attnres","from":"tasting","to":"needs-review","round":1,"note":"accept: all 5 r1 findings closed; sharp win/null bet; identity-init kills regression risk; sub-50-LoC; 135M-transfer supported by paper 125M ablation"}
+{"ts":"2026-06-11T01:34:07Z","agent":"reviewer","idea":"044-attnres","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}

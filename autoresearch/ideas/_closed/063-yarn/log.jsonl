@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:47:05Z","agent":"taste-reviewer","idea":"063-yarn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:49:46Z","agent":"taste-reviewer","idea":"063-yarn","from":"tasting","to":"rejected","round":1,"note":"reject: long-context extension lever; tiny1m3m trains+evals at fixed max_seq_len=2048 — YaRN's frequency rescaling never fires (no L'>L regime); crowded PE family (061-065)"}

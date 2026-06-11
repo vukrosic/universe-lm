@@ -465,6 +465,10 @@ class LLMConfig:
     muon_lr: float = 0.024
     muon_momentum: float = 0.95
     adamw_lr: float = 0.006
+    # SWAN (Ma et al. 2024/2025, arXiv:2412.13148): stateless whitening
+    # on matrix gradients. Reuses Muon's lr for the matrix slot; the
+    # algorithm has no momentum buffer.
+    use_swan: bool = False
     warmup_ratio: float = 0.0
     schedule_type: str = "constant"
     # Cautious Muon (Liang et al. 2024, arXiv 2411.16085): one-line sign-mask
@@ -557,6 +561,17 @@ class LLMConfig:
     # norm in the block. See
     # autoresearch/ideas/016-qk-norm/plan.md.
     use_qk_layernorm: bool = False
+    # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322): per-head
+    # `nn.LayerNorm(d_head)` on V along `d_head` before the AV product,
+    # symmetric partner of 016's QK-Norm. Bounds the per-head V vector
+    # magnitude so outlier V entries do not dominate the AV aggregation.
+    # Separate `nn.LayerNorm(d_head)` module (no weight sharing with
+    # q_norm/k_norm from 016). When v_norm_type is also set, the
+    # existing v_norm_type wins (explicit > implicit — the closed-#92
+    # lever takes precedence). Default off → no v_norm module is built
+    # and the baseline path stays bit-identical. See
+    # autoresearch/ideas/029-v-norm/plan.md.
+    use_v_layernorm: bool = False
 
     # Evaluation
     eval_every: Optional[int] = None
@@ -676,6 +691,12 @@ class Tiny1M3MConfig(LLMConfig):
 
 
 @dataclass
+class Tiny1M3MSWANConfig(Tiny1M3MConfig):
+    """Tiny1M3M with SWAN on the matrix-weight slot."""
+    use_swan: bool = True
+
+
+@dataclass
 class Tiny1M5MConfig(Tiny1M3MConfig):
     """Tiny screen — ~0.94M params · 5M tokens.
 
@@ -734,6 +755,64 @@ class Tiny1M3MQKNormConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MScaleNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with ScaleNorm (scalar-gain RMSNorm on the residual stream)."""
+    norm_type: str = "scalenorm"
+
+
+@dataclass
+class Tiny1M3MVNormOnQKNormConfig(Tiny1M3MQKNormConfig):
+    """Tiny1M3M with QK-Norm + V-Norm (per-head LayerNorm on V before AV).
+
+    A/B vs the QK-Norm ctrl (`Tiny1M3MQKNormConfig`, the 016 WIN
+    signature). Adds a per-head `nn.LayerNorm(d_head)` on V along
+    `d_head` (γ=1, β=0 init → identity at step 0), the symmetric
+    partner of 016's QK-Norm. Independent `v_norm` module (no weight
+    sharing with q_norm/k_norm). Bounds per-head V vector magnitude
+    so outlier V entries do not dominate the AV aggregation output.
+
+    PASS ≤ ctrl − 0.005 (matches 016's bar — the symmetric-partner
+    bet is at the low end of the hypothesis range per the taste
+    caveat that Wortsman used V-norm as a diagnostic, not a primary
+    lever). NULL band |Δ| < 0.005. DRIFT > +0.005. See
+    autoresearch/ideas/029-v-norm/plan.md.
+    """
+    use_v_layernorm: bool = True
+
+
+@dataclass
+class Tiny1M3MMoonlightMuonQKNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Moonlight Muon RMS rescale + QK-Norm stacked.
+
+    A/B vs the plain-Muon ctrl (`Tiny1M3MConfig`). Composition of two
+    closed-WIN levers that touch entirely separate code paths:
+
+    - `use_moonlight_muon=True` → optimizer-side per-tensor RMS
+      rescale `c·sqrt(max(d_in, d_out))` on the Newton–Schulz
+      orthogonalized Muon update (c=0.2, Kimi/Moonshot AI,
+      arXiv:2502.16982). Lives in `optimizers/muon.py` / wired
+      from `training/trainer.py`. Closed-#015 evidence Δ −0.0138.
+    - `use_qk_layernorm=True` → per-head `nn.LayerNorm(d_head)` on
+      Q,K head-dim before the dot product (γ=1, β=0 init → identity
+      at step 0). Lives in `models/layers.py` MHA forward. Bounds
+      runtime `|Q·K/√d_head| ≤ √d_head`. Closed-#016 evidence
+      Δ −0.0138.
+
+    No shared state. The composition is a two-flag enable; both
+    flag paths are already wired and validated by their parent
+    A/Bs. Orthogonality test: additive (~−0.028) → independent
+    levers (carry both into the 10M→135M ladder); subadditive
+    (~−0.01 to −0.02) → partial overlap, carry the cheaper
+    (QK-Norm); null (|Δ|<0.01) → substitutes (carry one).
+    A clean null is informative, not a failure. PASS ≤ ctrl − 0.01
+    (matches 015's bar). NULL band |Δ| < 0.01. DRIFT > +0.01.
+    See autoresearch/ideas/027-moonlight-x-qknorm/plan.md.
+    """
+    use_moonlight_muon: bool = True
+    use_qk_layernorm: bool = True
+
+
+@dataclass
 class Tiny1M3MLionConfig(Tiny1M3MConfig):
     """Tiny1M3M with bare-Lion (Chen et al. 2023) on the 2-D non-embed slot.
 
@@ -784,31 +863,6 @@ class Tiny1M3MCoPEOnFireConfig(Tiny1M3MConfig):
 
 
 @dataclass
-class Tiny1M3MFOXOnFireConfig(Tiny1M3MConfig):
-    """Tiny1M3M with FIRE + Forgetting Transformer (multiplicative decay).
-
-    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
-    per `closed.md:40`). The treatment stacks `use_fox=True` on top:
-    FoX is a *multiplicative* per-head, per-token learnable decay on
-    attention *probabilities* (post-softmax), with row-renorm. Strictly
-    orthogonal to FIRE (which is *additive* on logits): FIRE changes
-    *which* key wins the softmax; FoX changes *how much mass* even the
-    winners keep. Conservative extension of softmax attention — softmax
-    stays, projection stays, V path is unchanged. b_f = +10 init → D is
-    within 9% of all-ones over the full T=2048 context at step 0, so
-    the model has to *learn* to forget from scratch (gates start near
-    1.0 and can only go down). See
-    `models/fox.py` for the identity-init derivation.
-
-    PASS ≤ −0.02 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.02.
-    DRIFT > +0.01. See
-    `autoresearch/ideas/020-forgetting-attn/plan.md`.
-    """
-    use_fire_pe: bool = True
-    use_fox: bool = True
-
-
-@dataclass
 class Tiny1M3MVQGainConfig(Tiny1M3MConfig):
     """Tiny1M3M with V-embed + per-head Q-gain."""
     use_value_embed: bool = True
@@ -850,6 +904,35 @@ class Tiny1M3MVQGainSWAHighRoPE250KConfig(Tiny1M3MConfig):
     use_sliding_window: bool = True
     sliding_window_size: int = 512
     rope_base: int = 250000
+
+
+@dataclass
+class Tiny1M3MFOXOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
+    """Tiny1M3M with FIRE + Forgetting Transformer (multiplicative decay).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
+    per `closed.md:40`). Parent is `Tiny1M3MVQGainSWAHighRoPE250KConfig`
+    so VQ-gain + SWA(512) + RoPE 250K carry over from the ctrl recipe —
+    the A/B isolates the FoX swap (per-head, per-token learnable decay
+    on attention probabilities) on top of the same FIRE-equipped
+    foundation, not silent HP drift. The treatment stacks `use_fox=True`
+    on top: FoX is a *multiplicative* per-head, per-token learnable
+    decay on attention *probabilities* (post-softmax), with row-renorm.
+    Strictly orthogonal to FIRE (which is *additive* on logits): FIRE
+    changes *which* key wins the softmax; FoX changes *how much mass*
+    even the winners keep. Conservative extension of softmax attention
+    — softmax stays, projection stays, V path is unchanged. b_f = +10
+    init → D is within 9% of all-ones over the full T=2048 context at
+    step 0, so the model has to *learn* to forget from scratch (gates
+    start near 1.0 and can only go down). See `models/fox.py` for the
+    identity-init derivation.
+
+    PASS ≤ −0.02 vs the FIRE-equipped ctrl. NULL band |Δ| < 0.02.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/020-forgetting-attn/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_fox: bool = True
 
 
 @dataclass
@@ -940,6 +1023,55 @@ class Tiny1M3MCanonOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
 
 
 @dataclass
+class Tiny1M3MUNetSigmoidOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
+    """Tiny1M3M with FIRE + U-Net sigmoid skips (modded-nanogpt fix).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
+    6.3234 per `closed.md:44`). Parent is
+    `Tiny1M3MVQGainSWAHighRoPE250KConfig` so VQ-gain + SWA(512) +
+    RoPE 250K carry over from the ctrl recipe — the A/B isolates
+    the U-Net swap (residual-stream architectural lever) on top of
+    the same FIRE-equipped foundation, not silent HP drift.
+
+    Adds learnable U-Net skip connections bridging early layer
+    outputs into mirrored late layers. The gate parameter is
+    initialised to -1.5 and wrapped in sigmoid (modded-nanogpt
+    PR #125 fix:
+    https://github.com/KellerJordan/modded-nanogpt/pull/125), so
+    `sigmoid(-1.5) ≈ 0.18` of the early activation flows in at
+    step 0 — small, bounded to (0, 1), non-zero starting point
+    with non-zero gradient. Categorically distinct from our
+    previous broken attempt
+    (`docs/youtube-architecture-ablation-log.md §5`, val +0.0003
+    worse) which used `unet_gate_type="raw"` +
+    `unet_gate_init=0.0` — the dead-gate bug. The mechanism never
+    actually ran in that test; it was a bug-experiment, not a
+    mechanism A/B.
+
+    At tiny1m3m's 6-layer depth the U-Net mirrors are 0↔5 / 1↔4 /
+    2↔3 — only 3 short pairs, so the predicted effect is "small
+    but non-zero", not big-if-true. A clean null after the fix
+    definitively closes U-Net skips for this model class; a win
+    plausibly amplifies at 135M where depth grows. Strictly
+    orthogonal to FIRE (which is an attention-side lever);
+    orthogonal to all closed levers (no residual-stream
+    architectural change in closed.md). transfer-risk: low —
+    modded-nanogpt's +1.25% speedup is at ≥100M parameter scale,
+    directly comparable to tiny1m3m's model class.
+
+    PASS ≤ −0.005 vs the FIRE-equipped ctrl (taste's "small but
+    non-zero" prediction; not −0.01 because the 3-pair U at 6L
+    is a smaller bet than the deeper-stack version). NULL band
+    |Δ| < 0.005. DRIFT > +0.005. See
+    `autoresearch/ideas/030-unet-skip-sigmoid/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_unet_skips: bool = True
+    unet_gate_type: str = "sigmoid"
+    unet_gate_init: float = -1.5
+
+
+@dataclass
 class Tiny1M3MGatedAttnOnFireConfig(Tiny1M3MConfig):
     """Tiny1M3M with FIRE + Gated Attention (Qiu et al. 2025).
 
@@ -1010,6 +1142,90 @@ class Tiny1M3MVResidualOnFireConfig(Tiny1M3MConfig):
     """
     use_fire_pe: bool = True
     use_value_residual: bool = True
+
+
+@dataclass
+class Tiny1M3MQKNormOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
+    """Tiny1M3M with FIRE + QK-Norm (LayerNorm on Q,K head-dim).
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
+    6.3234 per `closed.md:44`). Parent is
+    `Tiny1M3MVQGainSWAHighRoPE250KConfig` so VQ-gain + SWA(512) +
+    RoPE 250K carry over from the ctrl recipe — the A/B isolates the
+    QK-Norm swap (per-head LayerNorm on Q,K along `d_head`) on top
+    of the same FIRE-equipped foundation, not silent HP drift. The
+    treatment stacks `use_qk_layernorm=True` on top: bounds the
+    per-head logit `Q·K/√d_head` to `|·| ≤ √d_head`. Categorically
+    distinct from FIRE — FIRE is *additive* (bias added to logits
+    post-dot-product); QK-Norm is *multiplicative-normalizing*
+    (LayerNorm bounds the dot-product magnitude that the bias gets
+    added to). The two operate at different points and on different
+    mathematical axes.
+
+    The 013-CoPE DRIFT (+0.143 vs FIRE-alone, `closed.md`) is the
+    relevant prior, but 013 failed by stacking *two additive position
+    bias levers* — QK-Norm does not compound additively with FIRE's
+    bias; it bounds the magnitude of the Q·K product. This is the
+    qualitative difference that makes 026 a different bet from 013.
+
+    Expected: additive (~−0.078 vs FIRE-alone, computed as 009's
+    −0.064 + 016's −0.014). Superadditive (~−0.09+) would mean the
+    per-head logit bounding makes FIRE's learned position bias more
+    consistent across heads. A null or regression would mean the
+    013-CoPE precedent generalises — attention-domain headroom is
+    exhausted by FIRE at this scale.
+
+    PASS ≤ −0.01 vs the FIRE-equipped ctrl. NULL band |Δ| ≤ 0.01.
+    DRIFT > +0.01. See
+    `autoresearch/ideas/026-fire-x-qknorm/plan.md`.
+    """
+    use_fire_pe: bool = True
+    use_qk_layernorm: bool = True
+
+
+@dataclass
+class Tiny1M3MDeepThinConfig(Tiny1M3MConfig):
+    """Tiny1M3M deep-and-thin: depth/width swap at fixed ~0.94M budget.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306
+    per `LEADERBOARD.md` row 14). The treatment reallocates the 0.94M
+    budget across more, thinner layers: n_layers 12→20 (1.67×),
+    d_model 64→48 (0.75×), d_ff 256→192 (= 4·d_model preserved),
+    n_heads/n_kv_heads 4/2 → 3/3 (MHA-tied — see confound below).
+    Per-head `d_head = 16` preserved (was 64/4, now 48/3); `emb_rank=8`,
+    `ffn_variant="squared_relu"`, `vocab_size=49152` all inherited
+    unchanged from `Tiny1M3MConfig`. Param budget arithmetic:
+    per-block attn 9.2k + FFN 18.4k + norms 0.24k ≈ 27.9k; ×20 = 558k
+    + embedding factorisation 393.6k ≈ 951k (+1.3% vs baseline 939k,
+    inside the ±5% ceiling). MobileLLM (Ma et al., ICML 2024,
+    arXiv:2402.14905) reports +2.7% / +4.3% on zero-shot benchmarks
+    at 125M / 350M from this exact depth/width swap; the open question
+    is whether the lever still fires at 0.94M (133× smaller than the
+    paper's smallest ablation).
+
+    Known confound (see `idea.md:50-55`). Baseline is GQA 2:1
+    (n_heads=4, n_kv_heads=2). The depth/width swap also collapses
+    kv-sharing → MHA (n_heads=n_kv_heads=3). Tied-QK / full-MHA is a
+    known WIN signature at tiny1m3m (`LEADERBOARD.md` row 0 = vq-gain
+    + rope250k + swa384 + tiedqk, val 6.3041) — the trt Δ partly
+    reflects the kv-sharing collapse, not pure depth/width. Picked B1
+    over B1' (MQA n_kv_heads=1) and B2 (d_model=32, d_ff off the
+    4·d_model rule) because the `d_ff = 4·d_model` convention is more
+    load-bearing for "pure depth/width swap" than the GQA ratio.
+    Runner reports the confound alongside the raw val-loss Δ.
+
+    PASS ≤ ctrl − 0.01 (clears the cited ±0.01 box-noise floor).
+    NULL band |Δ| ≤ 0.01 (inclusive — sub-noise = inconclusive,
+    no multi-seed rescue). DRIFT > ctrl + 0.01. ctrl_val baseline
+    6.4306 (`LEADERBOARD.md` row 14) — interpreted against the
+    in-session ctrl run to avoid cross-session drift. Seed 42 only.
+    See `autoresearch/ideas/028-deep-thin-config/plan.md`.
+    """
+    d_model: int = 48
+    n_heads: int = 3
+    n_kv_heads: int = 3
+    n_layers: int = 20
+    d_ff: int = 192
 
 
 @dataclass

@@ -66,6 +66,13 @@ Score the idea against the niche, not against "is it true":
   regardless of how good the paper is.
 - **Crisp bet.** Is there one sharp sentence of "we expect X because Y"? A vibe
   ("try linear attention, see what happens") is a `revise`, not an `accept`.
+- **Transfer.** The screen exists to feed the 135M recipe
+  (`plans/beat-smollm2-135m.md`), so the question is "worth testing AND worth
+  carrying toward 135M?" A lever that plausibly only works at 1M — exploits
+  tiny-vocab/embedding dominance, the 3M-token regime, or anything else that
+  vanishes with scale — is a `reject` even if cheap. Check the idea's
+  `## Scale evidence` and `transfer-risk` tag: `high` risk needs a strong
+  mechanistic argument to pass; a missing tag/section is a `revise`.
 
 You are **not** checking source validity, LoC budget, or the pass/fail numbers —
 the definition gate does that. Stay in your lane: *is this worth it?*

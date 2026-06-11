@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:43:57Z","agent":"taste","idea":"040-adafactor","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:46:38Z","agent":"taste","idea":"040-adafactor","from":"tasting","to":"rejected","round":1,"note":"reject: memory-efficiency mechanism doesn't fire at 0.94M; portfolio crowded by 9 better optimizer bets (031,036,039 cover 'fewer/structured 2nd moments' thesis); info-free either way"}

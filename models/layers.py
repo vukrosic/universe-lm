@@ -28,16 +28,34 @@ class Rotary(nn.Module):
 # Rectified-softmax attention normalization:
 #   softpick(x_i) = relu(exp(x_i) − 1) / (Σ_j |exp(x_j) − 1| + ε)
 # Permits zero total attention mass → kills the attention-sink
-# pathology without adding a learnable sink token. The `exp − 1`
-# op is computed in **fp32** then cast back to model dtype (large
-# positive scores overflow in fp16/bf16). `mask` (bool, broadcast-
-# compatible with `scores`) zeros out both numerator and
+# pathology without adding a learnable sink token. The `exp` is
+# computed in **fp32** with a per-row max-subtraction stability
+# trick (closed-form identity: numerator and denominator both scale
+# by exp(M), so subtracting M = per-row max bounds exp(·) ≤ 1 and
+# the function value is unchanged). Without this trick, scores >
+# ~88 overflow fp32 → relu(inf)/inf = NaN; r2 evidence.md showed
+# mid-training NaN at step 400 from exactly this. `mask` (bool,
+# broadcast-compatible with `scores`) zeros out both numerator and
 # denominator on masked positions — the bug class the spec calls
 # out at `idea.md:32-45`. ε=1e-6 is the paper default, pinned.
 # See `autoresearch/ideas/022-softpick-attention/plan.md`.
 # ============================================================================
 def softpick(scores: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """Rectified-softmax attention normalization.
+    """Rectified-softmax attention normalization (max-stabilized).
+
+    Numerical-stability identity:
+        relu(exp(x) − 1) / Σ_j |exp(x_j) − 1|
+      ≡ relu(exp(x − M) − exp(−M)) / Σ_j |exp(x_j − M) − exp(−M)|
+    for any M (both numerator and denominator scale by exp(M); the
+    relu sign is preserved because exp(x − M) > exp(−M) iff x > 0).
+    We pick M = per-row max over UNMASKED positions, clamped to ≥ 0.
+    Clamping at 0 keeps the identity exact when no positive scores
+    exist (M_true ≤ 0 ⇒ subtracting 0 is a no-op and we recover the
+    original `exp(x) − 1`); when some positive scores exist, the
+    clamp is inactive and we get full overflow safety (exp(x − M) ≤ 1,
+    exp(−M) ≤ 1, both bounded). Fully-masked rows would get
+    M = −inf from masked_fill; the clamp_min(0) forces M = 0 and the
+    mask multiply zeroes the row anyway.
 
     Args:
         scores: attention logits, shape [B, H, T_q, T_k]. T_q may be 1
@@ -53,7 +71,14 @@ def softpick(scores: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> tor
         to ≤ 1 (≤, not ==, because softpick permits zero total mass
         when every score is ≤ 0).
     """
-    z = (scores.to(torch.float32)).exp() - 1.0
+    s = scores.to(torch.float32)
+    # M = per-row max over UNMASKED positions. masked_fill with −inf
+    # keeps the −1e9 sentinel (or any masked-out value) from inflating
+    # M; .amax then ignores those positions. clamp_min(0) preserves
+    # identity when M_true ≤ 0 and prevents the −inf → +inf blow-up
+    # in exp(−M) for a fully-masked row.
+    M = s.masked_fill(~mask, float("-inf")).amax(dim=-1, keepdim=True).clamp_min(0.0)
+    z = (s - M).exp() - (-M).exp()
     m = mask.to(z.dtype)
     num = torch.relu(z) * m
     den = z.abs() * m
@@ -193,6 +218,22 @@ class ChannelScaleNorm(nn.Module):
         return self.weight * (x / rms)
 
 
+class ScaleNorm(nn.Module):
+    """Scalar-gain RMSNorm.
+
+    Keeps the RMS denominator but collapses the learned gain to a single
+    scalar parameter. Identity at init (`g = 1.0`).
+    """
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(()))
+        self.eps = eps
+
+    def forward(self, x):
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return self.weight * (x / rms)
+
+
 class MedianNorm(nn.Module):
     """#96 Divide by the MEDIAN absolute activation — the maximally outlier-
     robust scale (50% breakdown point). Probes the robustness ceiling past L1."""
@@ -214,6 +255,7 @@ _NORM_REGISTRY = {
     "manifold": ManifoldNorm,
     "centeredl1": CenteredL1Norm,
     "channelscale": ChannelScaleNorm,
+    "scalenorm": ScaleNorm,
     "median": MedianNorm,
 }
 
@@ -552,6 +594,16 @@ class MultiHeadAttention(nn.Module):
         # affected; the residual stream norms stay on `norm_type`/
         # `use_layernorm`. See autoresearch/ideas/016-qk-norm/plan.md.
         use_qk_layernorm: bool = False,
+        # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
+        # per-head `nn.LayerNorm(d_head)` on V along `d_head` before the
+        # AV product, symmetric partner of 016's QK-Norm. Bounds the
+        # per-head V vector magnitude so outlier V entries do not
+        # dominate the AV aggregation. Independent module (no weight
+        # sharing with q_norm/k_norm). v_norm_type takes precedence
+        # when also set (explicit > implicit). Default off → no v_norm
+        # module is built; baseline path bit-identical. See
+        # autoresearch/ideas/029-v-norm/plan.md.
+        use_v_layernorm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -676,6 +728,15 @@ class MultiHeadAttention(nn.Module):
         self.use_v_norm = v_norm_type not in ("", "none", None)
         if self.use_v_norm:
             self.v_norm = make_norm(self.d_k, v_norm_type, self.use_layernorm)
+        # 029 — V-Norm override: when `use_v_layernorm=True` and the
+        # closed-#92 v_norm_type is off, build a per-head
+        # `nn.LayerNorm(d_k)` on V (γ=1, β=0 default → identity at
+        # step 0). Mirrors the use_qk_layernorm override above. The
+        # v_norm_type branch above takes precedence when also set
+        # (explicit > implicit — the closed-#92 lever wins).
+        elif use_v_layernorm:
+            self.use_v_norm = True
+            self.v_norm = nn.LayerNorm(self.d_k)
 
         # 013 — CoPE: gate the Rotary construction. When on, RoPE is
         # replaced by a content-aware bias (CoPE) added to the
@@ -1574,6 +1635,19 @@ class MultiHeadAttention(nn.Module):
                     self.ssmax_s.view(1, self.n_heads, 1, 1)
                     * log_n.view(1, 1, seq_len, 1)
                 )
+            # 020 — FoX: per-head learnable causal log-decay added to
+            # logits BEFORE the mask + softmax. Mathematically equivalent
+            # to the multiply-after-softmax + row-renorm form sketched in
+            # the paper (softmax(s) ⊙ exp(log_D) / row_sum = softmax(s +
+            # log_D)) but numerically stable: softmax's max-subtraction
+            # absorbs arbitrarily negative log_D, whereas the post-softmax
+            # multiply underflowed once the gate trained off its identity
+            # init (step ~400 NaN — see r1 evidence.md). Strictly
+            # orthogonal to FIRE (additive on logits) by construction:
+            # both are logit-add levers, but FIRE is position-only while
+            # FoX is per-head, per-token, content-conditional.
+            if self.use_fox:
+                scores = scores + self.fox(x).to(scores.dtype)
             if self.use_sliding_window:
                 window = self._sliding_window_mask[:seq_len, :seq_len]
             else:
@@ -1591,17 +1665,6 @@ class MultiHeadAttention(nn.Module):
                 attn_w = softpick(scores, window.view(1, 1, seq_len, seq_len))
             else:
                 attn_w = torch.softmax(scores, dim=-1)
-            # 020 — FoX: multiplicative decay on probabilities (post-softmax),
-            # then row-renorm. Strictly orthogonal to FIRE (which is additive
-            # on logits). Stacks on top of FIRE: when both flags are on, the
-            # order is scores += fire_bias → softmax → attn_w *= D → row-
-            # renorm. D is causal (lower-tri) and ≤ 1 on init, so a
-            # row-renorm of D * softmax gives a valid attention map. See
-            # `models/fox.py` for the identity-init derivation.
-            if self.use_fox:
-                d = self.fox(x)  # [B, H, T, T], causal, ≤ 1
-                attn_w = attn_w * d
-                attn_w = attn_w / attn_w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
         elif (
@@ -1704,6 +1767,15 @@ class MultiHeadAttention(nn.Module):
                     self.ssmax_s.view(1, self.n_heads, 1, 1)
                     * log_n.view(1, 1, seq_len, 1)
                 )
+            # 020 — FoX: per-head learnable causal log-decay added to
+            # logits BEFORE the mask + softmax (paper's logit-add form,
+            # numerically stable). See the FIRE-branch comment above and
+            # `models/fox.py` for the identity-init derivation. Strictly
+            # orthogonal to the score-side tweaks above (alibi / cosine
+            # / qk_bilinear / cope / ssmax) — they modify content logits;
+            # FoX adds a per-head, per-token, causal cumulative log-decay.
+            if self.use_fox:
+                scores = scores + self.fox(x).to(scores.dtype)
             # ---- Mask (causal / SWA) ----
             scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
             # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
@@ -1715,15 +1787,6 @@ class MultiHeadAttention(nn.Module):
                 )
             # Softmax
             attn_w = torch.softmax(scores, dim=-1)
-            # 020 — FoX: multiplicative decay on probabilities (post-softmax),
-            # then row-renorm. Strictly orthogonal to the score-side tweaks
-            # above (which modify logits, not probs). Manual branch: same
-            # recipe as the FIRE branch. See `models/fox.py` for
-            # identity-init derivation.
-            if self.use_fox:
-                d = self.fox(x)  # [B, H, T, T], causal, ≤ 1
-                attn_w = attn_w * d
-                attn_w = attn_w / attn_w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
             # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
@@ -1944,6 +2007,11 @@ class TransformerBlock(nn.Module):
         # mechanism description. Default off → Q/K stay on RMSNorm,
         # baseline path is bit-identical.
         use_qk_layernorm: bool = False,
+        # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
+        # forward to MHA — see MultiHeadAttention.use_v_layernorm for the
+        # mechanism description. Default off → V stays unnormalized,
+        # baseline path is bit-identical.
+        use_v_layernorm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -2093,6 +2161,9 @@ class TransformerBlock(nn.Module):
             # #16 QK-Norm pass-through: when set, MHA's Q/K norms are
             # LayerNorm (not RMSNorm) — see MultiHeadAttention.use_qk_layernorm.
             use_qk_layernorm=use_qk_layernorm,
+            # 029 — V-Norm pass-through: when set, MHA builds a per-head
+            # `nn.LayerNorm(d_k)` on V — see MultiHeadAttention.use_v_layernorm.
+            use_v_layernorm=use_v_layernorm,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,

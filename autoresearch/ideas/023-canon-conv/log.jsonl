@@ -23,3 +23,4 @@
 {"ts":"2026-06-10T03:32:06Z","agent":"code-rev","idea":"023-canon-conv","from":"needs-codereview","to":"codereviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-10T03:34:06Z","agent":"code-rev","idea":"023-canon-conv","from":"codereviewing","to":"needs-run","round":2,"note":"accept: F1 single-axis A/B verified (dataclass diff = 1 key use_canon_conv); F2 runner scripts exist"}
 {"ts":"2026-06-10T07:59:38Z","agent":"runner","idea":"023-canon-conv","from":"needs-run","to":"running","round":2,"note":"claimed: queued in arq tmux batch with 020-025"}
+{"ts":"2026-06-10T11:46:35Z","agent":"runner","idea":"023-canon-conv","from":"running","to":"done","round":2,"note":"WIN with caveat: trt=6.2581 vs shared fire-ctrl 6.3419 (Δ -0.084); shared fire-ctrl was buggy (use_fire_pe=False dropped from subclass); after stripping FIRE (~0.07 from closed.md 009), Canon effect still ~-0.06 ≫ WIN bar — best candidate of 020-025 cluster for Phase-2"}

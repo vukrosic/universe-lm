@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:49:46Z","agent":"taste","idea":"050-performer","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:52:13Z","agent":"taste","idea":"050-performer","from":"tasting","to":"rejected","round":1,"note":"reject: linear-attention family already falsified at tiny1m3m (004 null, 008/012 taste-reject); Performer is the family parent, crowded with 049/053; no leverage at SWA-bounded short-seq tier"}

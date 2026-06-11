@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:42:45Z","agent":"taste","idea":"036-lamb","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:44:57Z","agent":"taste","idea":"036-lamb","from":"tasting","to":"rejected","round":1,"note":"reject: tier-mismatch (large-batch lever, mechanism doesn't fire at tiny1m3m); crowded optimizer wave; vibe-pitch"}

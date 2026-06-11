@@ -1,0 +1,9 @@
+{"ts":"2026-06-10T23:24:58Z","agent":"taste","idea":"067-confidence-penalty","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:25:24Z","agent":"taste","idea":"067-confidence-penalty","from":"tasting","to":"needs-repitch","round":1,"note":"revise: needs sub-question differentiator vs 010-polyloss null and crisp bet sentence; lever is already pre-wired in configs/output_head_ablations.py:36 — leverage that, don't ignore it"}
+{"ts":"2026-06-10T23:37:38Z","agent":"miner","idea":"067-confidence-penalty","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:40:26Z","agent":"miner","idea":"067-confidence-penalty","from":"repitching","to":"needs-taste","round":2,"note":"applied 4 findings: sub-question (sym vs gold-only), pre-wired lever cited, crisp bet Δ ≤ -0.01 with β=0.01 mechanistic V× gradient arg, head-to-head framing vs 010"}
+{"ts":"2026-06-11T01:25:39Z","agent":"taste","idea":"067-confidence-penalty","from":"needs-taste","to":"needs-review","round":2,"note":"accept: entropy-vs-gold-only distinction is now mechanistic and falsifiable"}
+{"ts":"2026-06-11T01:26:20Z","agent":"taste","idea":"067-confidence-penalty","from":"needs-review","to":"needs-review","round":2,"note":"accept: entropy-vs-gold-only distinction is now mechanistic and falsifiable"}
+{"ts":"2026-06-11T01:34:07Z","agent":"reviewer","idea":"067-confidence-penalty","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-11T01:41:28Z","agent":"code-implementer","idea":"067-confidence-penalty","from":"needs-plan","to":"needs-codereview","round":1,"note":"plan written for pre-wired conf-penalty anchor"}
+{"ts":"2026-06-11T01:41:35Z","agent":"code-reviewer","idea":"067-confidence-penalty","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: pre-wired conf-penalty anchor ready for GPU"}

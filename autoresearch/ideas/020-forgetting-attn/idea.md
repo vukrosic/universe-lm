@@ -1,8 +1,8 @@
 ---
 id: 020-forgetting-attn
-status: running
-round: 1
-updated: 2026-06-10T07:59:38Z
+status: needs-run
+round: 3
+updated: 2026-06-10T12:33:14Z
 ---
 
 # 020 — Forgetting Transformer (per-head learnable decay multiplier)

@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:50:35Z","agent":"taste","idea":"031-adam-mini","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T17:01:14Z","agent":"orchestrator","idea":"031-adam-mini","from":"tasting","to":"needs-taste","round":1,"note":"reclaim stale tasting lock (10m)"}
+{"ts":"2026-06-10T23:24:46Z","agent":"taste","idea":"031-adam-mini","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:25:20Z","agent":"taste","idea":"031-adam-mini","from":"tasting","to":"needs-repitch","round":1,"note":"revise: vibe pitch (\"kind of structured optimizer simplification\"); specify exact block partition (paper's Embed/Output/QK/V/Other or custom); strip throughput claim (irrelevant at 0.94M); address tiny-scale Hessian-similarity risk (~30 tensors vs 7000); frame the informative null"}
+{"ts":"2026-06-10T23:35:36Z","agent":"miner","idea":"031-adam-mini","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:40:27Z","agent":"miner","idea":"031-adam-mini","from":"repitching","to":"needs-taste","round":2,"note":"5 findings applied: concrete bet (null modal, win/loss bands); verbatim paper partition (Q/K/V/O per-head, MLP/Embed/Norm unchanged); throughput stripped; tiny-scale risk addressed (MLP/Embed keep per-element v); informative-null framed (loss kills family for 135M)"}
+{"ts":"2026-06-10T23:48:30Z","agent":"taste","idea":"031-adam-mini","from":"needs-taste","to":"tasting","round":2,"note":"claimed r2"}

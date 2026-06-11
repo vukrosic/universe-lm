@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:48:32Z","agent":"taste","idea":"054-polycom","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:08Z","agent":"taste","idea":"054-polycom","from":"tasting","to":"needs-review","round":1,"note":"accept: unmined FFN-activation axis, identity-init poly composition, 1B+ LLM evidence, informative null"}
+{"ts":"2026-06-10T23:28:49Z","agent":"reviewer","idea":"054-polycom","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:29:47Z","agent":"reviewer","idea":"054-polycom","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise — no pass/fail bar, variant not pinned (PolyReLU vs PolyNorm), control variant unspecified, NaN-stability not discharged, param-parity unstated, scale-evidence headline missing"}
+{"ts":"2026-06-10T23:36:22Z","agent":"reviser","idea":"054-polycom","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:40:26Z","agent":"reviser","idea":"054-polycom","from":"revising","to":"needs-review","round":2,"note":"applied 6 r1 findings: pass/fail bar, pinned PolyNorm-3, gelu control + polycom treatment classes named, 5-pt numerical stability section, param-count parity stated, scale-evidence citation + Reviser note"}
+{"ts":"2026-06-11T01:23:34Z","agent":"reviewer","idea":"054-polycom","from":"needs-review","to":"needs-plan","round":2,"note":"approve: exact paper number pinned and review findings closed"}

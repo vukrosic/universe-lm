@@ -1,8 +1,8 @@
 ---
 id: 026-fire-x-qknorm
-status: needs-review
-round: 1
-updated: 2026-06-10T07:52:10Z
+status: needs-run
+round: 2
+updated: 2026-06-10T12:33:38Z
 transfer-risk: low
 ---
 

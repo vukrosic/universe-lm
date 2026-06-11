@@ -1,0 +1,20 @@
+# Review log — 060 nGPT
+
+## r1 — 2026-06-11 — verdict: revise
+
+- **Missing falsifiable pass/fail bar.** Idea body has only narrative outcomes ("if it works…/if it fails…") — no number tied to a real control. Add a `## Pass/fail bar` section in `idea.md` of the shape "Δval ≤ −0.01 vs `Tiny1M3MConfig` ctrl → WIN; |Δ| < 0.01 → NULL; Δ ≥ +0.01 → fail." Bar must resolve above tiny1m3m box noise (~±0.01); a wider band is unrunnable here.
+- **Spec ambiguity: commit to the subset.** Body says "paper's full version also uses learnable eigen-style update rates; the practical A/B is the normalization core" but never *fixes* the subset. Per taste's directive (`taste.md:11`) and the <200 LoC budget, pick one and write it down in a `## Spec` section: (a) normalize **token embeddings** (row-wise unit norm of `nn.Embedding.weight`), (b) **hidden states** at the residual-stream output of each block, (c) **per-head Q, K** post-RoPE (and the impact on the existing 016 QK-Norm WIN — say whether you stack or replace), (d) **MLP up/down rows**, (e) **output unembed rows**. Explicitly say *what is dropped* (learnable eigen-rates α_A/α_M; sqrt(d_k)-removal in attention; learnable per-vector scale `s_z`). Without this, the code gate cannot plan and the reviewer cannot judge mechanism vs HP next round.
+- **No identity-init ctrl — name the ctrl explicitly.** Taste flagged this (`taste.md:8`). The A/B control is plain `Tiny1M3MConfig` (LEADERBOARD ctrl ≈ 6.4044/6.4091). Write this in the spec: "treatment = nGPT-core (see Spec); ctrl = `Tiny1M3MConfig`; ctrl is NOT identity-init of treatment because hypersphere is a binary constraint." Without naming the ctrl by config class, the runner has no A/B to wire.
+- **Address the LR-rescale question.** Constraining every hidden state to unit norm changes the effective scale the optimizer sees — the paper changes the LR schedule for this reason (their `s_z`/eigen-rates partly compensate). At tiny1m3m the existing Muon/AdamW LRs are tuned for unconstrained scale. Spec must commit: either (i) keep base LR (the bet: norms aren't the dominant noise floor at this scale) or (ii) rescale (say by what factor and cite where in the paper). A silent LR mismatch turns a real null into a fake null.
+- **LoC budget — enumerate sites.** Idea claims fits the <200 LoC bar; back it. Per the codebase: embed normalization touches `models/llm.py` (`MinimalLLM.forward`), residual-state normalization touches `models/llm.py` block loop, Q/K normalization touches `models/layers.py:MultiHeadAttention` (~lines 1294–1645, RoPE region), MLP-row normalization touches `models/layers.py:TransformerBlock` MLP, plus a config flag in `configs/llm_config.py`. Add a one-line LoC estimate per site in the spec so the code gate can sanity-check before planning.
+- **Scale-evidence section: tighten the citation.** `## Scale evidence` currently says "0.5B and 1B language models on OpenWebText" — the arXiv abstract confirms the 4–20× claim *depending on sequence length* but does not enumerate model sizes/dataset on the abstract page. If the 0.5B/1B/OpenWebText figures come from the paper body, cite the section (e.g., "§4 Experiments, OpenWebText, 0.5B/1B"); if not verifiable from a quick read, soften to what the abstract supports. transfer-risk: med is fine — leave it.
+
+Notes for the reviser (not findings):
+- Sibling queue (051/052/055–059 norm cluster) is **not** a duplicate per taste's analysis — nGPT is the only end-to-end manifold-constrainer. No need to re-defend non-duplication; that's settled.
+- Source verifies: arXiv:2410.01131 Loshchilov, Hsieh, Sun, Ginsburg — abstract matches the cited 4–20× claim.
+- Closed-list cross-check: `closed.md` "Norm zoo" axis covers pnorm/manhattan/center/squash/clip/channelscale — none overlap nGPT's full-manifold scheme.
+
+## r2 — 2026-06-11 — verdict: approve
+- The committed nGPT-core subset is now explicit and bounded.
+- The control, learning-rate choice, and pass/fail bar are all pinned to concrete `Tiny1M3MConfig` behavior.
+- The LoC estimate and site breakdown make this ready for planning.

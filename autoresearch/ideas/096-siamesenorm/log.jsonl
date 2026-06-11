@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:23Z","agent":"taste","idea":"096-siamesenorm","from":"needs-taste","to":"needs-review","round":1,"note":"accept: coupled pre/post-norm streams are a real architectural bet"}
+{"ts":"2026-06-11T01:18:16Z","agent":"reviewer","idea":"096-siamesenorm","from":"needs-review","to":"needs-plan","round":1,"note":"approve: coupled pre/post-norm architecture is ready for planning"}

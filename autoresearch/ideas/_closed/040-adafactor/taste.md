@@ -1,0 +1,10 @@
+# Taste log — 040 Adafactor
+
+## r1 — 2026-06-11 — verdict: reject
+- Mechanism doesn't fire at our scale. Adafactor's defining feature is **sublinear-memory v-state via row+col factorization** — a strictly-worse approximation of full AdamW second moments traded for memory savings. At tiny1m3m (0.94M params) the full v fits trivially; we pay the approximation cost with no memory benefit. Niche-fit fails: this is a scale-up tool, not a quality lever.
+- Crisp-bet inversion. The idea pitches "do we get the same gain just from row/col factorization plus clipping?" — but Adafactor's headline claim is **equivalence**, not improvement. "Same gain" already wins the bet for the paper; for us, a non-improvement is exactly what we'd predict, which is an info-free null. There is no "we expect X better than Y because Z" sentence to be made.
+- Portfolio crowding (the "5th optimizer-variant in a row" case the prompt flags). Active needs-taste queue includes 031-adam-mini, 032-adams, 033-sophia, 034-adan, 035-agc (tasting), 036-lamb, 037-lookahead, 038-swan, 039-apollo — nine memory-efficient / structured AdamW variants ahead of this one, several of which (Adam-mini, APOLLO, LAMB) already cover the "fewer/structured second-moment statistics" thesis with stronger transfer-risk profiles and LLM-pretraining evidence post-2024. Adafactor (2018, Transformer translation) is the *oldest* and weakest source-evidence entry in this cluster.
+- Source vintage. T5-era translation evidence; the optimizer is widely used as a memory-saver for >1B models but rarely shows up as a quality optimizer in modern LM pretraining ablations. transfer-risk: med self-tag is honest, but at tiny1m3m the mechanism is structurally absent — not a transfer question, a scale-floor question.
+- Info-value of a null is zero. A null tells us "row/col factorization of v doesn't help at 0.94M" — which is the prior, not news. A win would be surprising but mechanistically unexplained (why would a coarser estimate beat the full one?), giving us no clear next move.
+
+Verdict: reject — wrong tool for parameter-golf, info-free either way, crowded by 9 better optimizer bets in the same queue.

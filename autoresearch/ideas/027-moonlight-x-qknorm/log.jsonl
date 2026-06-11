@@ -1,2 +1,9 @@
 {"ts":"2026-06-10T07:50:20Z","agent":"taste","idea":"027-moonlight-x-qknorm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-10T07:51:27Z","agent":"taste","idea":"027-moonlight-x-qknorm","from":"tasting","to":"needs-review","round":1,"note":"accept: orthogonality test for two proven-WIN parents (015 x 016); high info either way"}
+{"ts":"2026-06-10T11:50:35Z","agent":"reviewer","idea":"027-moonlight-x-qknorm","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-10T11:52:57Z","agent":"code-impl","idea":"027-moonlight-x-qknorm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-10T12:00:59Z","agent":"orchestrator","idea":"027-moonlight-x-qknorm","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (8m)"}
+{"ts":"2026-06-10T12:02:57Z","agent":"code-impl","idea":"027-moonlight-x-qknorm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-10T12:05:08Z","agent":"code-impl","idea":"027-moonlight-x-qknorm","from":"planning","to":"needs-codereview","round":1,"note":"plan+code done: 1 recipe added (Tiny1M3MMoonlightMuonQKNormConfig), 0 LoC in models/optimizers; build-smoke params Δ=+384 matches QK-Norm-alone; differ-from-ctrl: exactly the two flags"}
+{"ts":"2026-06-10T12:15:53Z","agent":"code-rev","idea":"027-moonlight-x-qknorm","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: two-flag stack of closed WINs 015+016; recipe correctly defined; both paths pre-wired; OFF→OFF identity holds; build-smoke matches QK-Norm-alone signature"}
+{"ts":"2026-06-10T12:28:10Z","agent":"runner","idea":"027-moonlight-x-qknorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq (V100 vast 81.45.65.189)"}

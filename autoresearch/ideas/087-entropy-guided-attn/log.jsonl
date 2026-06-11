@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T01:05:40Z","agent":"taste","idea":"087-entropy-guided-attn","from":"needs-taste","to":"needs-review","round":1,"note":"accept: head-diversity regularization is a distinct mechanism"}
+{"ts":"2026-06-11T01:17:26Z","agent":"reviewer","idea":"087-entropy-guided-attn","from":"needs-review","to":"needs-plan","round":1,"note":"approve: head-diversity regularization is ready for planning"}

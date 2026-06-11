@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:49:46Z","agent":"taste","idea":"076-synthesizer","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:50:41Z","agent":"taste","idea":"076-synthesizer","from":"tasting","to":"rejected","round":1,"note":"reject: duplicate of 047-synthesizer (same arXiv:2005.00743, same zero-gated synth branch, filed 2 min earlier); 047 more honestly tags transfer-risk: high"}

@@ -1,0 +1,8 @@
+{"ts":"2026-06-10T16:45:34Z","agent":"taste","idea":"058-fixup","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:49:37Z","agent":"taste","idea":"058-fixup","from":"tasting","to":"needs-repitch","round":1,"note":"revise: bet does not fire at tiny1m3m (Fixup's value is 10000-layer regime, we screen at 6L); reframe to test init recipe with norm kept, or ablate zero-init of last branch linear alone"}
+{"ts":"2026-06-10T23:23:35Z","agent":"miner","idea":"058-fixup","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:28:23Z","agent":"miner","idea":"058-fixup","from":"needs-taste","to":"needs-taste","round":2,"note":"applied 3 findings: reframe to zero-init only (cheapest Fixup ingredient), note the flag is dead code already implemented (zero LoC), sharpen bet so both WIN and NULL outcomes carry distinct signal at 6L"}
+{"ts":"2026-06-10T23:35:36Z","agent":"taste","idea":"058-fixup","from":"needs-taste","to":"needs-review","round":1,"note":"accept: re-pitch fires at 6L via depth-invariant step-0 identity; both WIN and NULL carry distinct signal; zero LoC; mechanically distinct from norm-zoo and 017; dead-code retirement"}
+{"ts":"2026-06-10T23:50:20Z","agent":"reviewer","idea":"058-fixup","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-11T01:08:38Z","agent":"code-implementer","idea":"058-fixup","from":"needs-plan","to":"needs-codereview","round":1,"note":"plan written for the already-implemented zero-init resid ablation"}
+{"ts":"2026-06-11T01:16:36Z","agent":"code-reviewer","idea":"058-fixup","from":"needs-codereview","to":"needs-run","round":1,"note":"accept: code is already implemented and the review now passes"}

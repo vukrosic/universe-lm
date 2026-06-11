@@ -1,0 +1,9 @@
+# Taste log — 080 fastformer
+
+## r1 — 2026-06-11 — verdict: reject
+- Off-niche on regime: Fastformer's claimed payoff is *efficiency on long sequences* via additive global summaries; tiny1m3m is 6L short-context where standard MHA is not the bottleneck — the mechanism does not fire at this tier.
+- transfer-risk: high is correctly tagged, but the idea's own concession ("LM-scale evidence thinner than for the relative-position papers") is exactly the "missing strong mechanistic argument" the taste prompt requires for high-risk bets to pass.
+- Portfolio crowded: 7+ "replace pairwise attention" siblings already at needs-taste (049/079-cosformer, 050-performer, 053-reluformer, 077-fnet, 078-fnetar, 047/076-synthesizer). Per the taste rule, the Nth variant in a family is a reject even if each is individually fine; diversify the queue, do not stack another linear/global-summary bet.
+- Family precedent at our tier: [[004-retnet-retention]] ran NULL, [[008-gated-deltanet]] and [[012-gated-deltanet]] were taste-rejected (off-niche on tier/scale). Fastformer fits the same failure mode — short-context tiny LMs want explicit token-token scoring, and the loop already learned that twice.
+- Info value asymmetric and low: a null at tiny1m3m says "the additive branch didn't learn a signal in 3M tokens through a zero-init gate while FIRE+canon were already eating the lever budget" — it does not generalize to "global-summary attention is wrong". A win would be surprising but the mechanistic case is weak enough that even a positive lift would be hard to attribute.
+- Crisp bet absent: idea hand-waves "strongest replace-pairwise bet in the set" without naming which of {Synthesizer dense/random, Performer kernel approx, FNet Fourier} is being beaten and why; this is the vibe-pitch the prompt rules out.

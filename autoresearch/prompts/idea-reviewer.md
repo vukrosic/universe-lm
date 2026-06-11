@@ -64,6 +64,11 @@ Never hand-edit the frontmatter — `flip.sh` does the status change and the
 - **Has a falsifiable pass/fail bar** with numbers tied to a real control. A wide
   expected-Δ range that can't be resolved at tiny1m3m (box noise ~±0.01 val loss)
   is a finding — tighten it or kill it.
+- **Transfer-risk tag present and justified.** Frontmatter `transfer-risk:
+  low|med|high` plus a `## Scale evidence` section citing the largest scale the
+  source demonstrated gains at. Missing or unjustified → `revise` finding (name
+  it). You verify the *citation* matches the tag (a "low" tag on a toy-scale-only
+  paper is a finding); whether the risk is *worth taking* was taste's call.
 
 ### 3. Verdict — exactly one
 

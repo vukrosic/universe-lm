@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:45:34Z","agent":"taste","idea":"034-adan","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:49:32Z","agent":"taste","idea":"034-adan","from":"tasting","to":"needs-repitch","round":1,"note":"revise: name slot (Muon vs AdamW path in our repo), defend EMA half-life vs 92-step run (AdEMAMix precedent), state expected Δ + what NULL rules out"}
+{"ts":"2026-06-10T23:24:45Z","agent":"miner","idea":"034-adan","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:27:35Z","agent":"miner","idea":"034-adan","from":"needs-taste","to":"needs-taste","round":2,"note":"3 findings applied: named slot (Adan replaces Muon 2D, AdamW 1D unchanged); defended EMA with β3=0.95 sized to 92-step run (AdEMAMix fix); bet −0.01 to −0.03 with NULL ruling out gradient-difference term on matrix-weight path"}
+{"ts":"2026-06-10T23:35:46Z","agent":"taste","idea":"034-adan","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:36:11Z","agent":"taste","idea":"034-adan","from":"tasting","to":"needs-review","round":1,"note":"accept: r1 blockers all closed - slot named (Adan 2D / AdamW 1D / Muon retired), EMA defended (b3=0.95, ~14-step half-life sized to 92 steps), bet sharp (-0.01 to -0.03 vs Muon ctrl); WIN dethrones 015, NULL combines with 001/002/006 to close optimizer-momentum direction structurally"}
+{"ts":"2026-06-11T01:34:08Z","agent":"reviewer","idea":"034-adan","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}

@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:45Z","agent":"taste","idea":"104-post-norm-resharpen","from":"needs-taste","to":"needs-review","round":1,"note":"accept: attention sharpness is a distinct post-norm hypothesis"}
+{"ts":"2026-06-11T01:18:41Z","agent":"reviewer","idea":"104-post-norm-resharpen","from":"needs-review","to":"needs-plan","round":1,"note":"approve: post-norm reshaping is ready for planning"}

@@ -70,6 +70,43 @@ def test_no_nan_or_inf_under_low_precision_cast():
     assert out_bf16.dtype == torch.bfloat16, f"bf16 dtype not preserved: {out_bf16.dtype}"
 
 
+def test_no_nan_under_fp32_exp_overflow():
+    """r2 evidence.md regression — mid-training NaN at step 400.
+
+    fp32's exp overflows at x ≈ 88.7 (max ≈ 3.4e38). Without per-row
+    max subtraction, scores > ~88 produce exp(x) = +inf in fp32 →
+    relu(inf) = inf in the numerator, |inf| = inf in the denominator,
+    inf / inf = NaN downstream. The mask multiply does NOT save this
+    because the overflow happens on UNMASKED entries.
+
+    The stabilized form subtracts M = per-row max ≥ 0 before exp, so
+    exp(x − M) ≤ 1 always — overflow becomes impossible. This test
+    pins the regression: even at scores up to 200 (far past fp32's
+    exp ceiling), softpick must remain finite and produce a valid
+    row-stochastic-or-zero distribution."""
+    torch.manual_seed(42)
+    B, H, T = 2, 4, 8
+    # Scores well past fp32 exp overflow (e^88.7 = fp32 max). At 200
+    # the naive `exp(scores) - 1` would be +inf; the stabilized form
+    # produces exp(scores - max) ≤ 1.
+    scores = torch.randn(B, H, T, T) * 50.0 + 100.0  # mean 100, σ 50 → many > 88
+    assert (scores > 88.7).any(), "test setup: need overflow-regime scores"
+    mask = torch.ones(B, H, T, T, dtype=torch.bool)
+    out = softpick(scores, mask)
+    assert torch.isfinite(out).all(), (
+        f"softpick NaN/Inf under fp32-overflow scores — "
+        f"max score={scores.max().item():.1f}, out max={out.abs().max().item()}"
+    )
+    # All entries finite + non-negative; rows with at least one
+    # positive score should sum to ≈ 1.
+    row_sums = out.sum(dim=-1)
+    assert (row_sums <= 1.0 + 1e-4).all(), f"row sums > 1: {row_sums.max().item()}"
+    assert (row_sums > 1.0 - 1e-4).all(), (
+        f"all scores are positive (mean 100), so each row should sum ≈ 1; "
+        f"got min row sum = {row_sums.min().item()}"
+    )
+
+
 # ----------------------------------------------------------------------------
 # (ii) all-True mask → valid row-stochastic result
 # ----------------------------------------------------------------------------

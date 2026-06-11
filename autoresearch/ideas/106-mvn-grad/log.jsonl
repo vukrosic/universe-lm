@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:48:51Z","agent":"taste","idea":"106-mvn-grad","from":"needs-taste","to":"needs-review","round":1,"note":"accept: variance-normalized gradients with post-normalization momentum"}
+{"ts":"2026-06-11T01:18:41Z","agent":"reviewer","idea":"106-mvn-grad","from":"needs-review","to":"needs-plan","round":1,"note":"approve: variance-normalized gradients are ready for planning"}

@@ -19,9 +19,7 @@ launches and pulls. Raw results land in `remote-results/<date>-vast-<tier>/`.
 
 | Slot | Folder | Run | Run state |
 |---|---|---|---|
-| 1 | `020-forgetting-attn/` | tiny1m3m + FoX, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z, arq queue launched on vast-81.45.65.189) |
-| 2 | `021-value-residual/` | tiny1m3m + V-residual, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z) |
-| 3 | `022-softpick-attention/` | tiny1m3m + softpick, s42, FIRE-equipped baseline | running (claimed 2026-06-10T08:03Z) |
+| — | — | — | **GPU IDLE since 2026-06-10T11:27Z** (arq queue hit QUEUE_DONE; no needs-run candidates to launch) — incident, upstream must push 026-030 through code loops OR runner fills with ctrl variance bracket for 10M/30M tier prep |
 
 > **arq queue (10 jobs, detached tmux) — launched 2026-06-10T08:03:46Z on box vast-81.45.65.189 (V100-PCIE-32GB, compute_cap 7.0):**
 >
@@ -94,6 +92,32 @@ status into this file — that is exactly the drift that breaks the loop.
 | 028 | `028-deep-thin-config/` | Deep-and-thin config: more layers, smaller d_model at fixed ~0.94M param budget (MobileLLM ICML 2024) | +2.7% on benchmarks at 125M per paper |
 | 029 | `029-v-norm/` | V-Norm: per-head LayerNorm on Value projections before AV product (symmetric to QK-Norm 016) | −0.005 to −0.015 or informative null |
 | 030 | `030-unet-skip-sigmoid/` | U-Net skip gates with sigmoid(−1.5) init fix — ~5 LoC fix to existing unet_skip_gates code (modded-nanogpt PR #125) | +1.25% speedrun equivalent |
+| 081 | `081-scale-invariant-attn/` | scale-invariant attention logit transform / p-RoPE | −0.01 to −0.03 or informative null |
+| 082 | `082-diff-transformer/` | differential attention with noise-canceling twin softmax | −0.01 to −0.04 or informative null |
+| 083 | `083-root-optimizer/` | orthogonalized optimizer + soft-threshold outlier suppression | −0.01 to −0.03 or informative null |
+| 084 | `084-peri-ln/` | peri-normalization around sublayers | −0.005 to −0.02 or informative null |
+| 085 | `085-hybridnorm/` | QKV norm in attention + Post-Norm FFN | −0.005 to −0.02 or informative null |
+| 086 | `086-muddformer/` | MUDD residual connections to break bottlenecks | −0.01 to −0.03 or informative null |
+| 087 | `087-entropy-guided-attn/` | entropy-guided head-diversity regularization | −0.005 to −0.02 or informative null |
+| 088 | `088-rodimus/` | linear recurrent attention with DDTS selection | −0.01 to −0.03 or informative null |
+| 089 | `089-pi-attention/` | periodic sparse ring-local + stride-skip fusion | −0.01 to −0.03 or informative null |
+| 090 | `090-tapernorm/` | gated normalization removal with foldable affine tail | −0.005 to −0.02 or informative null |
+| 091 | `091-scale-anchor-loss/` | fixed-target residual scale anchor near logits | −0.005 to −0.015 or informative null |
+| 092 | `092-seednorm/` | input-conditioned normalization scale coefficient | −0.005 to −0.02 or informative null |
+| 093 | `093-derf/` | erf-based pointwise norm replacement | −0.005 to −0.02 or informative null |
+| 094 | `094-keel-highway-postln/` | Post-LN with highway residual connection | −0.01 to −0.03 or informative null |
+| 095 | `095-bhyt/` | bounded tanh Pre-LN alternative with one-time stats | −0.005 to −0.02 or informative null |
+| 096 | `096-siamesenorm/` | dual pre/post-norm streams with shared parameters | −0.005 to −0.02 or informative null |
+| 097 | `097-asentmax/` | adaptive sparse entmax attention for long context | −0.01 to −0.03 or informative null |
+| 098 | `098-lp-qknorm/` | QK geometry via Lp norm family | −0.005 to −0.02 or informative null |
+| 099 | `099-double-p/` | hierarchical top-p sparse attention | −0.01 to −0.03 or informative null |
+| 100 | `100-mud/` | cheaper Muon whitening surrogate | −0.005 to −0.02 or informative null |
+| 101 | `101-trasmuon/` | orthogonalized momentum plus trust-region scaling | −0.005 to −0.02 or informative null |
+| 102 | `102-sf-normuon/` | schedule-free spectral optimizer | −0.005 to −0.02 or informative null |
+| 103 | `103-momentum-streams/` | optimizer-like residual streams inside the model | −0.005 to −0.02 or informative null |
+| 104 | `104-post-norm-resharpen/` | post-norm to counter attention dispersion | −0.005 to −0.02 or informative null |
+| 105 | `105-retrospective-sparse-attn/` | sparse attention that revises old outputs | −0.005 to −0.02 or informative null |
+| 106 | `106-mvn-grad/` | variance-normalized gradients with post-normalization momentum | −0.005 to −0.02 or informative null |
 
 ## PENDING — not yet foldered (migrate on first touch)
 
@@ -149,6 +173,13 @@ record.
 | 2026-06-09 | — | `006-schedule-free-adamw/` | tiny1m3m + SF-AdamW, s42 (vast-34386) | DONE (NULL) | 6.8056 | +0.21 / +0.20 — clear negative |
 | 2026-06-09 | — | `010-polyloss/` | tiny1m3m + PolyLoss, s42 (vast-34386) | DONE (NULL) | 6.5938 | −0.0053 / −0.0112 — inside ctrl-pair gap (0.0059) |
 | 2026-06-09 | — | `011-cautious-lion/` | tiny1m3m + cautious-lion, s42 (vast-34386) | DONE (**WIN**) | 6.3941 | **−0.0312 / −0.0321** ≫ gap 0.0009 — in-session WIN |
+| 2026-06-10 | 1 | `020-forgetting-attn/` | tiny1m3m + FoX, s42 (vast-81.45.65.189, V100) | **FAILED (NaN both runs)** | NaN | needs-recode — FoX row-renorm blow-up at step ~400/732 |
+| 2026-06-10 | 2 | `021-value-residual/` | tiny1m3m + V-residual, s42 (vast-81.45.65.189) | DONE (WIN w/ caveat) | 6.3075 | −0.0344 vs shared fire-ctrl 6.3419 (joint V-res+FIRE vs no-FIRE; shared ctrl buggy) |
+| 2026-06-10 | 3 | `022-softpick-attention/` | tiny1m3m + softpick, s42 (vast-81.45.65.189) | **FAILED (NaN both runs)** | NaN | needs-recode — softpick row-renorm blow-up |
+| 2026-06-10 | — | `023-canon-conv/` | tiny1m3m + Canon, s42 (vast-81.45.65.189) | DONE (WIN w/ caveat) | **6.2581** | **−0.0838** vs shared fire-ctrl 6.3419 (best of day; after stripping FIRE ~−0.07 from 009, Canon effect still ~−0.06 ≫ WIN bar) |
+| 2026-06-10 | — | `024-gated-attention/` | tiny1m3m + gated, s42 (vast-81.45.65.189) | DONE (WIN w/ caveat) | 6.3316 | −0.0953 vs plan-024 ctrl 6.4269 (plan-024 ctrl buggy — no fire); isolated gated effect TBD |
+| 2026-06-10 | — | `025-scalable-softmax/` | tiny1m3m + SSMax, s42 (vast-81.45.65.189) | DONE (WIN w/ caveat) | 6.3359 | −0.0910 vs plan-025 ctrl 6.4269 (TWO bugs: plan-025 ctrl missing use_fire_pe + SSMax trt config missing use_fire_pe); spec'd SSMax+FIRE vs FIRE unmeasured |
+| 2026-06-10 | — | shared fire-ctrl ×2 | `Tiny1M3MVQGainSWAHighRoPE250KConfig + use_fire_pe=True` subclass | ok_but_buggy | 6.3419 / 0.1511 | **WIRING BUG** — subclass override silently dropped `use_fire_pe=False`; 4 -sh reruns (ctrl_fire, ctrl_fire2, 024-gated-sh, 025-ssmax-sh) all produced identical 6.3419 to 4 dp → confirms bug, not noise |
 
 ## Protocol (per-idea folder)
 

@@ -1,8 +1,8 @@
 ---
 id: 029-v-norm
-status: needs-review
+status: running
 round: 1
-updated: 2026-06-10T07:51:36Z
+updated: 2026-06-10T12:28:10Z
 transfer-risk: med
 ---
 

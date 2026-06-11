@@ -1,0 +1,137 @@
+{
+  "results": {
+    "hellaswag": {
+      "name": "hellaswag",
+      "alias": "hellaswag",
+      "sample_len": 5,
+      "acc,none": 0.4,
+      "acc_stderr,none": 0.24494897427831783,
+      "acc_norm,none": 0.4,
+      "acc_norm_stderr,none": 0.24494897427831783
+    }
+  },
+  "group_subtasks": {},
+  "configs": {
+    "hellaswag": {
+      "task": "hellaswag",
+      "dataset_path": "Rowan/hellaswag",
+      "training_split": "train",
+      "validation_split": "validation",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc):\n        ctx = doc[\"ctx_a\"] + \" \" + doc[\"ctx_b\"].capitalize()\n        out_doc = {\n            \"query\": preprocess(doc[\"activity_label\"] + \": \" + ctx),\n            \"choices\": [preprocess(ending) for ending in doc[\"endings\"]],\n            \"gold\": int(doc[\"label\"]),\n        }\n        return out_doc\n\n    return dataset.map(_process_doc)\n",
+      "doc_to_text": "{{query}}",
+      "doc_to_target": "{{label}}",
+      "unsafe_code": false,
+      "doc_to_choice": "choices",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "default",
+        "split": null,
+        "process_docs": "<function process_docs at 0x17f112d40>",
+        "fewshot_indices": null,
+        "samples": null,
+        "doc_to_text": "{{query}}",
+        "doc_to_choice": "choices",
+        "doc_to_target": "{{label}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 0,
+      "metric_list": [
+        {
+          "metric": "acc",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "acc_norm",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "multiple_choice",
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 1.0,
+        "pretrained": "HuggingFaceTB/SmolLM2-135M",
+        "dtype": "float32",
+        "config_source": "/Users/vukrosic/my-life/llm-research-kit-scaling/.lm-eval-src/lm_eval/tasks/hellaswag/hellaswag.yaml"
+      }
+    }
+  },
+  "versions": {
+    "hellaswag": 1.0
+  },
+  "n-shot": {
+    "hellaswag": 0
+  },
+  "higher_is_better": {
+    "hellaswag": {
+      "acc": true,
+      "acc_norm": true
+    }
+  },
+  "n-samples": {
+    "hellaswag": {
+      "original": 10042,
+      "effective": 5
+    }
+  },
+  "config": {
+    "model": "hf",
+    "model_args": {
+      "pretrained": "HuggingFaceTB/SmolLM2-135M",
+      "dtype": "float32"
+    },
+    "model_num_parameters": 134515008,
+    "model_dtype": "torch.float32",
+    "model_revision": "main",
+    "model_sha": "93efa2f097d58c2a74874c7e644dbc9b0cee75a2",
+    "batch_size": "1",
+    "batch_sizes": [],
+    "device": "cpu",
+    "use_cache": null,
+    "limit": 5.0,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": {},
+    "random_seed": 42,
+    "numpy_seed": 42,
+    "torch_seed": 42,
+    "fewshot_seed": 42
+  },
+  "git_hash": "result/screen16m-query-embed-30-66-gc6bb6a3",
+  "date": 1781070481.4773371,
+  "pretty_env_info": "PyTorch version: 2.12.0\nIs debug build: False\nCUDA used to build PyTorch: None\nROCM used to build PyTorch: N/A\n\nOS: macOS 26.5 (arm64)\nGCC version: Could not collect\nClang version: 21.0.0 (clang-2100.1.1.101)\nCMake version: version 3.31.3\nLibc version: N/A\n\nPython version: 3.12.8 | packaged by Anaconda, Inc. | (main, Dec 11 2024, 10:37:40) [Clang 14.0.6 ] (64-bit runtime)\nPython platform: macOS-26.5-arm64-arm-64bit\nIs CUDA available: False\nCUDA runtime version: No CUDA\nCUDA_MODULE_LOADING set to: N/A\nGPU models and configuration: No CUDA\nNvidia driver version: No CUDA\ncuDNN version: No CUDA\nIs XPU available: False\nHIP runtime version: N/A\nMIOpen runtime version: N/A\nIs XNNPACK available: True\nCaching allocator config: N/A\n\nCPU:\nApple M4\n\nVersions of relevant libraries:\n[pip3] numpy==2.4.6\n[pip3] torch==2.12.0\n[conda] numpy                     2.2.5                    pypi_0    pypi\n[conda] torch                     2.8.0                    pypi_0    pypi\n[conda] torchao                   0.13.0                   pypi_0    pypi\n[conda] torchdata                 0.11.0                   pypi_0    pypi\n[conda] torchtune                 0.6.1                    pypi_0    pypi\n[conda] torchvision               0.23.0                   pypi_0    pypi\n[conda] vuktorch                  0.1.0                    pypi_0    pypi",
+  "transformers_version": "5.10.2",
+  "lm_eval_version": "0.4.12",
+  "upper_git_hash": "eb726254d8cec99a4170906d1543af0cd2750f69",
+  "tokenizer_pad_token": [
+    "<|endoftext|>",
+    "0"
+  ],
+  "tokenizer_eos_token": [
+    "<|endoftext|>",
+    "0"
+  ],
+  "tokenizer_bos_token": [
+    "<|endoftext|>",
+    "0"
+  ],
+  "eot_token_id": 0,
+  "max_length": 8192,
+  "task_hashes": {
+    "hellaswag": "f4eb8d2d48b26442a463a14c927ef8fe8f3de1b1fe37f42ad0afbe82308727f7"
+  },
+  "model_source": "hf",
+  "model_name": "HuggingFaceTB/SmolLM2-135M",
+  "model_name_sanitized": "HuggingFaceTB__SmolLM2-135M",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": null,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "total_evaluation_time_seconds": "174.12065654201433"
+}

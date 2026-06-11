@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:49:13Z","agent":"taste","idea":"053-reluformer","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:51:58Z","agent":"taste","idea":"053-reluformer","from":"tasting","to":"rejected","round":1,"note":"reject: redundant with 022 softpick (running r3, sharper spec, same rectified-attention family); paper evidence is long-seq translation not LM pretraining (transfer-risk: high admitted); queue saturated with attention-activation variants"}

@@ -1,8 +1,8 @@
 ---
 id: 022-softpick-attention
 status: running
-round: 2
-updated: 2026-06-10T07:59:38Z
+round: 3
+updated: 2026-06-10T12:28:10Z
 ---
 
 # 022 — Softpick (rectified-softmax attention, sink-free normalization)

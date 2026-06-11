@@ -206,10 +206,17 @@ folder** (the pipeline-side record; `results.json` holds the raw data):
 ## Verdict: <WIN | NULL>
 - tier: tiny1m3m, seed 42, box: <host>
 - control val: <x>   treatment val: <y>   Δ: <y−x>
+- bpb: <bits-per-byte on the held-out slice, per plans/benchmark-protocol.md;
+  write `n/a (pending harness)` if not yet computable — never omit the line>
 - pass/fail bar: <copied from plan.md>  → <met | not met>
 - box check: ctrl <x> vs leaderboard <z> (<within noise | DRIFT>)
 - raw: remote-results/<dir>/results.json (logs alongside)
 - date: <YYYY-MM-DD>
+
+## Transfer note
+<one paragraph: the mechanistic reason this gain should or shouldn't survive to
+135M (see the idea's `## Scale evidence` + transfer-risk tag). Phase-2 tier
+decisions read this — write it for WIN and NULL alike.>
 ```
 
 Then flip (using the **two-ctrl** rule from §2 — `ctrl` and `ctrl2`):

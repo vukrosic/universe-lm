@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:46:13Z","agent":"taste","idea":"049-cosformer","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:50:55Z","agent":"taste","idea":"049-cosformer","from":"tasting","to":"rejected","round":1,"note":"reject: linear-attention family closed (004 NULL, 008/012 taste-reject); dup of 079-cosformer same paper same round"}

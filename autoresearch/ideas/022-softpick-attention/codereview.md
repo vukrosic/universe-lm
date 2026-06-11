@@ -1,5 +1,187 @@
 # Code-review log — 022 softpick-attention
 
+## r3 — 2026-06-10 — verdict: accept
+
+**Round 3, forced call** (3-round cap: accept or reject only). Recoded after
+the r2 NaN at step ~400/732 (`evidence.md` — both runs `022-soft.log` and
+`022-soft-r.log`). Implementer's fix is a closed-form numerical-stability
+identity, NOT a spec change.
+
+**Identity is mathematically correct.** Verified algebraically + empirically:
+
+```
+relu(exp(x − M) − exp(−M))            = exp(−M) · relu(exp(x) − 1)
+|exp(x − M) − exp(−M)|                = exp(−M) · |exp(x) − 1|
+```
+
+Both numerator and denominator scale by `exp(−M)`, so the ratio is invariant
+under any M (`exp(−M) > 0` preserves the relu sign). The implementer picks
+`M = amax(scores over UNMASKED) clamp_min 0`:
+
+- `M_true ≤ 0` ⇒ clamp activates, subtracting 0 is a no-op, formula reduces
+  to `exp(x) − 1` exactly (safe because `x ≤ 0` ⇒ `exp(x) ≤ 1`, no overflow).
+- `M_true > 0` ⇒ clamp inactive, `exp(x − M) ≤ 1` AND `exp(−M) ≤ 1`, both
+  bounded, fp32 overflow becomes impossible at any score magnitude.
+- Fully-masked row: `masked_fill(−inf)` ⇒ `amax = −inf` ⇒ `clamp_min(0) ⇒ 0`,
+  then mask-multiply zeroes the row. No NaN, no division by 0.
+
+**Empirical agreement & overflow check** (manual run against a naive
+reference at `models/layers.py:74-85`):
+
+| input | naive | stable | ok? |
+|---|---|---|---|
+| randn × 5.0, causal mask | finite | finite, max-diff 1.13e-6 | ✓ identical up to fp32 precision noise |
+| scores=[95.0, 0, 0] | NaN | [≈1.0, 0, 0] | ✓ stable recovers correct (only positive ⇒ all mass) |
+| fully-masked row | — | 0 | ✓ no NaN |
+| all-neg scores | finite | identical (max-diff 0.0) | ✓ clamp-min(0) is a no-op as designed |
+
+**Tests are green.** `pytest tests/test_softpick.py -v` → 9/9 pass on the
+local box (8 prior + new `test_no_nan_under_fp32_exp_overflow` which plants
+scores ~mean 100 σ 50 — many > fp32 exp ceiling 88.7 — and asserts the
+stable form stays finite with row-sums ≈ 1).
+
+**Spec faithfulness re-checked:**
+
+- *Helper math* (`models/layers.py:74-85`) — `s.fp32`, `M = max over unmasked
+  ≥ 0`, `z = exp(s − M) − exp(−M)`, `num = relu(z) · m`, `den = |z| · m`,
+  return `num / (sum(den, dim=−1) + ε)` cast back to model dtype. ε=1e-6
+  pinned, fp32 cast pinned, mask multiplied into BOTH numerator and
+  denominator. Functionally identical to the spec's
+  `relu(exp(x) − 1) / Σ|exp(x) − 1|` at every input; differs only in being
+  overflow-safe. No mechanism change.
+- *Swap site* (`models/layers.py:1642-1650`) — single `if self.use_softpick:`
+  in the FIRE manual-attention branch, calls
+  `softpick(scores, window.view(1,1,T,T))` reusing the same `window`
+  tensor that already produced `masked_fill(−1e9)` (so the softpick mask
+  matches the causal/SWA mask exactly). Else branch is the original
+  `torch.softmax(scores, dim=-1)` — identity-when-off holds.
+- *OR-list defensive fallback* (`models/layers.py:1660`) — `or
+  self.use_softpick` present with comment noting the swap site is the FIRE
+  branch above; a non-FIRE path with `use_softpick=True` falls back to
+  plain softmax (the spec's intended behavior).
+- *Flag wiring* end-to-end (verified line-by-line):
+  `configs/llm_config.py:190` (LLMConfig) →
+  `models/llm.py:228` (LLM.__init__ getattr) →
+  `models/llm.py:376` (Block kwarg) →
+  `models/layers.py:2070` (Block.__init__ kwarg) →
+  `models/layers.py:2127` (Block→MHA pass-through) →
+  `models/layers.py:532, 751` (MHA kwarg + stored on self). No constructed
+  module on the off-path ⇒ bit-identical baseline.
+- *Trt config* (`configs/llm_config.py:918-945`)
+  `Tiny1M3MSoftpickOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig)` —
+  parent is the FIRE-equipped 009-WIN config; only two overrides
+  (`use_fire_pe=True`, `use_softpick=True`). Verified empirically:
+  `use_value_embed=True`, `use_q_gain=True`, `use_sliding_window=True`,
+  `sliding_window_size=512`, `rope_base=250000` all agree with the ctrl;
+  only `use_fire_pe` (False on the bare ctrl class, set at runtime per
+  plan) and `use_softpick` differ. MRO confirms parent chain. Exported
+  from `configs/__init__.py:14, 111`.
+- *LoC budget* — softpick-helper diff against r2: +28 LoC (mostly comments
+  explaining the identity); active code remains ~7 LoC inside the helper.
+  New regression test +35 LoC. Total softpick active code: well under the
+  50-LoC cap and the 200-LoC ceiling.
+- *No HP drift in the softpick code path.* LR/schedule/init/seed
+  untouched. Only changes are inside the softpick helper and the new
+  regression test.
+- *Coordination.* The diff includes the parallel agent's FoX move
+  (post-softmax multiply → logit-add at `models/layers.py:1621-1633,
+  1753-1759`) and 029 V-Norm wiring. The FoX move is at lines 1632 and
+  1757 — adjacent to but not inside the softpick swap site at line 1647;
+  the softpick helper at line 43 is untouched by parallel work. No
+  reverts, no stomps. Untouched: `models/llm.py`, `configs/llm_config.py`
+  softpick lines.
+
+**Carry-over from r2 codereview** (still hold, no new findings):
+- Identity-when-off holds (off-path on `torch.softmax`, no new ops).
+- Step-0 smoke gate passes (test_step0_finite_loss_and_nonzero_qkv_grads).
+- Mask interaction correct (test_mask_does_not_pollute_denominator,
+  test_masked_mask_zeroes_denominator_term).
+
+**3-round cap context.** Round 3 forces accept or reject. The recode is a
+mathematically-exact stability fix with empirical agreement to naive on
+safe inputs and correct behavior in the overflow regime that NaN'd r2.
+Re-running this trt against the FIRE-equipped ctrl now exercises the
+mechanism rather than the bug. Accept.
+
+---
+
+## r2 — 2026-06-10 — verdict: accept
+
+**r1 blocking finding (parent-class HP drift) is fully fixed.** Empirical
+verification (instantiated `Tiny1M3MSoftpickOnFireConfig` and
+`Tiny1M3MVQGainSWAHighRoPE250KConfig`, walked the MRO and field-by-field
+diff):
+
+- `type(trt).__mro__[1].__name__ == "Tiny1M3MVQGainSWAHighRoPE250KConfig"` ✓
+- `use_value_embed=True`, `use_q_gain=True`, `use_sliding_window=True`,
+  `sliding_window_size=512`, `rope_base=250000` — all agree ctrl↔trt ✓
+- `use_fire_pe` is `False` on the ctrl class and `True` on the trt class;
+  this is the by-design runtime pattern (`plan.md:185-186` — ctrl gets FIRE
+  at runtime, trt has it baked into the class) and matches how 020-FoX
+  handles the same offset. Not a drift.
+- `use_softpick` is the only lever delta. ✓
+
+**Tests are green.** `python -m pytest tests/test_softpick.py -v` →
+8/8 pass on the local box (test_softpick.py::test_no_nan_or_inf_random_input,
+test_no_nan_or_inf_under_low_precision_cast,
+test_all_true_mask_row_sums_le_one_with_positive_scores,
+test_all_nonpos_scores_yield_zero_mass,
+test_step0_finite_loss_and_nonzero_qkv_grads,
+test_mask_does_not_pollute_denominator,
+test_masked_mask_zeroes_denominator_term,
+test_use_softpick_false_runs_softmax_unchanged).
+
+**Spec faithfulness re-checked (r1's non-blocking observations still hold):**
+
+- *Helper math* (`models/layers.py:39-60`) — `z = exp(scores.fp32) − 1`,
+  `num = relu(z) * m`, `den = |z| * m`, `out = num / (den.sum(−1)+ε)`
+  cast back to model dtype. ε=1e-6 default pinned, fp32 cast pinned,
+  mask multiplied into BOTH numerator and denominator. Matches
+  `idea.md:18-28` and the `idea.md:30-44` mask-interaction fix.
+- *Swap site* (`models/layers.py:1590-1593`) — single `if self.use_softpick:`
+  branch in the FIRE manual-attention path, calls
+  `softpick(scores, window.view(1,1,T,T))` reusing the same `window`
+  tensor already used for `masked_fill(−1e9)` (so the mask and the
+  softpick mask are exactly the same). The else branch is the original
+  `torch.softmax` — identity-when-off holds, no reordering, no new ops.
+- *OR-list defensive fallback* (`models/layers.py:1614`) — added
+  `or self.use_softpick` with a comment that the swap site is the
+  FIRE branch above; a non-FIRE path with `use_softpick=True` falls back
+  to plain softmax, which is the spec's intended behavior.
+- *Flag wiring* end-to-end: `configs/llm_config.py:190` (LLMConfig) →
+  `models/llm.py:228` (getattr) → `models/llm.py:370` (Block kwarg) →
+  `models/layers.py:2019` (Block kwarg) → `models/layers.py:2076`
+  (pass to MHA) → `models/layers.py:507, 707` (MHA kwarg + stored).
+  No new module; off-path is bit-identical.
+- *Trt config* (`configs/llm_config.py:855-882`) — dataclass with
+  parent = `Tiny1M3MVQGainSWAHighRoPE250KConfig`, only two overrides
+  (`use_fire_pe=True`, `use_softpick=True`). Docstring names the
+  parent-class choice, the 009 WIN anchor, the lever's category, and
+  the step-0 smoke gate.
+- *LoC budget* — non-test softpick-only diff is ~30 LoC active code
+  (helper ~10, swap site 4, OR-list 1, flag plumbing ~10, trt config
+  ~3, comments heavy). Well under the 50-LoC cap and the 200-LoC
+  ceiling. Test file is 283 LoC but doesn't count.
+- *No silent HP drift in the softpick code path.* No LR / schedule /
+  init / seed changed. The only drift was the r1 parent-class
+  inheritance, which is now fixed.
+- *Coordination* — the diff includes 020/023/024/025 wiring from the
+  parallel agent; no reverts or stomps. Softpick-only diff is the
+  helper, the swap site, the OR-list entry, the flag plumbing, and the
+  new config class. No collisions.
+
+**One-thing-I-would-track-but-not-block:** the spec describes the
+softpick normalizer as one-line, but the actual diff is ~30 LoC of
+active code plus ~50 LoC of comments / design notes. Comments are
+useful (they explain the mask-interaction fix and the FIRE-branch
+constraint) and are not on the LoC budget; mentioning it for the
+record so a future `simplify` pass can decide whether to compress.
+
+**Round 2, accept allowed.** Frontmatter `round: 2` — the 3-round cap
+permits accept/reject/revise, and there's nothing left to revise.
+
+---
+
 ## r1 — 2026-06-10 — verdict: revise
 
 ### 🔴 BLOCKING — silent ctrl/trt recipe drift (the A/B is malformed as wired)

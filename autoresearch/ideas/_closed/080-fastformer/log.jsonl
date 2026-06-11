@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T16:48:24Z","agent":"taste","idea":"080-fastformer","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:50:35Z","agent":"taste","idea":"080-fastformer","from":"tasting","to":"rejected","round":1,"note":"reject: off-niche on regime (additive global-summary fires on long-seq efficiency, we are 6L short-ctx); transfer-risk high without strong mechanistic argument; 7+ replace-attention siblings already at needs-taste; family precedent (004 null, 008/012 taste-reject)"}

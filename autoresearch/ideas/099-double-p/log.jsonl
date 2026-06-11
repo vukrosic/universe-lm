@@ -1,0 +1,2 @@
+{"ts":"2026-06-11T00:49:23Z","agent":"taste","idea":"099-double-p","from":"needs-taste","to":"needs-review","round":1,"note":"accept: hierarchical sparse attention is distinct and efficiency-heavy"}
+{"ts":"2026-06-11T01:18:17Z","agent":"reviewer","idea":"099-double-p","from":"needs-review","to":"needs-plan","round":1,"note":"approve: hierarchical top-p sparse attention is ready for planning"}

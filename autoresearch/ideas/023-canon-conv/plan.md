@@ -7,10 +7,15 @@
   next to the `use_softpick` plumbing), and into
   `TransformerBlock.__init__` (new kwarg) — see §Change for the
   construction and forward-pass sites.
-- Trt config class: `Tiny1M3MCanonOnFireConfig(Tiny1M3MConfig)`
-  (`configs/llm_config.py`, new class right after
-  `Tiny1M3MSoftpickOnFireConfig` at `:793-814`) with
+- Trt config class:
+  `Tiny1M3MCanonOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig)`
+  (`configs/llm_config.py:911-939`) with
   `use_fire_pe: bool = True` and `use_canon_conv: bool = True`.
+  Parent is the ctrl recipe so VQ-gain + SWA(512) + RoPE 250K
+  carry over identically — the A/B differs on the single axis
+  `use_canon_conv` (verified: `dataclasses.asdict(trt) vs
+  dataclasses.asdict(ctrl_replaced_use_fire_pe=True)` yields
+  exactly 1 differing key, `use_canon_conv`).
 - New module: `models/canon_conv.py:CanonConv` (depthwise
   `nn.Conv1d(d_model, d_model, kernel_size=3, padding=0,
   groups=d_model, bias=False)` + scalar `nn.Parameter(torch.zeros(1))`
@@ -89,29 +94,27 @@ class CanonConv(nn.Module):
 
 ### `configs/llm_config.py`
 - Add `use_canon_conv: bool = False` to `LLMConfig` (next to
-  `use_softpick` at `:190`).
-- Add `Tiny1M3MCanonOnFireConfig` (after
-  `Tiny1M3MSoftpickOnFireConfig` at `:793-814`), mirroring the
-  022 config shape:
+  `use_softpick` at `:217`).
+- Add `Tiny1M3MCanonOnFireConfig` (after `Tiny1M3MSSMaxConfig` at
+  `:911-939`) inheriting from `Tiny1M3MVQGainSWAHighRoPE250KConfig`
+  (mirrors `Tiny1M3MSoftpickOnFireConfig` at `:855-882`) so VQ-gain
+  + SWA(512) + RoPE 250K carry over from the ctrl recipe — A/B
+  isolates the `use_canon_conv` swap and nothing else:
   ```python
   @dataclass
-  class Tiny1M3MCanonOnFireConfig(Tiny1M3MConfig):
+  class Tiny1M3MCanonOnFireConfig(Tiny1M3MVQGainSWAHighRoPE250KConfig):
       """Tiny1M3M with FIRE + Canon conv (gated depthwise causal Conv1d).
 
-      A/B vs the FIRE-equipped baseline (the 009 WIN signature, val
-      6.3234 per `closed.md:40`). The treatment stacks
-      `use_canon_conv=True` on top: one causal depthwise Conv1d
-      (kernel=3) per block on the residual stream, immediately
-      before the attention sublayer's pre-LN, with a single scalar
-      output gate `g` (init 0 → step-0 ≡ no-conv baseline). Pre-LN
-      read (no extra LN on the conv path). Strictly orthogonal to
-      FIRE (additive on logits) and to CoPE/FoX/Softpick (all inside
-      attention); this is an *outside-attention* local-mixing lever
-      on the residual stream.
+      A/B vs the FIRE-equipped baseline (val 6.3234 per `closed.md:40`).
+      Parent is `Tiny1M3MVQGainSWAHighRoPE250KConfig` so VQ-gain +
+      SWA(512) + RoPE 250K carry over from the ctrl recipe — the A/B
+      isolates the canon-conv swap (one depthwise causal Conv1d per
+      block on the residual stream) on top of the same FIRE-equipped
+      foundation, not silent HP drift. Single scalar output gate `g`
+      init 0 → step-0 ≡ no-conv baseline.
 
       PASS ≤ −0.01 vs the FIRE-equipped ctrl. NULL band |Δ| ≤ 0.01.
-      DRIFT > +0.01. See
-      `autoresearch/ideas/023-canon-conv/plan.md`.
+      DRIFT > +0.01.
       """
       use_fire_pe: bool = True
       use_canon_conv: bool = True
@@ -218,15 +221,33 @@ Six invariants (the spec's (d), (e), and four smoke gates):
   already saturates the local-mixing benefit at this scale; a
   separate DWConv on the residual stream is sub-threshold at
   tiny1m3m depth/length."
-- **Known A/B-axis confound (precedent)**: the trt class
-  inherits from `Tiny1M3MConfig` (mirroring
-  `Tiny1M3MFOXOnFireConfig`/`CoPEOnFire`/`SoftpickOnFire`),
-  while the ctrl is `Tiny1M3MVQGainSWAHighRoPE250KConfig +
-  use_fire_pe`. The two recipes differ in
-  `use_value_embed`/`use_q_gain`/`use_sliding_window`/
-  `rope_base`. This confound is the existing 020/021/022 pattern
-  — flagged here for transparency; matching the precedent so the
-  canon-conv result is comparable to its siblings.
+- **Known A/B-axis confound (precedent)**: resolved in r2 per
+  codereview F1. The trt class now inherits from
+  `Tiny1M3MVQGainSWAHighRoPE250KConfig` (mirroring the r2 fix to
+  `Tiny1M3MSoftpickOnFireConfig` at `configs/llm_config.py:856`),
+  so VQ-gain / SWA(512) / RoPE 250K carry over from the ctrl recipe
+  and the A/B differs on a single axis (`use_canon_conv`). Verified
+  by `dataclasses.asdict(trt)` vs `asdict(ctrl_with_use_fire_pe=True)`
+  → exactly 1 differing key (`use_canon_conv`).
+
+## Recode log (r1 → r2)
+- **F1** (silent multi-axis HP drift): fixed at
+  `configs/llm_config.py:912` — parent class changed from
+  `Tiny1M3MConfig` to `Tiny1M3MVQGainSWAHighRoPE250KConfig`. The
+  4 axes that previously diverged
+  (`use_value_embed`/`use_q_gain`/`use_sliding_window`/`rope_base`)
+  now carry over identically from the ctrl. Single-axis A/B verified
+  via dataclass diff (see "Known A/B-axis confound" above).
+- **F2** (runner harness scripts missing): fixed — `_arq_023.py`
+  and `_arq_023_ctrl.py` exist at the repo root, both forwarding to
+  `train_llm.py --config_class __main__.C --seed 42 --dataset_path
+  processed_data/pretrain_1B --warmup false`. trt:
+  `class C(Tiny1M3MCanonOnFireConfig): pass`. ctrl:
+  `class C(Tiny1M3MVQGainSWAHighRoPE250KConfig): use_fire_pe: bool = True`.
+  Mirror the 020 precedent (`_arq_020.py` / `_arq_020_ctrl.py`).
+- Tests still green: `pytest tests/test_canon_conv.py -v` → 6/6
+  passed (no-NaN, causality, step-0 identity, wiring-live,
+  block step-0, placement).
 
 ## Self-check (per code-implementer.md §5)
 - [x] Flag-off path: `CanonConv` is not instantiated (`if

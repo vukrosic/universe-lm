@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T23:26:42Z","agent":"taste","idea":"068-unlikelihood","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:27:37Z","agent":"taste","idea":"068-unlikelihood","from":"tasting","to":"rejected","round":1,"note":"reject: paper itself maintains perplexity; our val-loss screen cannot detect the intended generation-quality lever"}

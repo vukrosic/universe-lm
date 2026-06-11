@@ -1,0 +1,7 @@
+{"ts":"2026-06-10T16:49:54Z","agent":"taste","idea":"074-transformer-xl","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-10T16:52:34Z","agent":"taste","idea":"074-transformer-xl","from":"tasting","to":"needs-repitch","round":1,"note":"revise: segment undef, RoPE/FIRE collision, no crisp bet, family-precedent 008/012"}
+{"ts":"2026-06-10T23:24:08Z","agent":"miner","idea":"074-transformer-xl","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-10T23:26:21Z","agent":"miner","idea":"074-transformer-xl","from":"repitching","to":"needs-taste","round":2,"note":"4 findings applied: chunk=512 defined, RoPE-extend (no Shaw bias), crisp bet -0.01..-0.04, family-distinct from 008/012/004"}
+{"ts":"2026-06-10T23:40:26Z","agent":"taste","idea":"074-transformer-xl","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-10T23:41:11Z","agent":"taste","idea":"074-transformer-xl","from":"tasting","to":"needs-review","round":1,"note":"accept: r2 closes all r1 gaps (segment defined, RoPE-extend, crisp -0.01..-0.04 bet, family-distinct from 008/012/004); composes with FIRE/V-res/Canon; identity at step 0; informative null closes memory-recurrence branch"}
+{"ts":"2026-06-11T01:21:40Z","agent":"reviewer","idea":"074-transformer-xl","from":"needs-review","to":"needs-plan","round":1,"note":"approve: fixed-stride detached cache is ready for planning"}

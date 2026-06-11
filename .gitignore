@@ -305,3 +305,7 @@ tmp/
 # Re-generate with `python scratch/make_graphs.py` from the unzipped
 # Kaggle metrics tree under scratch/results/.
 scratch/
+
+# local eval harness (vendored src + venv, do not commit)
+.lm-eval-src/
+.venv-lm-eval/
