@@ -4,7 +4,7 @@ Vuk Rosić
 
 We swapped one component (the positional encoding) in a tiny language model and validation loss improved:
 
-![FIRE vs two controls - val loss over training](charts/curves_fire_vs_ctrl.png)
+![FIRE vs two controls - val loss over training](../charts/curves_fire_vs_ctrl.png)
 
 Before spending serious GPU money on a training trick, you can test it on a model so small that one experiment costs about two minutes on a cheap rented GPU.
 
@@ -99,7 +99,7 @@ The eighth slot is the **control bracket** itself - two back-to-back baseline ru
 
 2 wins, 4 nulls, 1 clear negative. Treatments and controls were run on the same physical box in the same session; the gap column is `|ctrl_a − ctrl_b|` for that session.
 
-![Delta val_loss vs ctrl-pair mean for the 8 ideas](charts/delta_bars_now.png)
+![Delta val_loss vs ctrl-pair mean for the 8 ideas](../charts/delta_bars_now.png)
 
 The nulls and the negative are in the same chart on purpose. They are what makes the screen credible.
 

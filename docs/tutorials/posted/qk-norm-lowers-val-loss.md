@@ -2,7 +2,7 @@
 
 We added this trick to a model and validation loss improved:
 
-![QK-norm loss curve](images/qk-norm-loss-curve.png)
+![QK-norm loss curve](../images/qk-norm-loss-curve.png)
 
 **Author:** Vuk Rosić
 
@@ -12,7 +12,7 @@ That keeps attention scores from getting too sharp or too flat.
 A steadier score range gives softmax more room to choose.
 The change stays local to attention, so the rest of the model can stay the same.
 
-![QK-norm diagram](images/qk-norm-layernorm-diagram.png)
+![QK-norm diagram](../images/qk-norm-layernorm-diagram.png)
 
 On the tiny tier, with seed 42, 3,000,000 training tokens, a Tesla V100, and a 20M-token slice of `vukrosic/blueberry-1B-pretrain`, `Tiny1M3MQKNormConfig` beat `Tiny1M3MConfig` from 6.4216 to 6.3828.
 That is a delta of -0.0388.

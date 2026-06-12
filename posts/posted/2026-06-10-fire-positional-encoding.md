@@ -4,7 +4,7 @@ Vuk Rosić
 
 We added this trick to a small language model and validation loss improved:
 
-![FIRE vs two controls - val loss over training](charts/curves_fire_vs_ctrl.png)
+![FIRE vs two controls - val loss over training](../charts/curves_fire_vs_ctrl.png)
 
 When a language model reads text, every word looks back at all the words before it and decides how much each one matters.
 
@@ -30,7 +30,7 @@ So the extra number it adds gets weaker the further apart two words are.
 
 That rule is a simple ramp from 1 down to 0.
 
-![FIRE's fixed distance kernel](charts/fire_kernel.png)
+![FIRE's fixed distance kernel](../charts/fire_kernel.png)
 
 This ramp is fixed, not learned.
 
@@ -48,7 +48,7 @@ FIRE handles this by letting each word raise or lower its own number.
 
 The model learns, from data, which words deserve the boost. Nobody tells it which ones.
 
-![Fixed ramp vs content-modulated FIRE bias](charts/fire_bias_heatmap.png)
+![Fixed ramp vs content-modulated FIRE bias](../charts/fire_bias_heatmap.png)
 
 Left: the fixed ramp, same for every input.
 

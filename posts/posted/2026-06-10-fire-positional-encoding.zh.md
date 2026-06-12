@@ -4,7 +4,7 @@ Vuk Rosić
 
 我们把这个小技巧加进了一个小语言模型，验证集损失改善了：
 
-![FIRE 与两个对照组的对比 - 验证损失随训练的变化](charts/curves_fire_vs_ctrl.png)
+![FIRE 与两个对照组的对比 - 验证损失随训练的变化](../charts/curves_fire_vs_ctrl.png)
 
 语言模型读句子的时候，每个词都会回头看它前面所有的词，然后决定每个词有多重要。
 
@@ -30,7 +30,7 @@ FIRE 有一个常识作为起点：靠得近的词通常互相有关联，靠得
 
 这条规则就是一条简单的从 1 到 0 的斜坡。
 
-![FIRE 的固定距离核](charts/fire_kernel.png)
+![FIRE 的固定距离核](../charts/fire_kernel.png)
 
 这条斜坡是固定的，不参与学习。
 
@@ -48,7 +48,7 @@ FIRE 的处理办法是让每个词自己可以调高或调低它自己的那个
 
 模型从数据里学到哪些词值得被加强。没人告诉它该挑哪些。
 
-![固定斜坡与按内容调整的 FIRE 偏置对比](charts/fire_bias_heatmap.png)
+![固定斜坡与按内容调整的 FIRE 偏置对比](../charts/fire_bias_heatmap.png)
 
 左边：固定斜坡，对所有输入都一样。
 
