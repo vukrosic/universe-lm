@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Generate a credited, reproducible paper draft from token2science runs.
+"""Generate paper drafts and manage paper projects for token2science.
 
-Usage:
+Legacy usage:
   python paper.py --goal GOAL_ID [--me HANDLE]
 
-The script scans token2science/runs/*/*/result.json, filters by goal_id, picks
-the best value according to the goal's lower_is_better flag, and writes a short
-paper draft to token2science/papers/<goal_id>.md.
+Project usage:
+  python paper.py project-new --id ... --title ... --author ... --mechanism ...
+  python paper.py project-list
+  python paper.py project-add-exp --id ... --goal ... --label ...
+  python paper.py project-status --id ...
+
+The legacy path scans token2science/runs/*/*/result.json, filters by goal_id,
+picks the best value according to the goal's lower_is_better flag, and writes a
+short paper draft to token2science/papers/<goal_id>.md.
 """
 
 import argparse
@@ -14,6 +20,7 @@ import glob
 import json
 import os
 import re
+from datetime import date
 from statistics import mean
 import sys
 
@@ -31,6 +38,150 @@ def load_json(path):
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
+
+
+def paper_project_dir(paper_id):
+    return os.path.join(PAPERS_DIR, paper_id)
+
+
+def paper_project_json_path(paper_id):
+    return os.path.join(paper_project_dir(paper_id), "paper.json")
+
+
+def load_paper_project(paper_id):
+    paper_path = paper_project_json_path(paper_id)
+    if not os.path.isfile(paper_path):
+        raise FileNotFoundError(f"paper project not found: {paper_path}")
+    return load_json(paper_path)
+
+
+def write_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def markdown_escape(value):
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def paper_authors_line(authors):
+    return ", ".join(authors) if authors else "unassigned"
+
+
+def paper_experiments_count(paper):
+    experiments = paper.get("experiments", [])
+    return len(experiments) if isinstance(experiments, list) else 0
+
+
+def paper_list_rows():
+    pattern = os.path.join(PAPERS_DIR, "*", "paper.json")
+    rows = []
+    for paper_path in sorted(glob.glob(pattern)):
+        paper = load_json(paper_path)
+        rows.append(
+            {
+                "paper_id": str(paper.get("paper_id", "")),
+                "title": str(paper.get("title", "")),
+                "authors": paper_authors_line(paper.get("authors", [])),
+                "status": str(paper.get("status", "")),
+                "num_experiments": paper_experiments_count(paper),
+            }
+        )
+    return rows
+
+
+def render_paper_list_table(rows):
+    lines = ["| id | title | authors | status | num experiments |", "| --- | --- | --- | --- | --- |"]
+    for row in rows:
+        lines.append(
+            "| `{id}` | {title} | {authors} | {status} | {num_experiments} |".format(
+                id=markdown_escape(row["paper_id"]),
+                title=markdown_escape(row["title"]),
+                authors=markdown_escape(row["authors"]),
+                status=markdown_escape(row["status"]),
+                num_experiments=row["num_experiments"],
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_paper_status_summary(paper):
+    summary = {
+        "paper_id": paper.get("paper_id"),
+        "title": paper.get("title"),
+        "authors": paper.get("authors", []),
+        "status": paper.get("status"),
+        "mechanism": paper.get("mechanism", {}),
+        "experiments": paper.get("experiments", []),
+        "manuscript": paper.get("manuscript"),
+        "figures_dir": paper.get("figures_dir"),
+        "created": paper.get("created"),
+        "num_experiments": paper_experiments_count(paper),
+    }
+    return json.dumps(summary, indent=2, ensure_ascii=False)
+
+
+def scaffold_paper_project(paper_id, title, authors, mechanism_name):
+    paper_dir = paper_project_dir(paper_id)
+    if os.path.exists(paper_dir):
+        raise SystemExit(f"paper project already exists: {paper_dir}")
+
+    mechanism_dir = os.path.join(paper_dir, "mechanism")
+    figures_dir = os.path.join(paper_dir, "figures")
+    ensure_dir(mechanism_dir)
+    ensure_dir(figures_dir)
+
+    paper = {
+        "paper_id": paper_id,
+        "title": title,
+        "authors": authors,
+        "status": "draft",
+        "mechanism": {
+            "name": mechanism_name,
+            "spec": "mechanism/spec.md",
+            "patch": "mechanism/mechanism.patch",
+        },
+        "experiments": [],
+        "manuscript": "manuscript.md",
+        "figures_dir": "figures",
+        "created": date.today().isoformat(),
+    }
+    write_json(paper_project_json_path(paper_id), paper)
+
+    manuscript_path = os.path.join(paper_dir, "manuscript.md")
+    with open(manuscript_path, "w", encoding="utf-8") as f:
+        f.write(f"# {title}\n\n")
+        f.write(f"**Author:** {paper_authors_line(authors)}\n\n")
+        for header in ("Abstract", "Method", "Experiments", "Analysis", "Results", "Reproducibility"):
+            f.write(f"## {header}\n\n")
+
+    spec_path = os.path.join(mechanism_dir, "spec.md")
+    with open(spec_path, "w", encoding="utf-8") as f:
+        f.write(f"# {mechanism_name}\n\n")
+        f.write("Describe the mechanism here.\n")
+
+    patch_path = os.path.join(mechanism_dir, "mechanism.patch")
+    with open(patch_path, "w", encoding="utf-8") as f:
+        f.write(
+            "# Placeholder patch\n\n"
+            "# This patch will be filled from the GPU run.\n"
+        )
+
+    open(os.path.join(mechanism_dir, ".gitkeep"), "a", encoding="utf-8").close()
+    open(os.path.join(figures_dir, ".gitkeep"), "a", encoding="utf-8").close()
+    return paper_dir
+
+
+def add_project_experiment(paper_id, goal_id, label):
+    paper = load_paper_project(paper_id)
+    experiments = paper.get("experiments")
+    if not isinstance(experiments, list):
+        experiments = []
+    experiments.append({"goal_id": goal_id, "label": label, "result": ""})
+    paper["experiments"] = experiments
+    write_json(paper_project_json_path(paper_id), paper)
+    return paper_project_json_path(paper_id)
 
 
 def normalize_goal_question(goal_md):
@@ -311,9 +462,57 @@ def maybe_render_chart(goal, runs):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="paper.py")
-    parser.add_argument("--goal", required=True, help="goal id, e.g. G001-deterministic-demo")
+    parser.add_argument("--goal", default=None, help="goal id, e.g. G001-deterministic-demo")
     parser.add_argument("--me", default=None, help="your handle, placed first in Authors if present")
+    subparsers = parser.add_subparsers(dest="command")
+
+    new_parser = subparsers.add_parser("project-new", help="create a paper project scaffold")
+    new_parser.add_argument("--id", required=True, help="paper id, e.g. entropy-gated-heads")
+    new_parser.add_argument("--title", required=True, help="paper title")
+    new_parser.add_argument(
+        "--author",
+        action="append",
+        required=True,
+        help="author name; repeat for multiple authors",
+    )
+    new_parser.add_argument("--mechanism", required=True, help="mechanism name")
+
+    subparsers.add_parser("project-list", help="list paper projects")
+
+    add_exp_parser = subparsers.add_parser("project-add-exp", help="append an experiment entry")
+    add_exp_parser.add_argument("--id", required=True, help="paper id")
+    add_exp_parser.add_argument("--goal", required=True, help="goal id")
+    add_exp_parser.add_argument("--label", required=True, help="experiment label")
+
+    status_parser = subparsers.add_parser("project-status", help="print a paper project summary")
+    status_parser.add_argument("--id", required=True, help="paper id")
+
     args = parser.parse_args(argv)
+
+    if args.command == "project-new":
+        ensure_dir(PAPERS_DIR)
+        paper_dir = scaffold_paper_project(args.id, args.title, args.author, args.mechanism)
+        print(os.path.join(paper_dir, "paper.json"))
+        return 0
+
+    if args.command == "project-list":
+        ensure_dir(PAPERS_DIR)
+        rows = paper_list_rows()
+        print(render_paper_list_table(rows))
+        return 0
+
+    if args.command == "project-add-exp":
+        paper_json_path = add_project_experiment(args.id, args.goal, args.label)
+        print(paper_json_path)
+        return 0
+
+    if args.command == "project-status":
+        paper = load_paper_project(args.id)
+        print(render_paper_status_summary(paper))
+        return 0
+
+    if not args.goal:
+        parser.error("either a project subcommand or --goal is required")
 
     goal, goal_md = load_goal(args.goal)
     runs = scan_runs(goal["goal_id"])

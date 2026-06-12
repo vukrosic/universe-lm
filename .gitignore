@@ -264,9 +264,6 @@ runs/
 # Budget tracking (local only)
 BUDGET.md
 
-# remote box config (per-rental, secret-ish)
-.remote
-
 # Pulled archives and rendered PDF page screenshots stay local.
 *.tgz
 *.tar.gz

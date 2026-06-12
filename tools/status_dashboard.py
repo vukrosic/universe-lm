@@ -22,6 +22,7 @@ FLIP_SH = os.path.join(AUTORESEARCH, "bin", "flip.sh")
 QUESTIONS = os.path.join(AUTORESEARCH, "questions.jsonl")
 # token2science subproject (the "donate tokens -> reproducible science" system).
 T2S = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "token2science"))
+T2S_PAPERS = os.path.realpath(os.path.join(T2S, "papers"))
 
 # --- GPU monitor config -----------------------------------------------------
 # Polls a Vast box over SSH to surface the running arq job + val-loss curve.
@@ -612,24 +613,88 @@ def _gather_t2s():
                 nconf += 1
         except Exception:
             pass
-    data["papers"] = [os.path.basename(p)
-                      for p in sorted(glob.glob(os.path.join(T2S, "papers", "*.md")))]
+    legacy_papers = [os.path.basename(p)
+                     for p in sorted(glob.glob(os.path.join(T2S, "papers", "*.md")))]
+    focused_papers = _t2s_papers_list()
+    data["papers"] = legacy_papers
+    data["focused_papers"] = focused_papers
     data["totals"] = {"goals": len(data["goals"]), "runs": len(runfiles),
-                      "papers": len(data["papers"]), "confirmed": nconf,
-                      "active_sessions": len(data["sessions"])}
+                      "papers": len(legacy_papers), "focused_papers": len(focused_papers),
+                      "confirmed": nconf, "active_sessions": len(data["sessions"])}
     return data
 
-_T2S_PAPER_RE = re.compile(r"\A[A-Za-z0-9._-]+\.md\Z")
 _T2S_SESSION_RE = re.compile(r"\A(?:t2s-|simu-)[A-Za-z0-9._-]+\Z")
 
-def _t2s_paper_text(name):
-    if not _T2S_PAPER_RE.fullmatch(name or ""):
+def _t2s_papers_realpath(relpath):
+    rel = (relpath or "").replace("\\", "/").strip().lstrip("/")
+    if not rel or os.path.isabs(rel):
         return None
-    path = os.path.join(T2S, "papers", name)
-    if not os.path.isfile(path):
+    real = os.path.realpath(os.path.join(T2S_PAPERS, rel))
+    root = T2S_PAPERS + os.sep
+    if real != T2S_PAPERS and not real.startswith(root):
+        return None
+    return real
+
+def _t2s_papers_list():
+    out = []
+    if not os.path.isdir(T2S_PAPERS):
+        return out
+    for pj in sorted(glob.glob(os.path.join(T2S_PAPERS, "*", "paper.json"))):
+        try:
+            with open(pj, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        paper_id = str(data.get("paper_id") or os.path.basename(os.path.dirname(pj)))
+        authors = data.get("authors") or []
+        if not isinstance(authors, list):
+            authors = [authors]
+        authors = [str(a) for a in authors if str(a).strip()]
+        mech = data.get("mechanism") if isinstance(data.get("mechanism"), dict) else {}
+        experiments = data.get("experiments") if isinstance(data.get("experiments"), list) else []
+        out.append({
+            "paper_id": paper_id,
+            "title": str(data.get("title") or paper_id),
+            "authors": authors,
+            "status": str(data.get("status") or ""),
+            "mechanism_name": str(mech.get("name") or ""),
+            "num_experiments": len(experiments),
+            "manuscript": str(data.get("manuscript") or "manuscript.md"),
+            "_created": str(data.get("created") or ""),
+        })
+    out.sort(key=lambda p: (p.get("_created", ""), p.get("paper_id", "")), reverse=True)
+    for p in out:
+        p.pop("_created", None)
+    return out
+
+def _t2s_paper_text(name):
+    rel = (name or "").strip()
+    if not rel:
+        return None
+    real = _t2s_papers_realpath(rel)
+    if real is None:
+        return None
+    if os.path.isdir(real):
+        meta = os.path.join(real, "paper.json")
+        if not os.path.isfile(meta):
+            return None
+        try:
+            with open(meta, encoding="utf-8") as fh:
+                paper = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(paper, dict):
+            return None
+        manuscript = str(paper.get("manuscript") or "manuscript.md")
+        real = _t2s_papers_realpath(os.path.join(rel, manuscript))
+        if real is None:
+            return None
+    if not os.path.isfile(real):
         return None
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(real, encoding="utf-8") as fh:
             return fh.read()
     except OSError:
         return None
@@ -869,6 +934,7 @@ svg .pt{fill:#58a6ff}
   <button class=tab data-tab=brainstorm>Brainstorm</button>
   <button class=tab data-tab=gpu>GPU</button>
   <button class=tab data-tab=testing>Testing</button>
+  <button class=tab data-tab=papers>Papers</button>
 </div>
 <div class="tab-pane" id=pane-brainstorm>
 <div class=goal>
@@ -929,16 +995,7 @@ svg .pt{fill:#58a6ff}
   .t2s-below{color:#d29922}
   .t2s-run{font:11.5px ui-monospace,Menlo,monospace;color:#8b949e;padding:2px 0}
   .t2s-run code{color:#58a6ff}
-  .t2s-paper{font-size:12.5px;color:#e6edf3;padding:2px 0}
-  .t2s-paper-link,.t2s-sess-link{display:flex;align-items:center;gap:7px;width:100%;padding:3px 0;text-decoration:none;background:transparent;border:0;cursor:pointer;text-align:left}
-  .t2s-paper-link{font-size:12.5px;color:#e6edf3}
   .t2s-sess-link{font:600 12.5px ui-monospace,Menlo,monospace;color:#3fb950}
-  .t2s-paper-link:hover,.t2s-sess-link:hover{color:#58a6ff}
-  .t2s-paper-link.active,.t2s-sess-link.active{color:#58a6ff}
-  .t2s-paper-link .name,.t2s-sess-link .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .t2s-reader{margin-top:10px;border-top:1px solid #30363d;padding-top:10px}
-  .t2s-reader h3{margin:0 0 8px;font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
-  .t2s-reader .body{max-height:42vh;overflow:auto;padding-right:2px}
   .t2s-livewrap{display:flex;flex-direction:column;gap:8px}
   .t2s-livebar{display:flex;align-items:center;gap:8px;justify-content:space-between}
   .t2s-livebar .label{color:#8b949e;font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -962,8 +1019,62 @@ svg .pt{fill:#58a6ff}
   <div class=t2s-card><h2>Goals</h2><div id=t2s-goals><span class=hint>…</span></div></div>
 </div>
 <div class=t2s-card><h2>Recent runs</h2><div id=t2s-runs><span class=hint>…</span></div></div>
-<div class=t2s-card><h2>Papers</h2><div id=t2s-papers><span class=hint>…</span></div><div class=t2s-reader id=t2s-paper-view><span class=hint>click a paper to render it here</span></div></div>
 <div class=t2s-card><h2>Live session</h2><div class=t2s-livewrap><div class=t2s-livebar><span class=label id=t2s-session-label>click an agent session to follow it live</span><button id=t2s-session-stop disabled>Stop/close</button></div><pre class=t2s-session-box id=t2s-session-view><span class=hint>no session selected</span></pre></div></div>
+</div>
+<div class="tab-pane" id=pane-papers>
+<style scoped>
+  #pane-papers h1{margin:0;font-size:15px;font-weight:600}
+  #pane-papers h1 small{color:#6e7681;font-weight:400;margin-left:8px;font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .t2s-paper-meta{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px}
+  .t2s-paper-chip{background:#161b22;border:1px solid #30363d;border-radius:20px;padding:4px 12px;font-size:12px;color:#e6edf3}
+  .t2s-paper-chip b{color:#58a6ff}
+  .t2s-paper-filters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px}
+  .t2s-author-chip{background:#161b22;border:1px solid #30363d;border-radius:16px;padding:4px 10px;font-size:11.5px;color:#8b949e;cursor:pointer;white-space:nowrap}
+  .t2s-author-chip:hover{background:#21262d;color:#e6edf3}
+  .t2s-author-chip.active{background:#1a3a2a;border-color:#3fb950;color:#3fb950}
+  .t2s-paper-layout{display:flex;gap:10px;flex:1 1 auto;min-height:0}
+  .t2s-paper-list{flex:0 0 40%;min-width:320px;display:flex;flex-direction:column;gap:10px;overflow:auto;padding-right:2px}
+  .t2s-paper-cards{display:flex;flex-direction:column;gap:10px}
+  .t2s-paper-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:8px}
+  .t2s-paper-card:hover{background:#21262d}
+  .t2s-paper-card.active{outline:2px solid #58a6ff}
+  .t2s-paper-title{font-size:13px;font-weight:700;color:#e6edf3;line-height:1.3}
+  .t2s-paper-authors{display:flex;gap:6px;flex-wrap:wrap}
+  .t2s-paper-author{background:#0d1117;border:1px solid #30363d;border-radius:999px;padding:2px 8px;font-size:11px;color:#8b949e}
+  .t2s-paper-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px;font-size:11.5px;color:#8b949e}
+  .t2s-paper-rows div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .t2s-paper-rows b{color:#e6edf3;font-weight:600}
+  .t2s-paper-empty{color:#6e7681;font-size:12px;padding:6px 2px}
+  .t2s-paper-reader{flex:1 1 auto;min-width:0;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;overflow:auto;min-height:0}
+  .t2s-paper-reader h2{margin:0;font-size:15px;color:#58a6ff}
+  .t2s-paper-reader .meta{display:flex;gap:8px;flex-wrap:wrap;color:#8b949e;font-size:11.5px}
+  .t2s-paper-reader .meta span{background:#0d1117;border:1px solid #30363d;border-radius:999px;padding:2px 8px}
+  .t2s-paper-reader .meta b{color:#e6edf3;font-weight:600}
+  .t2s-paper-reader .path{color:#6e7681;font-size:10.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .t2s-paper-reader .body{max-height:100%;overflow:auto;padding-right:2px}
+  .t2s-paper-reader .hint{color:#6e7681;font-size:12px}
+  .t2s-paper-reader .body .md table{width:100%;border-collapse:collapse;margin:0 0 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;overflow:hidden;display:block}
+  .t2s-paper-reader .body .md thead{background:#161b22}
+  .t2s-paper-reader .body .md th,.t2s-paper-reader .body .md td{border-bottom:1px solid #30363d;border-right:1px solid #30363d;padding:6px 8px;vertical-align:top;text-align:left}
+  .t2s-paper-reader .body .md th:last-child,.t2s-paper-reader .body .md td:last-child{border-right:0}
+  .t2s-paper-reader .body .md tr:last-child td{border-bottom:0}
+  .t2s-paper-reader .body .md img{max-width:100%;height:auto;display:block;margin:8px 0;border:1px solid #30363d;border-radius:6px;background:#0d1117}
+  @media (max-width: 980px){
+    .t2s-paper-layout{flex-direction:column}
+    .t2s-paper-list{flex:1 1 auto;min-width:0;max-height:42vh}
+  }
+</style>
+<h1>token2science papers <small id=t2s-papers-meta>loading…</small></h1>
+<div class=t2s-paper-meta id=t2s-paper-stats></div>
+<div class=t2s-paper-filters id=t2s-paper-filters><span class=hint>loading authors…</span></div>
+<div class=t2s-paper-layout>
+  <div class=t2s-paper-list>
+    <div class=t2s-paper-cards id=t2s-paper-cards><span class=t2s-paper-empty>loading…</span></div>
+  </div>
+  <div class=t2s-paper-reader id=t2s-paper-reader>
+    <span class=hint>click a paper card to render its manuscript here</span>
+  </div>
+</div>
 </div>
 <div class="tab-pane" id=pane-gpu>
 <style scoped>
@@ -1247,24 +1358,37 @@ function mdSafeUrl(u){
   // Only allow http(s), relative, or in-page URLs. Reject javascript:, data:, etc.
   return mdIsExternalUrl(u) ? u : '#';
 }
-function t2sResolveAssetPath(src){
+function t2sNormalizeAssetPath(baseParts, rel){
+  const parts = baseParts.slice();
+  for(const seg of rel.split('/')){
+    if(!seg || seg === '.') continue;
+    if(seg === '..'){
+      if(parts.length <= 1) return null;
+      parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return parts.join('/');
+}
+function t2sResolveAssetPath(src, opts){
   const raw = String(src || '').trim();
   if(!raw) return null;
   if(mdIsExternalUrl(raw)) return raw;
   const m = raw.match(/^([^?#]*)([?#].*)?$/);
   const rel = m ? m[1] : raw;
   const tail = m && m[2] ? m[2] : '';
-  const parts = ['papers'];
-  for(const seg of rel.split('/')){
-    if(!seg || seg === '.') continue;
-    if(seg === '..'){
-      if(!parts.length) return null;
-      parts.pop();
-      continue;
-    }
-    parts.push(seg);
+  let path = null;
+  if(rel === 'papers' || rel.startsWith('papers/') || rel === 'posts/charts' || rel.startsWith('posts/charts/')){
+    path = t2sNormalizeAssetPath([], rel);
+  } else if(opts && opts.paperAsset){
+    let base = String(opts.paperBase || 'papers').replace(/\\/g, '/').trim();
+    if(!base) base = 'papers';
+    const baseParts = base.split('/').filter(Boolean);
+    if(!baseParts.length || baseParts[0] !== 'papers') baseParts.unshift('papers');
+    path = t2sNormalizeAssetPath(baseParts, rel);
   }
-  const path = parts.join('/');
+  if(!path) return null;
   if(!(path === 'papers' || path.startsWith('papers/') || path === 'posts/charts' || path.startsWith('posts/charts/'))) return null;
   return '/api/t2s/asset?path=' + encodeURIComponent(path) + tail;
 }
@@ -1274,7 +1398,7 @@ function mdInline(s, opts){
   s = s.replace(/`([^`\n]+)`/g, (m, c) => { codes.push(c); return '\x00C' + (codes.length-1) + '\x00'; });
   // images: ![alt](src)
   s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (m, alt, u) => {
-    const src = (opts && opts.paperAsset) ? t2sResolveAssetPath(u) : null;
+    const src = (opts && opts.paperAsset) ? t2sResolveAssetPath(u, opts) : null;
     const finalSrc = src || mdSafeUrl(u);
     return '<img alt="' + alt + '" src="' + finalSrc + '">';
   });
@@ -1920,13 +2044,10 @@ setInterval(loadActivity, 30000);
 (function(){
   const $ = id => document.getElementById(id);
   const num = v => (typeof v === 'number') ? v.toFixed(4) : '—';
-  const paperList = $('t2s-papers');
   const sessionList = $('t2s-sessions');
-  const paperView = $('t2s-paper-view');
   const sessionView = $('t2s-session-view');
   const sessionLabel = $('t2s-session-label');
   const sessionStop = $('t2s-session-stop');
-  let activePaper = '';
   let activeSession = '';
   let sessionTimer = null;
   let sessionBusy = false;
@@ -1934,12 +2055,6 @@ setInterval(loadActivity, 30000);
   function setSessionText(text){
     sessionView.textContent = text || '';
     sessionView.scrollTop = sessionView.scrollHeight;
-  }
-  function renderPaperView(name, txt){
-    activePaper = name || '';
-    const html = renderMarkdown(txt, {paperAsset:true});
-    paperView.innerHTML = `<h3>${htmlEscape(name)}</h3><div class=body>${html}</div>`;
-    paperView.querySelector('.body').scrollTop = 0;
   }
   function stopSession(ended){
     if(sessionTimer){
@@ -2000,36 +2115,7 @@ setInterval(loadActivity, 30000);
       ? names.map(s => `<a href="#" class="t2s-sess-link${s===activeSession?' active':''}" data-sess="${htmlEscape(s)}"><span class=t2s-live></span><span class=name>${htmlEscape(s)}</span></a>`).join('')
       : '<span class=hint>none active</span>';
   }
-  function renderPaperList(papers){
-    const names = papers && papers.length ? papers : [];
-    paperList.innerHTML = names.length
-      ? names.map(p => `<a href="#" class="t2s-paper-link${p===activePaper?' active':''}" data-paper="${htmlEscape(p)}">📄 <span class=name>${htmlEscape(p)}</span></a>`).join('')
-      : '<span class=hint>none yet</span>';
-  }
-  async function openPaper(name){
-    if(!name) return;
-    activePaper = name;
-    renderPaperList(lastT2sData && lastT2sData.papers ? lastT2sData.papers : []);
-    paperView.innerHTML = `<h3>${htmlEscape(name)}</h3><div class=body><span class=hint>loading…</span></div>`;
-    try {
-      const r = await fetch(`/api/t2s/paper?name=${encodeURIComponent(name)}`, {cache:'no-store'});
-      if(!r.ok){
-        paperView.innerHTML = `<h3>${htmlEscape(name)}</h3><div class=body><span class=hint>could not load paper</span></div>`;
-        return;
-      }
-      const txt = await r.text();
-      renderPaperView(name, txt);
-    } catch(e) {
-      paperView.innerHTML = `<h3>${htmlEscape(name)}</h3><div class=body><span class=hint>paper fetch failed</span></div>`;
-    }
-  }
   let lastT2sData = null;
-  paperList.addEventListener('click', e => {
-    const a = e.target.closest('[data-paper]');
-    if(!a) return;
-    e.preventDefault();
-    openPaper(a.dataset.paper);
-  });
   sessionList.addEventListener('click', e => {
     const a = e.target.closest('[data-sess]');
     if(!a) return;
@@ -2060,7 +2146,6 @@ setInterval(loadActivity, 30000);
     $('t2s-runs').innerHTML = (d.runs && d.runs.length) ? d.runs.map(r =>
       `<div class=t2s-run><code>${r.task}</code> <span class=t2s-mut>${r.worker}</span> ${r.metric}=${num(r.value)}</div>`
     ).join('') : '<span class=hint>none yet</span>';
-    renderPaperList(d.papers || []);
   }
   async function t2sTick(){
     try { const r = await fetch('/api/t2s'); render(await r.json()); } catch(e){}
@@ -2074,6 +2159,179 @@ setInterval(loadActivity, 30000);
     if (p && p.classList.contains('active')) t2sTick();
   }, 5000);
   t2sTick();
+})();
+
+// --- Papers tab: structured token2science papers --------------------------
+(function(){
+  const $ = id => document.getElementById(id);
+  const paperCards = $('t2s-paper-cards');
+  const paperReader = $('t2s-paper-reader');
+  const paperFilters = $('t2s-paper-filters');
+  const paperMeta = $('t2s-papers-meta');
+  const paperStats = $('t2s-paper-stats');
+  let papers = [];
+  let activePaper = '';
+  let activeAuthor = '';
+  let lastJson = '';
+  let loading = false;
+
+  function paperBasePath(p){
+    const manuscript = String(p.manuscript || 'manuscript.md').replace(/\\/g, '/');
+    const idx = manuscript.lastIndexOf('/');
+    const subdir = idx >= 0 ? manuscript.slice(0, idx) : '';
+    return subdir ? `papers/${p.paper_id}/${subdir}` : `papers/${p.paper_id}`;
+  }
+  function visiblePapers(){
+    return papers.filter(p => !activeAuthor || (p.authors || []).includes(activeAuthor));
+  }
+  function setReaderHint(msg){
+    delete paperReader.dataset.paperId;
+    paperReader.innerHTML = `<span class=hint>${htmlEscape(msg)}</span>`;
+  }
+  function renderPaperReader(paper, txt){
+    const base = paperBasePath(paper);
+    const body = renderMarkdown(txt, {paperAsset:true, paperBase:base});
+    paperReader.dataset.paperId = paper.paper_id;
+    paperReader.innerHTML =
+      `<h2>${htmlEscape(paper.title || paper.paper_id)}</h2>`+
+      `<div class=meta>`+
+      `<span><b>authors</b> ${htmlEscape((paper.authors || []).join(', ') || '—')}</span>`+
+      `<span><b>mechanism</b> ${htmlEscape(paper.mechanism_name || '—')}</span>`+
+      `<span><b>status</b> ${htmlEscape(paper.status || '—')}</span>`+
+      `<span><b>experiments</b> ${htmlEscape(String(paper.num_experiments ?? 0))}</span>`+
+      `</div>`+
+      `<div class=path>${htmlEscape(`papers/${paper.paper_id}/${paper.manuscript || 'manuscript.md'}`)}</div>`+
+      `<div class=body><div class=md>${body}</div></div>`;
+    const bodyEl = paperReader.querySelector('.body');
+    if(bodyEl) bodyEl.scrollTop = 0;
+  }
+  function renderAuthorFilters(){
+    const authors = [...new Set(papers.flatMap(p => p.authors || []))].sort((a, b) => a.localeCompare(b));
+    if(!authors.length){
+      paperFilters.innerHTML = '<span class=hint>no authors found</span>';
+      return;
+    }
+    const chips = [`<button type=button class="t2s-author-chip${activeAuthor ? '' : ' active'}" data-author="">All authors</button>`]
+      .concat(authors.map(a => `<button type=button class="t2s-author-chip${a === activeAuthor ? ' active' : ''}" data-author="${htmlEscape(a)}">${htmlEscape(a)}</button>`));
+    paperFilters.innerHTML = chips.join('');
+  }
+  function renderCards(){
+    const list = visiblePapers();
+    const total = papers.length;
+    const filtered = list.length;
+    const authorCount = [...new Set(papers.flatMap(p => p.authors || []))].length;
+    paperMeta.textContent = `${total} papers · ${authorCount} authors${activeAuthor ? ` · filter: ${activeAuthor}` : ''}`;
+    paperStats.innerHTML =
+      `<span class=t2s-paper-chip><b>${filtered}</b> visible</span>`+
+      `<span class=t2s-paper-chip><b>${total}</b> total</span>`+
+      `<span class=t2s-paper-chip><b>${authorCount}</b> authors</span>`;
+    if(!list.length){
+      paperCards.innerHTML = '<div class=t2s-paper-empty>no papers match this author filter</div>';
+      return;
+    }
+    paperCards.innerHTML = list.map(p => {
+      const authors = (p.authors || []).map(a => `<button type=button class=t2s-paper-author data-author="${htmlEscape(a)}">${htmlEscape(a)}</button>`).join('');
+      return `<div class="t2s-paper-card${p.paper_id === activePaper ? ' active' : ''}" data-paper-id="${htmlEscape(p.paper_id)}">`+
+        `<div class=t2s-paper-title>${htmlEscape(p.title || p.paper_id)}</div>`+
+        `<div class=t2s-paper-authors>${authors || '<span class=t2s-paper-empty>no authors</span>'}</div>`+
+        `<div class=t2s-paper-rows>`+
+          `<div><b>mechanism</b> ${htmlEscape(p.mechanism_name || '—')}</div>`+
+          `<div><b>status</b> ${htmlEscape(p.status || '—')}</div>`+
+          `<div><b>experiments</b> ${htmlEscape(String(p.num_experiments ?? 0))}</div>`+
+          `<div><b>manuscript</b> ${htmlEscape(p.manuscript || '—')}</div>`+
+        `</div>`+
+      `</div>`;
+    }).join('');
+  }
+  async function openPaper(paperId){
+    const paper = papers.find(p => p.paper_id === paperId);
+    if(!paper) return;
+    activePaper = paperId;
+    renderCards();
+    paperReader.dataset.paperId = paper.paper_id;
+    paperReader.innerHTML = `<h2>${htmlEscape(paper.title || paper.paper_id)}</h2><div class=body><span class=hint>loading…</span></div>`;
+    try {
+      const r = await fetch(`/api/t2s/paper?name=${encodeURIComponent(paper.paper_id)}`, {cache:'no-store'});
+      if(!r.ok){
+        paperReader.innerHTML = `<h2>${htmlEscape(paper.title || paper.paper_id)}</h2><div class=body><span class=hint>could not load paper</span></div>`;
+        return;
+      }
+      const txt = await r.text();
+      renderPaperReader(paper, txt);
+    } catch(e) {
+      paperReader.innerHTML = `<h2>${htmlEscape(paper.title || paper.paper_id)}</h2><div class=body><span class=hint>paper fetch failed</span></div>`;
+    }
+  }
+  function render(data){
+    if(!data) return;
+    const json = JSON.stringify(data);
+    if(json === lastJson) return;
+    lastJson = json;
+    papers = Array.isArray(data) ? data : [];
+    if(activeAuthor && !papers.some(p => (p.authors || []).includes(activeAuthor))){
+      activeAuthor = '';
+    }
+    if(activePaper && !papers.some(p => p.paper_id === activePaper)){
+      activePaper = '';
+      setReaderHint('click a paper card to render its manuscript here');
+    }
+    if(!papers.length){
+      paperMeta.textContent = '0 papers';
+      paperStats.innerHTML = '<span class=t2s-paper-chip><b>0</b> visible</span>';
+      paperFilters.innerHTML = '<span class=hint>no structured papers found</span>';
+      paperCards.innerHTML = '<div class=t2s-paper-empty>no structured papers found under token2science/papers/*/paper.json</div>';
+      setReaderHint('no structured papers found yet');
+      return;
+    }
+    renderAuthorFilters();
+    renderCards();
+    if(activePaper && paperReader.dataset.paperId !== activePaper){
+      const paper = papers.find(p => p.paper_id === activePaper);
+      if(paper) openPaper(activePaper);
+    } else if(!activePaper && !paperReader.querySelector('.md')){
+      setReaderHint('click a paper card to render its manuscript here');
+    }
+  }
+  async function t2sPapersTick(){
+    if(loading) return;
+    loading = true;
+    try {
+      const r = await fetch('/api/t2s/papers', {cache:'no-store'});
+      if(r.ok) render(await r.json());
+    } catch(e) {}
+    finally { loading = false; }
+  }
+  paperFilters.addEventListener('click', e => {
+    const a = e.target.closest('[data-author]');
+    if(!a) return;
+    activeAuthor = a.dataset.author || '';
+    renderAuthorFilters();
+    renderCards();
+  });
+  paperCards.addEventListener('click', e => {
+    const chip = e.target.closest('[data-author]');
+    if(chip){
+      e.preventDefault();
+      e.stopPropagation();
+      activeAuthor = chip.dataset.author || '';
+      renderAuthorFilters();
+      renderCards();
+      return;
+    }
+    const card = e.target.closest('[data-paper-id]');
+    if(!card) return;
+    e.preventDefault();
+    openPaper(card.dataset.paperId);
+  });
+  window.t2sPapersTick = t2sPapersTick;
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    if (t.dataset.tab === 'papers') t2sPapersTick();
+  }));
+  setInterval(() => {
+    const p = document.getElementById('pane-papers');
+    if (p && p.classList.contains('active')) t2sPapersTick();
+  }, 5000);
+  t2sPapersTick();
 })();
 </script></body></html>"""
 
@@ -2121,11 +2379,10 @@ class H(http.server.BaseHTTPRequestHandler):
                 self._send(400, "bad slug", "text/plain")
                 return
             self._send(200, json.dumps(read_result(slug)), "application/json")
+        elif u.path == "/api/t2s/papers":
+            self._send(200, json.dumps(_t2s_papers_list()), "application/json")
         elif u.path == "/api/t2s/paper":
             name = parse_qs(u.query).get("name", [""])[0]
-            if not _T2S_PAPER_RE.fullmatch(name or ""):
-                self._send(400, "bad name", "text/plain")
-                return
             txt = _t2s_paper_text(name)
             if txt is None:
                 self._send(404, "not found", "text/plain")

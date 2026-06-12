@@ -72,6 +72,16 @@ class LLMConfig:
     # #28 Attention output gate: zero-init per-head multiplier on attention output.
     # Starts as exact baseline via output *= (1 + gate).
     use_attn_output_gate: bool = False
+    # Value-channel gate: zero-init per-head, per-channel multiplier on V.
+    # Starts as exact baseline via V *= (1 + gate). Distinct from the
+    # scalar per-head output gate above because it acts before the
+    # weighted sum.
+    use_value_channel_gate: bool = False
+    # Attention-output channel gate: zero-init per-head, per-channel
+    # multiplier on the post-AV head outputs. Starts as exact baseline via
+    # output *= (1 + gate). This is the channelwise sibling of
+    # use_attn_output_gate.
+    use_attn_output_channel_gate: bool = False
     # #21 LayerScale: zero-init per-channel scales on attention and MLP residual
     # outputs. Starts as exact baseline via branch *= (1 + gate).
     use_layerscale: bool = False

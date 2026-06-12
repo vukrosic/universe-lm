@@ -476,6 +476,8 @@ class MultiHeadAttention(nn.Module):
         dropout: float = 0.1,
         n_kv_heads: int | None = None,
         use_attn_output_gate: bool = False,
+        use_value_channel_gate: bool = False,
+        use_attn_output_channel_gate: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -791,6 +793,12 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
             self.attn_output_gate = nn.Parameter(torch.zeros(n_heads))
+        self.use_value_channel_gate = use_value_channel_gate
+        if self.use_value_channel_gate:
+            self.value_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
+        self.use_attn_output_channel_gate = use_attn_output_channel_gate
+        if self.use_attn_output_channel_gate:
+            self.attn_output_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
         # 024 — Gated Attention: per-head *scalar* input-conditional
         # sigmoid gate on `o_h = A_h V_h`. `nn.Linear(d_model, n_heads)`,
         # both weight and bias zero-init. At init: `2·σ(0) = 1.0` exactly
@@ -1590,6 +1598,8 @@ class MultiHeadAttention(nn.Module):
         # are mixed by attention (last dim = d_k).
         if self.use_v_norm:
             V = self.v_norm(V)
+        if self.use_value_channel_gate:
+            V = V * (1.0 + self.value_channel_gate.view(1, self.n_heads, 1, self.d_k))
 
         # Compute attention
         # #51 sliding-window: when enabled, use a [T, T] causal-local
@@ -1920,6 +1930,8 @@ class MultiHeadAttention(nn.Module):
         if self.use_attn_output_gate:
             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
             attn_output = attn_output * gate
+        if self.use_attn_output_channel_gate:
+            attn_output = attn_output * (1.0 + self.attn_output_channel_gate.view(1, self.n_heads, 1, self.d_k))
         # 024 — Gated Attention: input-conditional per-head scalar
         # sigmoid gate on `o_h = A_h V_h` (Qiu et al. 2025). Applied
         # post-AV, pre-merge. Composes cleanly with `use_attn_output_gate`
@@ -1970,6 +1982,8 @@ class TransformerBlock(nn.Module):
         ffn_variant: str = "squared_relu",
         use_embed_residual: bool = False,
         use_attn_output_gate: bool = False,
+        use_value_channel_gate: bool = False,
+        use_attn_output_channel_gate: bool = False,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -2121,6 +2135,8 @@ class TransformerBlock(nn.Module):
             dropout,
             n_kv_heads,
             use_attn_output_gate=use_attn_output_gate,
+            use_value_channel_gate=use_value_channel_gate,
+            use_attn_output_channel_gate=use_attn_output_channel_gate,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,

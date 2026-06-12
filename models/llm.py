@@ -349,6 +349,8 @@ class MinimalLLM(nn.Module):
                     ffn_variant=config.ffn_variant,
                     use_embed_residual=getattr(config, "use_embed_residual", False),
                     use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
+                    use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
+                    use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
                     use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                     out_op=getattr(config, "out_op", ""),
                     use_re_zero=getattr(config, "use_re_zero", False),

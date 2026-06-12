@@ -1,0 +1,115 @@
+diff --git a/configs/llm_config.py b/configs/llm_config.py
+index f7e94b1..1bdf046 100644
+--- a/configs/llm_config.py
++++ b/configs/llm_config.py
+@@ -72,6 +72,16 @@ class LLMConfig:
+     # #28 Attention output gate: zero-init per-head multiplier on attention output.
+     # Starts as exact baseline via output *= (1 + gate).
+     use_attn_output_gate: bool = False
++    # Value-channel gate: zero-init per-head, per-channel multiplier on V.
++    # Starts as exact baseline via V *= (1 + gate). Distinct from the
++    # scalar per-head output gate above because it acts before the
++    # weighted sum.
++    use_value_channel_gate: bool = False
++    # Attention-output channel gate: zero-init per-head, per-channel
++    # multiplier on the post-AV head outputs. Starts as exact baseline via
++    # output *= (1 + gate). This is the channelwise sibling of
++    # use_attn_output_gate.
++    use_attn_output_channel_gate: bool = False
+     # #21 LayerScale: zero-init per-channel scales on attention and MLP residual
+     # outputs. Starts as exact baseline via branch *= (1 + gate).
+     use_layerscale: bool = False
+diff --git a/models/layers.py b/models/layers.py
+index 6e6526d..7c21eb1 100644
+--- a/models/layers.py
++++ b/models/layers.py
+@@ -476,6 +476,8 @@ class MultiHeadAttention(nn.Module):
+         dropout: float = 0.1,
+         n_kv_heads: int | None = None,
+         use_attn_output_gate: bool = False,
++        use_value_channel_gate: bool = False,
++        use_attn_output_channel_gate: bool = False,
+         use_value_embed: bool = False,
+         value_embed_rank: int | None = None,
+         use_query_embed: bool = False,
+@@ -791,6 +793,12 @@ class MultiHeadAttention(nn.Module):
+         self.use_attn_output_gate = use_attn_output_gate
+         if self.use_attn_output_gate:
+             self.attn_output_gate = nn.Parameter(torch.zeros(n_heads))
++        self.use_value_channel_gate = use_value_channel_gate
++        if self.use_value_channel_gate:
++            self.value_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
++        self.use_attn_output_channel_gate = use_attn_output_channel_gate
++        if self.use_attn_output_channel_gate:
++            self.attn_output_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
+         # 024 — Gated Attention: per-head *scalar* input-conditional
+         # sigmoid gate on `o_h = A_h V_h`. `nn.Linear(d_model, n_heads)`,
+         # both weight and bias zero-init. At init: `2·σ(0) = 1.0` exactly
+@@ -1590,6 +1598,8 @@ class MultiHeadAttention(nn.Module):
+         # are mixed by attention (last dim = d_k).
+         if self.use_v_norm:
+             V = self.v_norm(V)
++        if self.use_value_channel_gate:
++            V = V * (1.0 + self.value_channel_gate.view(1, self.n_heads, 1, self.d_k))
+ 
+         # Compute attention
+         # #51 sliding-window: when enabled, use a [T, T] causal-local
+@@ -1920,6 +1930,8 @@ class MultiHeadAttention(nn.Module):
+         if self.use_attn_output_gate:
+             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
+             attn_output = attn_output * gate
++        if self.use_attn_output_channel_gate:
++            attn_output = attn_output * (1.0 + self.attn_output_channel_gate.view(1, self.n_heads, 1, self.d_k))
+         # 024 — Gated Attention: input-conditional per-head scalar
+         # sigmoid gate on `o_h = A_h V_h` (Qiu et al. 2025). Applied
+         # post-AV, pre-merge. Composes cleanly with `use_attn_output_gate`
+@@ -1970,6 +1982,8 @@ class TransformerBlock(nn.Module):
+         ffn_variant: str = "squared_relu",
+         use_embed_residual: bool = False,
+         use_attn_output_gate: bool = False,
++        use_value_channel_gate: bool = False,
++        use_attn_output_channel_gate: bool = False,
+         use_talking_heads_out: bool = False,
+         out_op: str = "",
+         use_layerscale: bool = False,
+@@ -2121,6 +2135,8 @@ class TransformerBlock(nn.Module):
+             dropout,
+             n_kv_heads,
+             use_attn_output_gate=use_attn_output_gate,
++            use_value_channel_gate=use_value_channel_gate,
++            use_attn_output_channel_gate=use_attn_output_channel_gate,
+             use_talking_heads_out=use_talking_heads_out,
+             out_op=out_op,
+             use_value_embed=use_value_embed,
+diff --git a/models/llm.py b/models/llm.py
+index bb80f8a..540977f 100644
+--- a/models/llm.py
++++ b/models/llm.py
+@@ -349,6 +349,8 @@ class MinimalLLM(nn.Module):
+                     ffn_variant=config.ffn_variant,
+                     use_embed_residual=getattr(config, "use_embed_residual", False),
+                     use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
++                    use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
++                    use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
+                     use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
+                     out_op=getattr(config, "out_op", ""),
+                     use_re_zero=getattr(config, "use_re_zero", False),
+diff --git a/Users/vukrosic/my-life/llm-research-kit-scaling/run_value_channel_gate.py b/Users/vukrosic/my-life/llm-research-kit-scaling/run_value_channel_gate.py
+new file mode 100644
+index 0000000..23310f6
+--- /dev/null
++++ b/Users/vukrosic/my-life/llm-research-kit-scaling/run_value_channel_gate.py
+@@ -0,0 +1,13 @@
++from dataclasses import dataclass
++
++from configs.llm_config import Tiny1M3MConfig
++import train_llm
++
++
++@dataclass
++class C(Tiny1M3MConfig):
++    use_value_channel_gate: bool = True
++
++
++if __name__ == "__main__":
++    train_llm.main()

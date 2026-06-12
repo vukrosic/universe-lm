@@ -1,0 +1,122 @@
+diff --git a/configs/llm_config.py b/configs/llm_config.py
+index bb57b32..10c8520 100644
+--- a/configs/llm_config.py
++++ b/configs/llm_config.py
+@@ -188,6 +188,12 @@ class LLMConfig:
+     # Default off → softmax baseline path bit-identical. See
+     # `autoresearch/ideas/022-softpick-attention/plan.md`.
+     use_softpick: bool = False
++    # Entropy-gated heads: per-head learnable alpha_h that down-weights
++    # diffuse heads using the normalized attention entropy. Alpha_h
++    # starts at 0 so step-0 gate = 1 exactly and the baseline path
++    # stays bit-identical. Needs explicit weights, so it forces the
++    # manual attention path.
++    use_entropy_gate: bool = False
+     # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
+     # per-head learnable scalar s_h that scales the attention logits
+     # by `s_h · log(n)` pre-softmax, where n is the per-query causal
+diff --git a/models/layers.py b/models/layers.py
+index f29cf85..344f3d0 100644
+--- a/models/layers.py
++++ b/models/layers.py
+@@ -505,6 +505,10 @@ class MultiHeadAttention(nn.Module):
+         # `masked_fill` in the FIRE branch, so masked positions
+         # contribute zero to both numerator and denominator.
+         use_softpick: bool = False,
++        # Entropy-gated heads: per-head alpha_h on the post-softmax
++        # context vector. Alpha_h init 0 means step-0 gate = 1 exactly.
++        # Needs explicit weights, so flag-on forces the manual path.
++        use_entropy_gate: bool = False,
+         # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
+         # per-head learnable scalar s_h that multiplies the attention
+         # logits by `s_h · log(n)` pre-softmax, where n is the per-query
+@@ -705,6 +709,14 @@ class MultiHeadAttention(nn.Module):
+         # `softpick` helper at the top of this file is the entire
+         # implementation.
+         self.use_softpick = use_softpick
++        # Entropy-gated heads: per-head alpha_h on the post-softmax
++        # context. Zero-init keeps the forward graph bit-identical at
++        # step 0. The actual gate is computed from the explicit manual
++        # attention weights, so we stash the alpha parameter here.
++        self.use_entropy_gate = use_entropy_gate
++        if self.use_entropy_gate:
++            self.entropy_gate_alpha = nn.Parameter(torch.zeros(self.n_heads))
++            self._last_entropy_gate = None
+         # 025 — SSMax: one learnable per-head scalar s_h (init 1.0).
+         # Built lazily; the parameter is never referenced when the
+         # flag is off, so the baseline path is bit-identical. The
+@@ -1544,7 +1556,7 @@ class MultiHeadAttention(nn.Module):
+         # The O1 talking_heads_out lever (docs/research/attention_output/)
+         # lives on the OUTPUT side of softmax (post-matmul(attn_w, V)),
+         # so it also forces the manual path.
+-        if self.use_fire_pe:
++        if self.use_fire_pe and not self.use_entropy_gate:
+             # 009 FIRE PE — drop-in for RoPE. Manual path: scores
+             # = Q K^T / √d_k + FIRE bias, then mask + softmax + @V.
+             # x is the original input [B, T, d_model] (still in scope).
+@@ -1612,6 +1624,7 @@ class MultiHeadAttention(nn.Module):
+             or self.use_cope  # 013 — CoPE forces the manual attention path.
+             or self.use_fox  # 020 — FoX: post-softmax multiply can't go through SDPA.
+             or self.use_softpick  # 022 — Softpick: defensive fallback (swap site is the FIRE branch above).
++            or self.use_entropy_gate  # entropy gate needs explicit [B,H,T,T] weights.
+             or self.use_ssmax  # 025 — SSMax: score-side multiply, can't go through SDPA's flash kernel.
+             or self.partial_rotary_p < 1.0
+             or (self._per_token_rope_log is not None)
+@@ -1643,6 +1656,9 @@ class MultiHeadAttention(nn.Module):
+             # Standard QK^T / sqrt(d_k). SDPA-style "scale" math.
+             scale = 1.0 / (float(self.d_k) ** 0.5)
+             scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
++            if self.use_fire_pe:
++                # FIRE is forced into the manual path when entropy-gate is on.
++                scores = scores + self.fire_bias(x)
+             # ---- Q3 per-head τ: multiply by τ_h (Q3 only — different
+             # from Q1 alibi which is a constant prior) ----
+             if self.use_cosine_attn:
+@@ -1715,6 +1731,17 @@ class MultiHeadAttention(nn.Module):
+                 )
+             # Softmax
+             attn_w = torch.softmax(scores, dim=-1)
++            if self.use_entropy_gate:
++                # Entropy-normalized gate on the head output. Compute the
++                # Shannon entropy from the explicit attention weights, then
++                # normalize by log(valid keys) so h_norm stays in [0, 1].
++                attn_entropy = -(
++                    attn_w.float() * torch.log(attn_w.float().clamp_min(1e-9))
++                ).sum(dim=-1)
++                valid_keys = window.sum(dim=-1).clamp_min(2).to(attn_entropy.dtype)
++                h_norm = (attn_entropy / torch.log(valid_keys).view(1, 1, -1)).clamp(0.0, 1.0)
++                entropy_gate = 1.0 - self.entropy_gate_alpha.view(1, self.n_heads, 1) * h_norm
++                self._last_entropy_gate = entropy_gate.detach()
+             # 020 — FoX: multiplicative decay on probabilities (post-softmax),
+             # then row-renorm. Strictly orthogonal to the score-side tweaks
+             # above (which modify logits, not probs). Manual branch: same
+@@ -1726,6 +1753,8 @@ class MultiHeadAttention(nn.Module):
+                 attn_w = attn_w / attn_w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
+             attn_output = torch.matmul(attn_w, V)
++            if self.use_entropy_gate:
++                attn_output = attn_output * entropy_gate.unsqueeze(-1)
+             # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
+             # output. Sibling of Q5 (which mixes *scores* pre-softmax).
+             # attn_output: [B, H, T, D]. M: [H, H]. M init I → no-op
+@@ -2017,6 +2046,12 @@ class TransformerBlock(nn.Module):
+         # (see note at the MHA `use_softpick` kwarg). Default off →
+         # baseline path bit-identical.
+         use_softpick: bool = False,
++        # Entropy-gated heads. Passed through to MultiHeadAttention
++        # (per-head alpha_h scales the post-softmax head context by
++        # 1 - alpha_h * H_norm). Default off → baseline path
++        # bit-identical, but flag-on forces the manual path because
++        # the entropy needs explicit [B, H, T, T] weights.
++        use_entropy_gate: bool = False,
+         # 025 — SSMax. Passed through to MultiHeadAttention (see note
+         # at the MHA `use_ssmax` kwarg). Default off → baseline path
+         # bit-identical.
+@@ -2074,6 +2109,7 @@ class TransformerBlock(nn.Module):
+             use_cope=use_cope,
+             use_fox=use_fox,
+             use_softpick=use_softpick,
++            use_entropy_gate=use_entropy_gate,
+             use_ssmax=use_ssmax,
+             use_value_residual=use_value_residual,
+             use_tied_qk=use_tied_qk,
