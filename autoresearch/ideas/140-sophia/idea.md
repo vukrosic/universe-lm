@@ -1,8 +1,8 @@
 ---
 id: 140-sophia
-status: running
+status: needs-run
 round: 1
-updated: 2026-06-13T20:57:53Z
+updated: 2026-06-13T21:07:27Z
 transfer-risk: med
 plain: An optimizer that uses the second derivative (curvature) of the loss to take bigger steps in flat directions and smaller steps in steep ones.
 ---
@@ -55,6 +55,9 @@ With `use_sophia=False` (default) the `Sophia` class is never instantiated and t
 /venv/main/bin/python _arq_140-sophia.py
 ```
 (matches the convention of the other `_arq_*.py` wrappers — they invoke `train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`).
+
+### Re-code note (2026-06-14, round 1 → 2)
+A previous GPU run failed with `ImportError: cannot import name 'Tiny1M3MSophiaConfig' from configs.llm_config` because the box was stale at `7a69c1a` and missing the `bd5adf5` commit that introduced the config class. **No local code change is required** — the class exists at `configs/llm_config.py:2084` and `optimizers/sophia.py` imports cleanly. The local smoke test passed: `MinimalLLM(Tiny1M3MSophiaConfig)` builds 949,056 params (bit-identical to `Tiny1M3MConfig`), forward at step 0 is bit-identical when seeded the same way, and `Sophia._step_count` increments correctly through `.step()`. The box must `git pull` (or fast-forward to a commit ≥ `bd5adf5`) before the next queue picks up `_arq_140-sophia.py`; otherwise the import will keep failing.
 
 ### How the final val loss is read
 The trainer's `train_model` loop writes `metrics.json` to the run's `output_dir` after each eval milestone. The last entry in `metrics_history['val_losses']` (and the matching `val_perplexities`, `val_accuracies`) is the final val loss; the run-reporting harness reads it the same way as every other `_arq_*.py` A/B.
