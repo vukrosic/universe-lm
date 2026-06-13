@@ -250,6 +250,12 @@ class MinimalLLM(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         self.use_drop_key = getattr(config, "use_drop_key", False)
         self.drop_key_rate = getattr(config, "drop_key_rate", 0.1)
+        # 151 — RoV (Rotary Value Embeddings, gated). When on, the
+        # block's MHA applies the same rotary to V as to Q,K and
+        # mixes via a per-block scalar `rov_gate` (init 0 ⇒
+        # bit-identical to baseline at step 0). Default off → baseline
+        # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
+        self.use_rov = getattr(config, "use_rov", False)
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -488,6 +494,11 @@ class MinimalLLM(nn.Module):
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
+                        # 151 — RoV (Rotary Value Embeddings, gated):
+                        # per-block scalar `rov_gate` mixes the rotary-
+                        # rotated V into V via `V ← V + rov_gate·V_rot`.
+                        # Init 0 ⇒ bit-identical to baseline at step 0.
+                        use_rov=self.use_rov,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -636,6 +647,11 @@ class MinimalLLM(nn.Module):
                     # 147 — DropKey: per-head Bernoulli gate on K.
                     use_drop_key=self.use_drop_key,
                     drop_key_rate=self.drop_key_rate,
+                    # 151 — RoV (Rotary Value Embeddings, gated):
+                    # per-block scalar `rov_gate` mixes the rotary-
+                    # rotated V into V via `V ← V + rov_gate·V_rot`.
+                    # Init 0 ⇒ bit-identical to baseline at step 0.
+                    use_rov=self.use_rov,
                     use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                     out_op=getattr(config, "out_op", ""),
                     use_re_zero=getattr(config, "use_re_zero", False),

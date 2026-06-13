@@ -821,6 +821,19 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 151 — RoV (Rotary Value Embeddings, gated; Su et al. 2024
+        # Hunyuan-DiT / RoV for ViT, arXiv:2403.13257 §2.3). Apply the
+        # same rotary position embedding already used on Q, K to the
+        # value vector V as well, mixed via a per-block scalar gate
+        # `rov_gate = nn.Parameter(torch.zeros(1))`. Init 0 ⇒
+        # V_combined = V + 0·V_rot = V ⇒ step-0 forward graph
+        # bit-identical to baseline. The base rotary buffer is reused
+        # (no extra params beyond the 1 scalar/block = 12 at
+        # tiny1m3m). Default off → baseline path bit-identical. When
+        # `use_nope` or `use_cope` is on, the rotary is bypassed on
+        # Q,K; RoV becomes a no-op (the geometric lever is
+        # unavailable). See `autoresearch/ideas/151-rov-gated/idea.md`.
+        use_rov: bool = False,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -1238,6 +1251,17 @@ class MultiHeadAttention(nn.Module):
         # forward graph bit-identical to baseline.
         self.use_drop_key = use_drop_key
         self.drop_key_rate = float(drop_key_rate)
+        # 151 — RoV (Rotary Value Embeddings, gated). One learnable
+        # per-block scalar `rov_gate` (init 0 ⇒ step-0
+        # `V_combined = V + 0·V_rot = V` ⇒ bit-identical to baseline).
+        # The base rotary buffer already used for Q,K is reused for V,
+        # so no extra buffers. Applied in `forward()` between the GQA
+        # repeat and the [B,T,H,D] → [B,H,T,D] transpose. Default off
+        # → forward graph bit-identical to baseline. See
+        # `autoresearch/ideas/151-rov-gated/idea.md`.
+        self.use_rov = use_rov
+        if self.use_rov:
+            self.rov_gate = nn.Parameter(torch.zeros(1))
 
         # ============================================================================
         # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
@@ -1885,6 +1909,25 @@ class MultiHeadAttention(nn.Module):
             sigma = torch.nn.functional.softplus(self.q_noise_log)
             Q = Q + torch.randn_like(Q) * sigma
 
+        # 151 — RoV (Rotary Value Embeddings, gated). Apply the same
+        # rotary position embedding already used on Q, K to the value
+        # vector V as well. `V_rot = self.rotary(V)` (torchtune's
+        # RotaryPositionalEmbeddings expects `[B, T, H, D]` — same
+        # layout as V here). Mixed in via a per-block scalar gate:
+        # `V_combined = V + rov_gate · V_rot`. Init 0 ⇒ step-0
+        # `V_combined = V + 0·V_rot = V` ⇒ bit-identical to baseline.
+        # The base rotary buffer is reused (no extra params beyond the
+        # 1 scalar/block = 12 at tiny1m3m). When `use_nope` or
+        # `use_cope` is on, `self.rotary` is None — RoV becomes a
+        # no-op (the geometric lever is unavailable because the Q,K
+        # rotary is bypassed). The default-off path (use_rov=False)
+        # never enters this branch, leaving V unchanged ⇒ baseline
+        # forward graph bit-identical. See
+        # `autoresearch/ideas/151-rov-gated/idea.md`.
+        if self.use_rov and self.rotary is not None:
+            V_rot = self.rotary(V)
+            V = V + self.rov_gate * V_rot
+
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
 
@@ -2336,6 +2379,11 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 151 — RoV (Rotary Value Embeddings, gated). Pass-through to
+        # the inner MHA. See `MultiHeadAttention.use_rov` for the
+        # mechanism. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/151-rov-gated/idea.md`.
+        use_rov: bool = False,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -2662,6 +2710,10 @@ class TransformerBlock(nn.Module):
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,
+            # 151 — RoV pass-through to the inner MHA. Default off
+            # → baseline path bit-identical. See
+            # `autoresearch/ideas/151-rov-gated/idea.md`.
+            use_rov=use_rov,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,

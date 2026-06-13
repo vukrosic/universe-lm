@@ -530,6 +530,17 @@ class LLMConfig:
     use_drop_key: bool = False
     drop_key_rate: float = 0.1
 
+    # 151 — RoV (Rotary Value Embeddings, gated). Apply the same rotary
+    # position embedding already used on Q,K to the value vector V as
+    # well, mixed in via a learnable per-block scalar gate
+    # `rov_gate = nn.Parameter(torch.zeros(1))`. Init 0 ⇒ V_combined =
+    # V + 0·V_rot = V ⇒ step-0 forward graph bit-identical to baseline.
+    # The base rotary is reused from Q,K (no extra buffer). When
+    # `use_nope`/`use_cope` is on, RoPE is bypassed and RoV is a no-op
+    # (the geometric lever is unavailable). Default off → baseline
+    # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
+    use_rov: bool = False
+
     # 134 — Mega: Moving Average Equipped Gated Attention
     # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
     # standard V projection with `V_mega = concat(V, V_ema)` where
@@ -2722,6 +2733,36 @@ class Tiny1M3MRDropConfig(Tiny1M3MConfig):
     use_rdrop: bool = True
     rdrop_alpha: float = 1.0
     rdrop_warmup_steps: int = 1000
+
+
+@dataclass
+class Tiny1M3MRoVGatedConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Gated Rotary Value Embeddings (RoV).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Applies the same rotary position embedding used on Q,K to the value
+    vector V as well, mixed in via a per-block scalar gate
+    `rov_gate = nn.Parameter(torch.zeros(1))` (init 0 ⇒
+    `V_combined = V + 0·V_rot = V`, step-0 bit-identical to baseline).
+    The base rotary buffer is reused (no new params beyond the 1
+    scalar/block = 12 scalars at tiny1m3m). Cost: one extra rotary
+    call + one elementwise add on V per block per forward — cheap
+    (≈1% of the d_model²·T FFN cost). Stays in the standard
+    SDPA path (no manual attention branch needed).
+
+    Strictly orthogonal to every closed and active lever: not QK
+    rotation (009-FIRE is the rotary baseline), not V sharing
+    (021-value-residual is cross-layer), not V modulation (closed
+    value-channel gates). It is the only lever on the *intra-layer V
+    position* axis. When `use_nope`/`use_cope` is on, RoV is a no-op
+    (the geometric lever is unavailable). NULL band |Δ| < 0.005 (the
+    lever is unverified on language modeling — paper wins come from
+    Hunyuan-DiT / SD3-style image generation; the bet is that the
+    same V-position-blindness failure mode transfers). DRIFT > +0.005
+    (the extra rotary call genuinely costs something at our tier).
+    PASS ≤ −0.005. See `autoresearch/ideas/151-rov-gated/idea.md`.
+    """
+    use_rov: bool = True
 
 
 @dataclass
