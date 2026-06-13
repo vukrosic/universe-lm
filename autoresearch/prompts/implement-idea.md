@@ -33,12 +33,14 @@ autoresearch/bin/flip.sh {{IDEA_SLUG}} implementing implement-button "claimed by
 Then read the whole `autoresearch/ideas/{{IDEA_SLUG}}/idea.md` — the mechanism,
 design sketch, and the bet are already written. Follow the design sketch.
 
-## Step 2 — Plan
+## Step 2 — Plan (inside idea.md)
 
-Write `autoresearch/ideas/{{IDEA_SLUG}}/plan.md`: the exact files and functions
+Append a `## Plan` section to the **bottom of `autoresearch/ideas/{{IDEA_SLUG}}/idea.md`**
+(do NOT create a separate plan.md, and do NOT touch the frontmatter or the
+existing sections above). The Plan section states: the exact files and functions
 you'll change (usually `models/layers.py` and/or `configs/llm_config.py`), the
-config flag name (`use_<feature>`), how it stays zero-init at step 0, and how the
-final val loss is read. Keep it tight.
+config flag name (`use_<feature>`), how it stays zero-init at step 0, the run
+command, and how the final val loss is read. Keep it tight.
 
 ## Step 3 — Implement
 
@@ -50,9 +52,10 @@ baseline path is untouched. Keep it minimal and < 200 LoC. Then confirm:
 
 Follow the existing run convention in `prompts/runner.md` / `PIPELINE.md` so the
 experiment is ready to launch (don't necessarily run the full training here —
-just make it runnable and note the exact command in `plan.md`).
+just make it runnable and note the exact command in the `## Plan` section of
+`idea.md`).
 
-## Step 4 — Mark done (tracking) and stop
+## Step 4 — Mark done, signal the app, and stop
 
 When the code is in place and verified to import/toggle:
 
@@ -68,4 +71,14 @@ autoresearch/bin/flip.sh {{IDEA_SLUG}} needs-review implement-button "blocked: <
 ```
 
 Print a short log: idea slug, files changed, the flag name, the run command, and
-the final status. Then stop — implement only this one idea.
+the final status.
+
+**Finally — this is the last command you run.** Ping the app so it puts the idea
+in the GPU queue and closes this tmux session for you:
+
+```bash
+curl -s -X POST {{DONE_URL}} -H 'Content-Type: application/json' -d '{"slug":"{{IDEA_SLUG}}"}'
+```
+
+The session will close ~2s after this call — that's expected. Do not open
+anything else; you are done with this one idea.

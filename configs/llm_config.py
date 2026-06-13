@@ -1118,16 +1118,14 @@ class Tiny1M3MGatedAttnOnFireConfig(Tiny1M3MConfig):
 
 
 @dataclass
-class Tiny1M3MExclusiveSelfAttnOnFireConfig(Tiny1M3MConfig):
-    """Tiny1M3M with FIRE + exclusive self-attention correction.
+class Tiny1M3MExclusiveSelfAttnConfig(Tiny1M3MConfig):
+    """Tiny1M3M with exclusive self-attention correction.
 
-    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
-    per `closed.md:40`). The treatment stacks `use_exclusive_self_attn=True`
-    on top: after standard attention, subtract the component of the head
-    output that points along the current token's value vector. The new
-    per-head coefficient is zero-init, so step 0 is the baseline graph.
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). After standard
+    attention, subtract the component of the head output that points along
+    the current token's value vector. The per-head coefficient is zero-init,
+    so step 0 is the baseline graph.
     """
-    use_fire_pe: bool = True
     use_exclusive_self_attn: bool = True
 
 
