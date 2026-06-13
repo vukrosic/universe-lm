@@ -40,6 +40,24 @@ Use the `mcp__bing-search__bing_web_search` tool plus these sources:
 
 Prefer levers with **published gains at ≥100M scale** (lower transfer risk).
 
+## Step 2.5 — Think it through before filing (and bail if it's weak)
+
+For each candidate, actually reason about **how it would be built and why it
+would work** before you write it down — don't just paraphrase the abstract:
+- Sketch the mechanism concretely: which tensors/ops change, where it slots into
+  a standard transformer block, how it stays < 200 LoC and zero-init at step 0.
+- Reason about *why* it should lower val loss at tiny1m3m specifically — name the
+  failure mode of the baseline it fixes, not just "it helped at 1B".
+- Think about what could make it a dead end: is it secretly a hyperparameter? does
+  the gain plausibly vanish at 0.94M params? is it equivalent to a `closed.md`
+  entry?
+
+**If, while designing it, you conclude it's a bad idea** (not a real mechanism,
+can't be zero-init, almost certainly null at tiny scale, or a near-duplicate),
+**drop it and pick another** — don't force a weak idea just to hit the count.
+The goal is 3 *good* ideas, so keep searching until you have 3 you actually
+believe in.
+
 ## Step 3 — File each idea
 
 For each of the 3 ideas, find the next free 3-digit number
@@ -62,7 +80,15 @@ plain: <ONE line, zero jargon — what this idea tries, explained to a non-exper
 <paper title + arXiv id / repo / post URL. Prefer 2025-2026 work.>
 
 ## Mechanism
-<1-2 sentences: the math or operation. Must be < 200 LoC in this repo.>
+<2-4 sentences: the math or operation, precisely. Must be < 200 LoC in this repo.>
+
+## Design sketch (how it works + how to build it)
+<A short but concrete plan, ~5-8 lines: which files/functions change (e.g.
+`models/layers.py`, `configs/llm_config.py`), the config flag name
+(`use_<feature>`), how it stays byte-identical to the baseline at step 0
+(zero/identity init), and the one-line intuition for *why* it lowers loss — the
+specific baseline weakness it targets. Enough that an implementer could start
+without re-deriving the idea.>
 
 ## Scale evidence
 <largest scale the source showed gains at, and a one-line justification for the

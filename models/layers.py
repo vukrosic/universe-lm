@@ -479,6 +479,7 @@ class MultiHeadAttention(nn.Module):
         use_attn_output_gate: bool = False,
         use_value_channel_gate: bool = False,
         use_attn_output_channel_gate: bool = False,
+        use_exclusive_self_attn: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -800,6 +801,12 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_output_channel_gate = use_attn_output_channel_gate
         if self.use_attn_output_channel_gate:
             self.attn_output_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
+        # #107 Exclusive self-attn: subtract the projection of the head
+        # output onto its current-token value vector. Per-head scalar gate
+        # is zero-init so step 0 is the baseline graph.
+        self.use_exclusive_self_attn = use_exclusive_self_attn
+        if self.use_exclusive_self_attn:
+            self.exclusive_self_attn = nn.Parameter(torch.zeros(n_heads))
         # 024 — Gated Attention: per-head *scalar* input-conditional
         # sigmoid gate on `o_h = A_h V_h`. `nn.Linear(d_model, n_heads)`,
         # both weight and bias zero-init. At init: `2·σ(0) = 1.0` exactly
@@ -1916,6 +1923,14 @@ class MultiHeadAttention(nn.Module):
             attn_output = F.scaled_dot_product_attention(
                 Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
             )
+        # #107 Exclusive self-attn: remove the component of each head's
+        # output that lies along the current token's value vector.
+        # V is already in [B, H, T, D] after the GQA repeat_interleave
+        # step above. Zero-init coefficient keeps step 0 identical.
+        if self.use_exclusive_self_attn:
+            v_norm_sq = V.pow(2).sum(dim=-1, keepdim=True).clamp_min(1e-6)
+            v_proj = (attn_output * V).sum(dim=-1, keepdim=True) / v_norm_sq
+            attn_output = attn_output - self.exclusive_self_attn.view(1, self.n_heads, 1, 1) * v_proj * V
         if self.use_attn_output_gate:
             gate = 1.0 + self.attn_output_gate.view(1, self.n_heads, 1, 1)
             attn_output = attn_output * gate
@@ -1973,6 +1988,7 @@ class TransformerBlock(nn.Module):
         use_attn_output_gate: bool = False,
         use_value_channel_gate: bool = False,
         use_attn_output_channel_gate: bool = False,
+        use_exclusive_self_attn: bool = False,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -2126,6 +2142,7 @@ class TransformerBlock(nn.Module):
             use_attn_output_gate=use_attn_output_gate,
             use_value_channel_gate=use_value_channel_gate,
             use_attn_output_channel_gate=use_attn_output_channel_gate,
+            use_exclusive_self_attn=use_exclusive_self_attn,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,

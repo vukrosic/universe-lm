@@ -1,8 +1,8 @@
 ---
 id: 107-exclusive-self-attn
-status: needs-taste
+status: implementing
 round: 1
-updated: 2026-06-13T05:32:00Z
+updated: 2026-06-13T06:28:24Z
 transfer-risk: low
 plain: It tries to make attention stop spending effort on the current word itself so it can use more context.
 ---

@@ -82,6 +82,11 @@ class LLMConfig:
     # output *= (1 + gate). This is the channelwise sibling of
     # use_attn_output_gate.
     use_attn_output_channel_gate: bool = False
+    # #107 Exclusive self-attn: subtract the component of the attention
+    # output that lies along the current token's value vector. Zero-init
+    # per-head coefficient → step-0 is baseline; default off keeps the
+    # existing attention path bit-identical.
+    use_exclusive_self_attn: bool = False
     # #21 LayerScale: zero-init per-channel scales on attention and MLP residual
     # outputs. Starts as exact baseline via branch *= (1 + gate).
     use_layerscale: bool = False
@@ -1110,6 +1115,20 @@ class Tiny1M3MGatedAttnOnFireConfig(Tiny1M3MConfig):
     """
     use_fire_pe: bool = True
     use_gated_attn: bool = True
+
+
+@dataclass
+class Tiny1M3MExclusiveSelfAttnOnFireConfig(Tiny1M3MConfig):
+    """Tiny1M3M with FIRE + exclusive self-attention correction.
+
+    A/B vs the FIRE-equipped baseline (the 009 WIN signature, val 6.3234
+    per `closed.md:40`). The treatment stacks `use_exclusive_self_attn=True`
+    on top: after standard attention, subtract the component of the head
+    output that points along the current token's value vector. The new
+    per-head coefficient is zero-init, so step 0 is the baseline graph.
+    """
+    use_fire_pe: bool = True
+    use_exclusive_self_attn: bool = True
 
 
 @dataclass

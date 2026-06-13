@@ -231,6 +231,10 @@ class MinimalLLM(nn.Module):
         # pre-merge. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/024-gated-attention/plan.md`.
         self.use_gated_attn = getattr(config, "use_gated_attn", False)
+        # #107 Exclusive self-attn: subtract the projection of the head
+        # output onto the current token's value vector. Default off →
+        # baseline path bit-identical.
+        self.use_exclusive_self_attn = getattr(config, "use_exclusive_self_attn", False)
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -351,6 +355,7 @@ class MinimalLLM(nn.Module):
                     use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
                     use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
                     use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
+                    use_exclusive_self_attn=self.use_exclusive_self_attn,
                     use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                     out_op=getattr(config, "out_op", ""),
                     use_re_zero=getattr(config, "use_re_zero", False),
