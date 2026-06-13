@@ -3,7 +3,7 @@
 Current Vast box for this repo, verified 2026-06-13:
 
 ```bash
-ssh -L 8080:localhost:8080 -p 52649 root@1.208.108.242
+ssh -L 8080:localhost:8080 -p 52674 root@1.208.108.242
 ```
 
 The `-L 8080:localhost:8080` forward keeps any service you start on the remote

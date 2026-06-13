@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:54:08Z","agent":"implement-button","idea":"129-yoco","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T13:04:58Z","agent":"implement-button","idea":"129-yoco","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"129-yoco","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:59:37Z","agent":"runner","idea":"129-yoco","from":"running","to":"done","round":1,"note":"NULL: trt=6.5038 vs ctrl 6.4272 (Δ +0.0766 wrong-sign, 15× null band) at tiny1m3m; YOCO shared-KV upper-half loses expressiveness at 12L/split=6; lever is inference-memory, invisible at 0.94M training — re-eval at >=135M Phase-2 if inference-memory is added to metric — 2026-06-13"}

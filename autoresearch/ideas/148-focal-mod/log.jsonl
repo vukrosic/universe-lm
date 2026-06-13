@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T20:06:28Z","agent":"implement-button","idea":"148-focal-mod","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T20:12:33Z","agent":"implement-button","idea":"148-focal-mod","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T20:23:26Z","agent":"runner","idea":"148-focal-mod","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (ctrl + 146 + 148 + ctrl2)"}
+{"ts":"2026-06-13T20:32:25Z","agent":"runner","idea":"148-focal-mod","from":"running","to":"done","round":1,"note":"NULL: trt=6.4481 vs ctrl=6.4409 Δ=+0.0072 inside |Δ|<0.01 null band; train_loss trt 6.4377 > ctrl 6.4242 wrong sign; closes non-softmax-attention axis at 0.94M — focal modulation gated-additive context cannot replace softmax at this tier"}

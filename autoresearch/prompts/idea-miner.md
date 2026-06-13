@@ -78,7 +78,7 @@ no asking, no stopping early:
 
 (`upstream` = every `idea.md` whose status is *not* `done`/`rejected`/`needs-run`/
 `running` — i.e. `needs-taste`, `needs-repitch`, `needs-review`, `needs-revision`,
-`needs-plan`, `needs-codereview`, `needs-recode`, and their `-ing` locks. Ideas on
+`needs-plan`, `needs-recode`, and their `-ing` locks. Ideas on
 the GPU don't count.)
 
 Run the **re-pitch queue** (below) before mining — a sent-back idea is already an

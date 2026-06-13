@@ -1,8 +1,8 @@
 ---
 id: 112-lookahead-opt
-status: running
+status: done
 round: 1
-updated: 2026-06-13T10:31:25Z
+updated: 2026-06-13T10:43:16Z
 transfer-risk: med
 plain: It tries to slow the optimizer down by taking a few fast steps in one direction and then averaging back, so the model doesn't overshoot in any one step.
 ---

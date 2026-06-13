@@ -22,18 +22,20 @@ Every stage is a **doer** paired with an adversarial **critic**. The doer
 produces an artifact; the critic, whose default is skeptical, issues one verdict
 (`accept` / `revise` / `reject`); on `revise` the doer revises and they loop, up
 to a **3-round cap** after which the critic must `accept` or `reject` — no idea
-cycles forever. An idea must clear all three gates before it runs:
+cycles forever. An idea must clear both gates, then get coded, before it runs:
 
 | Gate | Doer | Critic | Question |
 |---|---|---|---|
 | **Taste** | miner | taste-reviewer | Is this idea worth a slot *at all*? |
 | **Definition** | reviser | reviewer | Is the idea *fully & soundly specified*? |
-| **Code** | code-implementer | code-reviewer | Does the code *match the spec & run correctly*? |
 
-In the taste and code loops the **doer revises itself**; the definition loop uses
-a separate reviser. **Every idea runs at one tier only — `tiny1m3m` (0.94M params
-· 3M tokens), seed 42** — and takes the full path through all three gates. There
-is no larger tier and no cost-gate shortcut.
+After both gates pass, the **code-implementer** writes the code and releases it
+straight to the GPU queue — there is **no separate code-review gate**; the
+implementer owns correctness via its self-check, and a crashed run bounces back
+to it (`needs-recode`). In the taste loop the **doer revises itself**; the
+definition loop uses a separate reviser. **Every idea runs at one tier only —
+`tiny1m3m` (0.94M params · 3M tokens), seed 42**. There is no larger tier and no
+cost-gate shortcut.
 
 ## The one source of truth: `idea.md` frontmatter
 
@@ -65,14 +67,13 @@ Queued (any matching agent may claim):
 | `needs-review` | reviewer | definition (critic) |
 | `needs-revision` | reviser | definition (doer revises) |
 | `needs-plan` | code-implementer | code (doer) |
-| `needs-codereview` | code-reviewer | code (critic) |
-| `needs-recode` | code-implementer | code (doer revises) |
+| `needs-recode` | code-implementer | code (fix after a failed run) |
 | `needs-run` | run scheduler (human / Kaggle harness) | — |
 
 In-flight (acts as the lock — one agent holds it):
 
 `tasting` · `repitching` · `reviewing` · `revising` · `planning` ·
-`codereviewing` · `recoding` · `running`
+`recoding` · `running`
 
 Terminal:
 
@@ -104,20 +105,14 @@ miner ─► needs-taste                                    ┌─ GATE 1: TASTE
          │               │
          │          needs-revision → reviser → revising → idea.md, round++ → needs-review
          ▼
-      needs-plan                                          ┌─ GATE 3: CODE ─┐
-                │  code-implementer → planning → plan.md + code
+      needs-plan                                          ┌─ CODE (no gate) ─┐
+                │  code-implementer → planning → plan.md + code + self-check
                 ▼
-      needs-codereview
-                │  code-reviewer → codereviewing → codereview.md r_n verdict
-                ▼
-         ┌──────┴───────┬────────────────┐
-      accept          revise           reject ─► _closed/
-         │               │
-         │          needs-recode → code-implementer re-codes → needs-codereview (round++)
-         ▼
       needs-run
          │
       running ─► done   (evidence.md written)
+         │
+         └─ run crashed → needs-recode → code-implementer fixes → needs-run (round++)
 ```
 
 Each gate runs its **own** 3-round budget: on `accept` into the next gate, the
@@ -185,11 +180,11 @@ to inspect what the text actually changed to.
 
 ## Critic log format (append-only, newest round on top)
 
-Each gate's critic keeps its own log in the idea folder — `taste.md` (taste),
-`review.md` (definition), `codereview.md` (code). Same shape for all three:
+Each gate's critic keeps its own log in the idea folder — `taste.md` (taste) and
+`review.md` (definition). Same shape for both:
 
 ```markdown
-# <Taste|Review|Code-review> log — NNN <name>
+# <Taste|Review> log — NNN <name>
 
 ## r2 — 2026-06-08 — verdict: accept
 - ...
@@ -226,15 +221,15 @@ Verdict is exactly one of `accept` (definition gate calls it `approve`) /
   no multi-tier promotion — that scope is out. An idea whose payoff only appears
   at larger scale is a `reject` at the taste gate. Because there's a single tier,
   there is **no cost-gate**: every accepted idea takes the full path
-  `needs-taste → needs-review → needs-code → needs-codereview → needs-run`.
+  `needs-taste → needs-review → needs-plan → needs-run`.
 - **Rejects leave the scan path.** `rejected` → move the folder to
   `autoresearch/ideas/_closed/` and append a line to `autoresearch/closed.md`.
   Active greps stay clean.
 - **One verdict per critic pass.** A review that ends without exactly one verdict
   is malformed.
 - **Critics close, doers don't.** Each gate's critic is on the `closed.md` write
-  path, on its own `reject` (taste-reviewer, reviewer, code-reviewer). Tag the
-  reason by gate: `taste-reject` / `reject` / `code-reject`. Doers never close —
+  path, on its own `reject` (taste-reviewer, reviewer). Tag the
+  reason by gate: `taste-reject` / `reject`. Doers never close —
   if a doer is blocked it bounces the idea back to a `needs-*` queue, not to
   `rejected`. Post-run null results are appended to `closed.md` by the
   evidence/run step (human, for now). The miner **reads** `closed.md` before
@@ -248,6 +243,5 @@ Verdict is exactly one of `accept` (definition gate calls it `approve`) /
 | taste-reviewer | `autoresearch/prompts/idea-taste.md` | `needs-taste` | appends `taste.md`, → `needs-review`/`needs-run`/`needs-repitch`/`rejected` |
 | reviewer | `autoresearch/prompts/idea-reviewer.md` | `needs-review` | appends `review.md`, flips status |
 | reviser | `autoresearch/prompts/idea-reviser.md` | `needs-revision` | edits `idea.md`, `round++` |
-| code-implementer | `autoresearch/prompts/code-implementer.md` | `needs-recode`, then `needs-plan` | `plan.md` + code, → `needs-codereview` |
-| code-reviewer | `autoresearch/prompts/code-reviewer.md` | `needs-codereview` | appends `codereview.md`, → `needs-run`/`needs-recode`/`rejected` |
-| runner | `autoresearch/prompts/runner.md` | `needs-run` | `remote-results/<date>-vast-<tier>/{*.log,results.json}` + `evidence.md`, → `done` (and null line in `closed.md`) |
+| code-implementer | `autoresearch/prompts/code-implementer.md` | `needs-recode`, then `needs-plan` | `plan.md` + code, → `needs-run` |
+| runner | `autoresearch/prompts/runner.md` | `needs-run` | `remote-results/<date>-vast-<tier>/{*.log,results.json}` + `evidence.md`, → `done`/`needs-recode` (and null line in `closed.md`) |

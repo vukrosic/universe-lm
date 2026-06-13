@@ -5,6 +5,8 @@ import math
 from typing import Optional
 from configs.llm_config import LLMConfig
 from models.layers import TransformerBlock, make_norm
+from models.mhc import MultiStreamResidual
+from models.yoco import GlobalKVHead, YOCOLlamaBlock
 
 
 class TiedOutputMLP(nn.Module):
@@ -242,6 +244,12 @@ class MinimalLLM(nn.Module):
         # created, no application site taken). See
         # `autoresearch/ideas/109-kda-channel-gate/idea.md`.
         self.use_kda_channel_gate = getattr(config, "use_kda_channel_gate", False)
+        # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
+        # per-token Bernoulli mask on K during training. Default off →
+        # forward graph bit-identical to baseline. See
+        # `autoresearch/ideas/147-dropkey/idea.md`.
+        self.use_drop_key = getattr(config, "use_drop_key", False)
+        self.drop_key_rate = getattr(config, "drop_key_rate", 0.1)
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -255,6 +263,14 @@ class MinimalLLM(nn.Module):
         # 0 → step-0 ≡ no-conv baseline. Default off → baseline path
         # bit-identical. See `autoresearch/ideas/023-canon-conv/plan.md`.
         self.use_canon_conv = getattr(config, "use_canon_conv", False)
+        # 143 — ShortConv (Hyena ShortConv variant, Poli/Massaroli
+        # et al. 2023, arXiv:2302.10866): identity-init depthwise
+        # causal Conv1d on the residual stream, one conv per block,
+        # pre-attn pre-LN, per-block scalar gate init 0 → step-0 ≡
+        # no-conv baseline. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/143-shortconv/idea.md`.
+        self.use_short_conv = getattr(config, "use_short_conv", False)
+        self.short_conv_kernel = int(getattr(config, "short_conv_kernel", 3))
         # 021 — Value Residual Learning (cross-layer V shortcut).
         # Layer 0 stashes its post-W_V/post-GQA/post-transpose V on
         # `block.attention._v_residual`; the forward loop below reads it
@@ -263,6 +279,55 @@ class MinimalLLM(nn.Module):
         # on each MHA; step-0 ≡ baseline. Default off → baseline path
         # bit-identical. See `autoresearch/ideas/021-value-residual/plan.md`.
         self.use_value_residual = getattr(config, "use_value_residual", False)
+        # 117 — Soft MoE (Puigcerver et al. 2024): when True, the
+        # block's FFN is replaced with `SoftMoEFFN` (E parallel
+        # narrower FFNs + softmax dispatch/combine). Default off →
+        # baseline path bit-identical (no `SoftMoEFFN` module built).
+        # See `models/soft_moe.py` +
+        # `autoresearch/ideas/117-soft-moe/idea.md`.
+        self.use_soft_moe = getattr(config, "use_soft_moe", False)
+        self.soft_moe_n_experts = getattr(config, "soft_moe_n_experts", 4)
+        self.soft_moe_n_slots = getattr(config, "soft_moe_n_slots", 4)
+        # 145 — Expert-Choice MoE (Zhou et al. 2022): when True, the
+        # block's FFN is replaced with `ExpertChoiceMoE` (E parallel
+        # full-width FFNs + top-k-per-expert router). Default off →
+        # baseline path bit-identical (no `ExpertChoiceMoE` module
+        # built). See `models/expert_choice_moe.py` +
+        # `autoresearch/ideas/145-expert-choice/idea.md`.
+        self.use_expert_choice_moe = getattr(config, "use_expert_choice_moe", False)
+        self.n_moe_experts = getattr(config, "n_moe_experts", 4)
+        # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
+        # when on, each block builds a per-token `MoDRouter` and gates
+        # the block's residual update to the top-k = `mod_capacity · T`
+        # tokens. Default off → baseline path bit-identical. See
+        # `models/mod_router.py` +
+        # `autoresearch/ideas/118-mixture-of-depths/idea.md`.
+        self.use_mod = getattr(config, "use_mod", False)
+        self.mod_capacity = getattr(config, "mod_capacity", 0.5)
+        self.mod_router_hidden = getattr(config, "mod_router_hidden", 64)
+        # 131 — LayerDrop (Fan, Grave, Joulin 2019, arXiv:1904.09728,
+        # ICLR 2020). Whole-layer stochastic depth, independent of
+        # DropPath (111). Default off → baseline path bit-identical
+        # (no gate computed, no rescale). See
+        # `autoresearch/ideas/131-layer-drop/idea.md`.
+        self.use_layerdrop = getattr(config, "use_layerdrop", False)
+        self.layerdrop_p = getattr(config, "layerdrop_p", 0.2)
+        self.layerdrop_schedule = getattr(config, "layerdrop_schedule", "constant")
+        # 129 — YOCO (Sun et al. 2024, arXiv:2405.05254). When on,
+        # split the model into a lower half (layers 0..yoco_split-1,
+        # standard TransformerBlock with SWA on) and an upper half
+        # (layers yoco_split..n_layers-1, YOCOLlamaBlock with shared
+        # KV). The `GlobalKVHead` projects the lower-half final
+        # residual stream to `(K_g, V_g)` ONCE per forward, and the
+        # upper-half MHA reads them via the `shared_kv` kwarg
+        # (skipping the W_K, W_V slices of the merged qkvo_proj).
+        # Default off → no GlobalKVHead built, no upper-half
+        # ModuleList, baseline forward graph bit-identical.
+        # See `models/yoco.py` and
+        # `autoresearch/ideas/129-yoco/idea.md`.
+        self.use_yoco = getattr(config, "use_yoco", False)
+        self.yoco_split = int(getattr(config, "yoco_split", 6))
+        self.yoco_lower_window = int(getattr(config, "yoco_lower_window", 512))
         self.rope_base = getattr(config, "rope_base", 10000)
         self.use_tied_qk = getattr(config, "use_tied_qk", False)
         self.use_mla = getattr(config, "use_mla", False)
@@ -342,11 +407,182 @@ class MinimalLLM(nn.Module):
         self.global_attn_every_k = max(0, getattr(config, "global_attn_every_k", 0))
 
         def _block_uses_swa(i: int) -> bool:
+            if self.use_yoco:
+                # Lower half always uses SWA (default 512) — the
+                # upper-half block stack handles its own attention
+                # pattern (full causal, sharing the lower half's KV
+                # cache).
+                return i < self.yoco_split
             if not self.use_sliding_window:
                 return False
             if self.global_attn_every_k > 0 and ((i + 1) % self.global_attn_every_k == 0):
                 return False  # this is a global (full-attention) layer
             return True
+
+        # 129 — YOCO (Sun et al. 2024, arXiv:2405.05254): when the
+        # flag is on, build a SEPARATE upper-half ModuleList of
+        # `YOCOLlamaBlock` instances (use_shared_kv=True via the
+        # subclass), plus a single `GlobalKVHead` module that
+        # projects the lower-half final residual stream to
+        # `(K_g, V_g)`. `transformer_blocks` is still built with
+        # the full `n_unique` slot count for compatibility with the
+        # `tie_layer_groups` cycle in the existing forward loop, but
+        # the YOCO branch reads from `yoco_upper_blocks` instead
+        # for positions `i >= yoco_split`. To keep the wiring
+        # simple we also disable layer tying on the YOCO upper
+        # half (each upper layer has its own weights). Default off
+        # → no GlobalKVHead, no yoco_upper_blocks, baseline
+        # forward graph bit-identical. See
+        # `autoresearch/ideas/129-yoco/idea.md`.
+        if self.use_yoco:
+            if self.yoco_split < 1 or self.yoco_split >= config.n_layers:
+                raise ValueError(
+                    f"yoco_split={self.yoco_split} must be in "
+                    f"[1, n_layers={config.n_layers})"
+                )
+            self.global_kv_head = GlobalKVHead(
+                d_model=config.d_model,
+                kv_size=config.n_kv_heads * (config.d_model // config.n_heads),
+            )
+            # Build the upper-half stack separately so it can be
+            # different from the lower half (YOCOLlamaBlock with
+            # use_shared_kv=True). For simplicity at tiny1m3m we
+            # disable tying on the upper half.
+            self.yoco_upper_blocks = nn.ModuleList(
+                [
+                    YOCOLlamaBlock(
+                        config.d_model,
+                        config.n_heads,
+                        config.d_ff,
+                        config.max_seq_len,
+                        config.dropout,
+                        n_kv_heads=config.n_kv_heads,
+                        ffn_variant=config.ffn_variant,
+                        use_embed_residual=getattr(config, "use_embed_residual", False),
+                        use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
+                        use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
+                        use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
+                        use_exclusive_self_attn=self.use_exclusive_self_attn,
+                        use_kda_channel_gate=self.use_kda_channel_gate,
+                        # 147 — DropKey: per-head Bernoulli gate on K.
+                        use_drop_key=self.use_drop_key,
+                        drop_key_rate=self.drop_key_rate,
+                        use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
+                        out_op=getattr(config, "out_op", ""),
+                        use_re_zero=getattr(config, "use_re_zero", False),
+                        resid_mode=getattr(config, "resid_mode", ""),
+                        n_layers=config.n_layers,
+                        use_layerscale=getattr(config, "use_layerscale", False),
+                        use_layer_scale=getattr(config, "use_layer_scale", False),
+                        layer_scale_init=getattr(config, "layer_scale_init", 1e-4),
+                        use_value_embed=self.use_value_embed,
+                        use_query_embed=self.use_query_embed,
+                        use_key_embed=self.use_key_embed,
+                        use_output_embed=self.use_output_embed,
+                        use_q_gain=self.use_q_gain,
+                        use_k_gain=self.use_k_gain,
+                        use_deep_value_embed=self.use_deep_value_embed,
+                        deep_value_embed_hidden=deep_value_embed_hidden,
+                        use_ffn_embed=self.use_ffn_embed,
+                        use_qk_norm_post_rope=self.use_qk_norm_post_rope,
+                        # Upper-half blocks run with sliding window OFF
+                        # (the shared K_g, V_g are the global context
+                        # source — adding a per-layer SWA would only
+                        # mask out useful global signal).
+                        use_sliding_window=False,
+                        sliding_window_size=self.yoco_lower_window,
+                        use_nope=self.use_nope,
+                        rope_base=self.rope_base,
+                        use_fire_pe=self.use_fire_pe,
+                        fire_pe_d_phi=self.fire_pe_d_phi,
+                        use_gated_attn=self.use_gated_attn,
+                        use_cope=self.use_cope,
+                        use_fox=self.use_fox,
+                        use_softpick=self.use_softpick,
+                        use_ssmax=self.use_ssmax,
+                        use_canon_conv=self.use_canon_conv,
+                        # 143 — ShortConv pass-through to the YOCO
+                        # upper-half block. See
+                        # `autoresearch/ideas/143-shortconv/idea.md`.
+                        use_short_conv=self.use_short_conv,
+                        short_conv_kernel=self.short_conv_kernel,
+                        use_value_residual=self.use_value_residual,
+                        use_drop_path=getattr(config, "use_drop_path", False),
+                        drop_path_max=getattr(config, "drop_path_max", 0.1),
+                        use_soft_moe=self.use_soft_moe,
+                        soft_moe_n_experts=self.soft_moe_n_experts,
+                        soft_moe_n_slots=self.soft_moe_n_slots,
+                        # 145 — Expert-Choice MoE pass-through to the
+                        # YOCO upper-half block. Default off → FFN path
+                        # is bit-identical. See
+                        # `autoresearch/ideas/145-expert-choice/idea.md`.
+                        use_expert_choice_moe=self.use_expert_choice_moe,
+                        n_moe_experts=self.n_moe_experts,
+                        use_mod=self.use_mod,
+                        mod_capacity=self.mod_capacity,
+                        mod_router_hidden=self.mod_router_hidden,
+                        # 148 — Focal Modulation pass-through to the
+                        # YOCO upper-half block. Default off → MHA
+                        # path is bit-identical. See
+                        # `autoresearch/ideas/148-focal-mod/idea.md`.
+                        use_focal_mod=getattr(config, "use_focal_mod", False),
+                        focal_mod_kernels=getattr(config, "focal_mod_kernels", (3, 5, 7)),
+                        use_tied_qk=self.use_tied_qk,
+                        use_mla=self.use_mla,
+                        mla_latent_dim=self.mla_latent_dim,
+                        attention_dilation=self.attention_dilation,
+                        use_post_norm=self.use_post_norm,
+                        use_layernorm=self.use_layernorm,
+                        use_linear_attn=self.use_linear_attn,
+                        use_diff_attn=self.use_diff_attn,
+                        use_nsa_global=self.use_nsa_global,
+                        nsa_block=self.nsa_block,
+                        use_hybrid_heads=self.use_hybrid_heads,
+                        norm_type=self.norm_type,
+                        qk_norm_type=self.qk_norm_type,
+                        v_norm_type=self.v_norm_type,
+                        use_qk_layernorm=self.use_qk_layernorm,
+                        use_v_layernorm=self.use_v_layernorm,
+                        use_multiscale_heads=self.use_multiscale_heads,
+                        use_parallel_block=self.use_parallel_block,
+                        use_attn_sink=self.use_attn_sink,
+                        use_sub_ln=self.use_sub_ln,
+                        q_norm_type=self.q_norm_type,
+                        use_alibi_bias=self.use_alibi_bias,
+                        use_q_temp_token=self.use_q_temp_token,
+                        use_cosine_attn=self.use_cosine_attn,
+                        use_qk_bilinear=self.use_qk_bilinear,
+                        use_talking_heads_q=self.use_talking_heads_q,
+                        use_per_head_rope_base=self.use_per_head_rope_base,
+                        partial_rotary_p=self.partial_rotary_p,
+                        use_q_expansion=self.use_q_expansion,
+                        use_decoupled_content_pos=self.use_decoupled_content_pos,
+                        use_antisym_qk=self.use_antisym_qk,
+                        use_q_per_head_bias=self.use_q_per_head_bias,
+                        use_q_per_channel_gain=self.use_q_per_channel_gain,
+                        use_q_hd_gain=self.use_q_hd_gain,
+                        use_q_norm_gate=self.use_q_norm_gate,
+                        use_q_lowrank_refine=self.use_q_lowrank_refine,
+                        q_lowrank_refine_rank=self.q_lowrank_refine_rank,
+                        use_q_layerscale=self.use_q_layerscale,
+                        use_q_softplus_gain=self.use_q_softplus_gain,
+                        use_q_head_mix=self.use_q_head_mix,
+                        use_q_time_conv=self.use_q_time_conv,
+                        use_q_ema_smooth=self.use_q_ema_smooth,
+                        q_ema_alpha=self.q_ema_alpha,
+                        use_q_feature_map=self.use_q_feature_map,
+                        q_feature_map_hidden=self.q_feature_map_hidden,
+                        use_q_per_token_rope=self.use_q_per_token_rope,
+                        q_per_token_rope_hidden=self.q_per_token_rope_hidden,
+                        use_q_noise_reg=self.use_q_noise_reg,
+                        value_embed_rank=value_embed_rank,
+                    )
+                    for _ in range(config.n_layers - self.yoco_split)
+                ]
+            )
+        else:
+            self.global_kv_head = None
+            self.yoco_upper_blocks = None
 
         self.transformer_blocks = nn.ModuleList(
             [
@@ -364,12 +600,17 @@ class MinimalLLM(nn.Module):
                     use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
                     use_exclusive_self_attn=self.use_exclusive_self_attn,
                     use_kda_channel_gate=self.use_kda_channel_gate,
+                    # 147 — DropKey: per-head Bernoulli gate on K.
+                    use_drop_key=self.use_drop_key,
+                    drop_key_rate=self.drop_key_rate,
                     use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                     out_op=getattr(config, "out_op", ""),
                     use_re_zero=getattr(config, "use_re_zero", False),
                     resid_mode=getattr(config, "resid_mode", ""),
                     n_layers=config.n_layers,
                     use_layerscale=getattr(config, "use_layerscale", False),
+                    use_layer_scale=getattr(config, "use_layer_scale", False),
+                    layer_scale_init=getattr(config, "layer_scale_init", 1e-4),
                     use_value_embed=self.use_value_embed,
                     use_query_embed=self.use_query_embed,
                     use_key_embed=self.use_key_embed,
@@ -381,7 +622,15 @@ class MinimalLLM(nn.Module):
                     use_ffn_embed=self.use_ffn_embed,
                     use_qk_norm_post_rope=self.use_qk_norm_post_rope,
                     use_sliding_window=_block_uses_swa(i),
-                    sliding_window_size=self.sliding_window_size,
+                    # YOCO uses `yoco_lower_window` (default 512) on
+                    # the lower half; otherwise the standard
+                    # `sliding_window_size` from the config (default
+                    # 512). Both default to 512 at tiny1m3m, but
+                    # keep them distinct for clarity.
+                    sliding_window_size=(
+                        self.yoco_lower_window if self.use_yoco
+                        else self.sliding_window_size
+                    ),
                     use_nope=self.use_nope,
                     use_fire_pe=self.use_fire_pe,
                     fire_pe_d_phi=self.fire_pe_d_phi,
@@ -391,13 +640,38 @@ class MinimalLLM(nn.Module):
                     use_softpick=self.use_softpick,
                     use_ssmax=self.use_ssmax,
                     use_canon_conv=self.use_canon_conv,
+                    # 143 — ShortConv pass-through to the standard
+                    # transformer block. See
+                    # `autoresearch/ideas/143-shortconv/idea.md`.
+                    use_short_conv=self.use_short_conv,
+                    short_conv_kernel=self.short_conv_kernel,
                     use_value_residual=self.use_value_residual,
+                    # 117 — Soft MoE pass-through to the block.
+                    use_soft_moe=self.use_soft_moe,
+                    soft_moe_n_experts=self.soft_moe_n_experts,
+                    soft_moe_n_slots=self.soft_moe_n_slots,
+                    # 145 — Expert-Choice MoE pass-through to the block.
+                    use_expert_choice_moe=self.use_expert_choice_moe,
+                    n_moe_experts=self.n_moe_experts,
+                    # 118 — Mixture-of-Depths pass-through to the block.
+                    use_mod=self.use_mod,
+                    mod_capacity=self.mod_capacity,
+                    mod_router_hidden=self.mod_router_hidden,
+                    # 148 — Focal Modulation pass-through to the
+                    # block. Default off → MHA path is bit-identical.
+                    # See `autoresearch/ideas/148-focal-mod/idea.md`.
+                    use_focal_mod=getattr(config, "use_focal_mod", False),
+                    focal_mod_kernels=getattr(config, "focal_mod_kernels", (3, 5, 7)),
                     # 111 — DropPath / Stochastic Depth. Pass-through
                     # to the block; the per-step Bernoulli sample runs
                     # inside `TransformerBlock.forward` keyed off the
                     # `layer_index` kwarg passed by the model loop.
                     use_drop_path=getattr(config, "use_drop_path", False),
                     drop_path_max=getattr(config, "drop_path_max", 0.1),
+                    # 131 — LayerDrop. Pass-through to the block.
+                    use_layerdrop=self.use_layerdrop,
+                    layerdrop_p=self.layerdrop_p,
+                    layerdrop_schedule=self.layerdrop_schedule,
                     rope_base=self.rope_base,
                     use_tied_qk=self.use_tied_qk,
                     use_mla=self.use_mla,
@@ -449,11 +723,47 @@ class MinimalLLM(nn.Module):
                     use_q_per_token_rope=self.use_q_per_token_rope,
                     q_per_token_rope_hidden=self.q_per_token_rope_hidden,
                     use_q_noise_reg=self.use_q_noise_reg,
+                    # 134 — Mega EMA on V. Pass-through to each
+                    # MultiHeadAttention. The construction-time assert
+                    # requires 2·n_kv_heads == n_heads; tiny1m3m
+                    # satisfies this (n_kv_heads=2, n_heads=4). Default
+                    # off → baseline path bit-identical.
+                    use_mega=getattr(config, "use_mega", False),
+                    mega_beta=getattr(config, "mega_beta", 0.9),
+                    mega_use_input=getattr(config, "mega_use_input", True),
                     value_embed_rank=value_embed_rank,
                 )
                 for i in range(n_unique)
             ]
         )
+
+        # 116 — Hyper-Connections (mHC, Xie et al. 2024): when on,
+        # wrap each tied-block slot with a per-position
+        # `MultiStreamResidual` that applies (A_l, B_l, C_l) mixing on
+        # n_resid parallel residual streams. Per-position (not per-
+        # unique-block) so tied layers still get distinct mixings.
+        # Default off → no wrappers built, baseline path bit-identical.
+        # See `autoresearch/ideas/116-hyper-connections/idea.md`.
+        self.use_hyper_connections = getattr(config, "use_hyper_connections", False)
+        self.hc_n_resid = max(1, getattr(config, "hc_n_resid", 4))
+        if self.use_hyper_connections:
+            if config.d_model % self.hc_n_resid != 0:
+                raise ValueError(
+                    f"d_model ({config.d_model}) must be divisible by "
+                    f"hc_n_resid ({self.hc_n_resid})"
+                )
+            self.hc_wrappers = nn.ModuleList(
+                [
+                    MultiStreamResidual(
+                        self.transformer_blocks[i // self.tie_layer_groups],
+                        n_resid=self.hc_n_resid,
+                        d_model=config.d_model,
+                    )
+                    for i in range(config.n_layers)
+                ]
+            )
+        else:
+            self.hc_wrappers = None
 
         # #20 embedding residual: rms-norm the original embedding once at the top,
         # re-injected into every block.
@@ -503,6 +813,33 @@ class MinimalLLM(nn.Module):
         self.use_vocab_bias = getattr(config, "use_vocab_bias", False)
         if self.use_vocab_bias:
             self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))
+
+        # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
+        # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When
+        # `use_mos=True`, allocate K-1 fresh vocab-sized LM heads
+        # (`mos_heads_extra`) plus a small mix projection `mos_pi_proj`
+        # of shape `(d_model → K)`. Head 0 is computed functionally
+        # from the existing tied `lm_head` (full case) or from the
+        # factorized `(emb_proj, token_embedding)` composition
+        # (factorized case, tiny1m3m) — this guarantees step-0
+        # bit-identity with the baseline (head 0's logits equal
+        # the baseline's tied-head logits at init). The K-1 fresh
+        # heads are NOT tied to `token_embedding`; their
+        # `(K-1)·vocab·d_model` param cost is the lever's headline
+        # expense. Default off → no MoS module built, baseline
+        # forward graph bit-identical. See
+        # `autoresearch/ideas/144-mos/idea.md`.
+        self.use_mos = getattr(config, "use_mos", False)
+        self.n_mos_components = max(1, int(getattr(config, "n_mos_components", 4)))
+        if self.use_mos:
+            K = self.n_mos_components
+            self.mos_heads_extra = nn.ModuleList(
+                [
+                    nn.Linear(config.d_model, config.vocab_size, bias=False)
+                    for _ in range(K - 1)
+                ]
+            )
+            self.mos_pi_proj = nn.Linear(config.d_model, K, bias=True)
 
         # Output layers
         self.norm = make_norm(config.d_model, self.norm_type, self.use_layernorm)
@@ -567,6 +904,18 @@ class MinimalLLM(nn.Module):
                 for block in self.transformer_blocks:
                     nn.init.zeros_(block.attention.gated_attn_proj.weight)
                     nn.init.zeros_(block.attention.gated_attn_proj.bias)
+        # 144 — Mixture of Softmaxes: AFTER the global init, force the
+        # mix projection to a one-hot at step 0. `W_π.weight = 0`,
+        # `W_π.bias = [+1e4, -1e4, -1e4, -1e4]` ⇒ `softmax(W_π·h) =
+        # [1, 0, 0, 0]` exactly in fp32 (the `exp(-2e4)` terms
+        # underflow to 0). The downstream `logsumexp` then reduces to
+        # `log_softmax(W_0 · h)` — bit-identical to the standard tied
+        # head at step 0.
+        if self.use_mos:
+            with torch.no_grad():
+                nn.init.zeros_(self.mos_pi_proj.weight)
+                self.mos_pi_proj.bias.fill_(-1e4)
+                self.mos_pi_proj.bias[0] = 1e4
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -576,7 +925,22 @@ class MinimalLLM(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, x):
+    def _embed_input(self, x):
+        """Token embedding lookup + scaling + position_dropout.
+
+        Returns (tok, x_post, x0, ve):
+          tok     : raw embedding lookup (B, T, R) or (B, T, d_model); the
+                    source for any value/query/key/output/ffn/deep
+                    embedding branches.
+          x_post  : residual-stream input to the transformer stack
+                    (post emb_proj if emb_rank is set, post emb_scale,
+                    post any encode-only output MLP).
+          x0      : optional pre-norm residual-stream reference used by
+                    the #20 embed-residual re-injection.
+          ve      : raw token embedding passed to attention as the V/Q/K
+                    injection source when any of those flags is on;
+                    None otherwise.
+        """
         # Token embeddings
         tok = self.token_embedding(x)  # rank-r (or d_model) lookup, reused as value-embed source
         # #76 embedding scale: -1.0 (default) = use sqrt(d_model).
@@ -585,25 +949,25 @@ class MinimalLLM(nn.Module):
         if emb_scale < 0:
             emb_scale = math.sqrt(self.config.d_model)
         if self.emb_rank is None:
-            x = tok * emb_scale
+            x_post = tok * emb_scale
         else:
-            x = self.emb_proj(tok) * emb_scale
+            x_post = self.emb_proj(tok) * emb_scale
         # B0 Tied output MLP: encode runs once on the (scaled) embedding,
         # before the block loop. Modify the input to the stack by adding
         # Wd·φ(Wu·x). See TiedOutputMLP docstring for step-0 caveat.
         if self.use_tied_output_mlp:
-            x = self.tied_output_mlp.encode(x)
+            x_post = self.tied_output_mlp.encode(x_post)
         # B1 Untied output MLP: same shape as B0 but with separate decode
         # weights. Encode path uses the same Wu/Wd pattern as B0 (no
         # transpose here — the tying is on the decode side only). See
         # UntiedOutputMLP docstring for the B0-shared step-0 caveat.
         if self.use_untied_output_mlp:
-            x = self.untied_output_mlp.encode(x)
+            x_post = self.untied_output_mlp.encode(x_post)
         # B2 Tied linear output MLP: same encode pattern as B0 (Wu then Wd,
         # no activation). See TiedLinearOutputMLP docstring for the
         # B0-shared step-0 caveat.
         if self.use_tied_linear_output_mlp:
-            x = self.tied_linear_output_mlp.encode(x)
+            x_post = self.tied_linear_output_mlp.encode(x_post)
         # #29 value-embed source: the raw token embedding, injected into each V
         # #30 query-embed source: same `tok` (raw embedding). Both Q-embed and
         # V-embed can read from the same source, so we only branch once.
@@ -612,14 +976,24 @@ class MinimalLLM(nn.Module):
         # share the same `ve` plumbing.
         ve = tok if (self.use_value_embed or self.use_query_embed or self.use_key_embed or self.use_output_embed or self.use_deep_value_embed or self.use_ffn_embed) else None
         if self.use_smear_gate:
-            prev = torch.zeros_like(x)
-            prev[:, 1:] = x[:, :-1]
-            x = x + self.smear_gate * prev
-        x = self.position_dropout(x)
+            prev = torch.zeros_like(x_post)
+            prev[:, 1:] = x_post[:, :-1]
+            x_post = x_post + self.smear_gate * prev
+        x_post = self.position_dropout(x_post)
 
         # #20 original embedding, normed once, re-injected into every block
-        x0 = self.x0_norm(x) if self.use_embed_residual else None
+        x0 = self.x0_norm(x_post) if self.use_embed_residual else None
 
+        return tok, x_post, x0, ve
+
+    def _run_post_embed(self, x, x0, ve):
+        """Run the transformer stack from the post-embedding residual
+        stream through to logits. Called by `forward` after the
+        standard `_embed_input` and by `seqmix_forward` after the
+        embedding-level mixup. The body is unchanged from the prior
+        monolithic `forward` — pulled out only so the seqmix path can
+        reuse it without re-implementing the loop.
+        """
         # Pass through transformer blocks
         unet_skips = []
         # 021 — Value Residual: V_1 is a forward-pass-local stash;
@@ -633,8 +1007,24 @@ class MinimalLLM(nn.Module):
         # or the lever is off altogether (`if self.use_value_residual:`
         # guard in MHA).
         v_residual = None
+        # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
+        # across all upper-half blocks. Computed ONCE on the lower
+        # half's final residual stream after the last lower-half
+        # block (i = yoco_split - 1). Stays None on the lower half so
+        # those blocks use the standard K, V projection path.
+        shared_kv = None
         for i in range(self.config.n_layers):
-            block = self.transformer_blocks[i // self.tie_layer_groups]
+            # 129 — YOCO dispatch: for i >= yoco_split, use the
+            # upper-half ModuleList (YOCOLlamaBlock with
+            # use_shared_kv=True) and pass `shared_kv` through. For
+            # i < yoco_split, use the standard transformer_blocks
+            # slot (with SWA on). Default off → standard path.
+            if self.use_yoco and i >= self.yoco_split:
+                block = self.yoco_upper_blocks[i - self.yoco_split]
+                block_shared_kv = shared_kv
+            else:
+                block = self.transformer_blocks[i // self.tie_layer_groups]
+                block_shared_kv = None
             if self.use_unet_skips and i >= self.config.n_layers - self.unet_skip_count:
                 skip_idx = self.config.n_layers - 1 - i
                 gate = self.unet_skip_gates[skip_idx]
@@ -644,7 +1034,30 @@ class MinimalLLM(nn.Module):
                 if self.unet_bridge_norm:
                     skip = self.unet_bridge_norms[skip_idx](skip)
                 x = x + gate * skip
-            x = block(x, x0, ve, v_residual=v_residual, layer_index=i)
+            # 116 — Hyper-Connections: when on, the per-position
+            # wrapper applies (A_l, B_l, C_l) stream mixing around the
+            # tied block. Default off → direct block call (baseline path
+            # bit-identical). Wrapper signature matches `block.forward`
+            # exactly, so no extra plumbing.
+            # YOCO + Hyper-Connections is currently unsupported (the
+            # wrapper would need extra plumbing for shared_kv); reject
+            # loudly if both are on simultaneously.
+            if self.use_hyper_connections:
+                assert not self.use_yoco, (
+                    "use_hyper_connections + use_yoco is not supported "
+                    "(the Hyper-Connections wrapper does not plumb "
+                    "shared_kv through to the upper-half block)"
+                )
+                x = self.hc_wrappers[i](
+                    x, x0, ve, v_residual=v_residual, layer_index=i
+                )
+            else:
+                x = block(
+                    x, x0, ve,
+                    v_residual=v_residual,
+                    layer_index=i,
+                    shared_kv=block_shared_kv,
+                )
             if self.use_value_residual and i == 0:
                 # After layer-0 MHA forward, V_1 is stashed at
                 # `block.attention._v_residual` (post-transpose,
@@ -652,6 +1065,12 @@ class MinimalLLM(nn.Module):
                 v_residual = block.attention._v_residual
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
+            # 129 — YOCO: compute (K_g, V_g) once at the boundary
+            # between the lower and upper halves. The next iteration
+            # of the loop (i + 1 == yoco_split) will read this as
+            # `shared_kv`.
+            if self.use_yoco and i == self.yoco_split - 1:
+                shared_kv = self.global_kv_head(x)
 
         # Output projection
         x = self.norm(x)
@@ -672,6 +1091,85 @@ class MinimalLLM(nn.Module):
         if self.use_tied_linear_output_mlp:
             x = self.tied_linear_output_mlp.decode(x)
         x = self.output_dropout(x)
+        # 144 — Mixture of Softmaxes: when on, replace the single
+        # vocab-sized head with K parallel heads plus a per-token mix.
+        # Head 0 is computed functionally from the existing tied
+        # `lm_head` (full case) or the factorized composition
+        # (factorized case) so it equals the baseline tied head at
+        # step 0. Heads 1..K-1 are fresh `nn.Linear`s in
+        # `mos_heads_extra`. We return `log p_mixed` (a
+        # log-probability) instead of raw logits. `F.cross_entropy`
+        # accepts this directly because `logsumexp(log_p) =
+        # log(Σ exp(log_p)) = log(1) = 0`, so `F.cross_entropy(log_p,
+        # label) = -log_p[label]` — the correct NLL of the mixture.
+        # `argmax` and `softmax` over log_p give the same
+        # predictions/probs as the underlying distribution. The
+        # post-head logit tweaks (logit_softcap / output_temp /
+        # vocab_bias / output_adapter) operate on raw logits, not
+        # log-probs, so they are SKIPPED in the MoS path — MoS is its
+        # own complete output mechanism. See
+        # `autoresearch/ideas/144-mos/idea.md`.
+        if self.use_mos:
+            # Compute the mixture log-probability in chunks along B*T to
+            # keep peak memory bounded. The naive path materializes
+            # `(B, T, K, V)` for `log_softmax` — at tiny1m3m (B=2,
+            # T=2048, K=4, V=49152, fp32) that's 3.0 GiB for
+            # `logits_k` plus another 3.0 GiB for the `log_softmax`
+            # output plus the broadcast add and `logsumexp` output,
+            # totaling ~9 GiB just for the MoS forward — too big for
+            # an RTX 3060 12GB. We chunk over the leading token
+            # dimension so per-chunk memory is O(chunk · K · V · 4B).
+            # Default `mos_chunk_size=256` keeps the per-chunk peak
+            # around 200 MB (5 tensors of size chunk·V = 48 MB each,
+            # ~240 MB concurrent). Identity at step 0 still holds:
+            # for every chunk the result is `log_softmax(W_0 · h)`
+            # (because `mos_pi_proj` is init one-hot at [+1e4, -1e4,
+            # -1e4, -1e4] ⇒ `log π = [0, -2e4, -2e4, -2e4]` ⇒ the
+            # k>0 contributions underflow in `logaddexp` and reduce
+            # to the k=0 contribution). The chunks are concatenated
+            # before returning, so the output is bit-identical to
+            # the un-chunked reference at step 0.
+            K = self.n_mos_components
+            chunk = int(getattr(self.config, "mos_chunk_size", 256))
+            V = self.config.vocab_size
+            x_flat = x.reshape(-1, x.shape[-1])  # (N, d_model)
+            N = x_flat.shape[0]
+            log_p_chunks = []
+            for start in range(0, N, chunk):
+                end = min(start + chunk, N)
+                xc = x_flat[start:end]  # (n, d_model)
+                # Head 0 (= tied lm_head) functionally so head 0's
+                # gradient flows back into `token_embedding` (and
+                # `emb_proj` in the factorized case).
+                if self.emb_rank is None:
+                    logits_0 = F.linear(xc, self.token_embedding.weight)
+                else:
+                    z = F.linear(xc, self.emb_proj.weight.t())
+                    logits_0 = F.linear(z, self.token_embedding.weight)
+                # log_p_0 = log_softmax(logits_0). Compute via
+                # logsumexp + in-place sub to avoid allocating a full
+                # log-prob intermediate per chunk.
+                log_z_0 = torch.logsumexp(logits_0, dim=-1, keepdim=True)
+                logits_0.sub_(log_z_0)  # in-place → log_p_0
+                # Mix weights: π = softmax(W_π · x) over K components.
+                log_pi = F.log_softmax(self.mos_pi_proj(xc), dim=-1)  # (n, K)
+                # log_p_mixed = logsumexp_k (log_pi_k + log_p_k).
+                # Build incrementally so we never materialize (n, K, V).
+                log_p_mixed = logits_0 + log_pi[:, 0:1]  # (n, V)
+                for k_idx in range(1, K):
+                    logits_h = self.mos_heads_extra[k_idx - 1](xc)  # (n, V)
+                    log_z = torch.logsumexp(logits_h, dim=-1, keepdim=True)
+                    logits_h.sub_(log_z)  # in-place → log_p_k
+                    log_p_mixed = torch.logaddexp(
+                        log_p_mixed, log_pi[:, k_idx:k_idx + 1] + logits_h
+                    )
+                log_p_chunks.append(log_p_mixed)
+            log_p_mixed = torch.cat(log_p_chunks, dim=0)  # (N, V)
+            # Restore the original leading shape (typically (B, T, V)).
+            leading = x.shape[:-1]
+            log_p_mixed = log_p_mixed.reshape(*leading, V)
+            return log_p_mixed
+
         # OH7 UntieHead: when on, use the independent [vocab, d_model] weight
         # instead of the tied embedding table. In the factorized case
         # (emb_rank is not None), the untied head uses the d_model-dimensional
@@ -708,3 +1206,125 @@ class MinimalLLM(nn.Module):
             logits = logits + self.vocab_bias
 
         return logits
+
+    def forward(self, x):
+        # Standard path: embed, then run the post-embed stack.
+        _, x_post, x0, ve = self._embed_input(x)
+        return self._run_post_embed(x_post, x0, ve)
+
+    def seqmix_forward(self, x, y, alpha, generator=None):
+        """133 — SeqMix token-level mixup (Guo, Mao, Zhang 2019,
+        arXiv:1908.02951, extended to LM).
+
+        Samples λ ~ Beta(α, α) once per call (the canonical per-batch
+        mixup rate). Builds a paired batch by shuffling `x` along the
+        batch axis (`x_b = x[perm]`). Looks up embeddings for both,
+        mixes at the embedding level:
+
+            emb_mixed = λ · emb_a + (1 − λ) · emb_b
+
+        Then runs the post-embed stack ONCE on the mixed residual
+        stream and computes the mixed-CE loss
+
+            L = λ · CE(logits, y_a) + (1 − λ) · CE(logits, y_b)
+
+        Returns `(loss, logits, lam)` so the trainer can keep the
+        existing aux-loss composition pattern (entropy reg, z-loss,
+        born-again, rdrop, etc. stay zero unless their flag is on).
+
+        Identity at step 0: with `use_seqmix=False` this method is
+        never invoked. With `use_seqmix=True` the mixed residual stream
+        differs from the unmixed baseline by `O((1−λ) · ‖emb_b‖)` at
+        step 0 — the lever's documented non-bit-identical signature
+        (acknowledged in the idea spec).
+
+        Args:
+            x: input ids, [B, T].
+            y: target ids, [B, T] (the trainer's standard `labels`;
+               this method handles the next-token shift internally).
+            alpha: Beta(α, α) shape parameter (paper default 0.4).
+            generator: optional torch.Generator for reproducible λ
+               draws.
+        """
+        B = x.size(0)
+        # Per-batch λ (single scalar — matches the canonical mixup
+        # formulation; per-token/per-position λ is a paper extension
+        # not used here).
+        if alpha <= 0.0:
+            lam = 1.0
+        else:
+            lam = float(
+                torch.distributions.Beta(alpha, alpha).sample().item()
+            )
+        # Shuffle the batch to produce the paired sequence.
+        if generator is not None:
+            perm = torch.randperm(B, generator=generator, device=x.device)
+        else:
+            perm = torch.randperm(B, device=x.device)
+        x_b = x[perm]
+        y_b = y[perm]
+
+        # Token-embedding lookup for both sequences.
+        tok_a = self.token_embedding(x)
+        tok_b = self.token_embedding(x_b)
+        # Mix in the raw embedding space. When emb_rank is set, the
+        # emb_proj is a single linear layer, so mixing the raw
+        # rank-r embedding and then projecting is identical to
+        # projecting then mixing (linearity of emb_proj). Mixup
+        # operates on the pre-projection embedding for symmetry with
+        # the LM-extension literature.
+        tok_mixed = lam * tok_a + (1.0 - lam) * tok_b
+
+        # Build the post-embed residual stream manually (we already
+        # mixed at the raw-embedding level, so we skip the shared
+        # `_embed_input` path and apply emb_proj + emb_scale + the
+        # encode-only output MLPs + smear + position_dropout here).
+        emb_scale = getattr(self.config, 'embedding_scale', -1.0)
+        if emb_scale < 0:
+            emb_scale = math.sqrt(self.config.d_model)
+        if self.emb_rank is None:
+            x_post = tok_mixed * emb_scale
+        else:
+            x_post = self.emb_proj(tok_mixed) * emb_scale
+        if self.use_tied_output_mlp:
+            x_post = self.tied_output_mlp.encode(x_post)
+        if self.use_untied_output_mlp:
+            x_post = self.untied_output_mlp.encode(x_post)
+        if self.use_tied_linear_output_mlp:
+            x_post = self.tied_linear_output_mlp.encode(x_post)
+        if self.use_smear_gate:
+            prev = torch.zeros_like(x_post)
+            prev[:, 1:] = x_post[:, :-1]
+            x_post = x_post + self.smear_gate * prev
+        x_post = self.position_dropout(x_post)
+
+        # For the seqmix path we set x0=None and ve=None: the original
+        # token identity has already been mixed into the residual
+        # stream, so re-injecting either the per-position x0 reference
+        # or the raw ve would double-count the token signal. Setting
+        # them to None keeps the embed-residual / value-embed branches
+        # inert for the mixed input.
+        x0 = None
+        ve = None
+        logits = self._run_post_embed(x_post, x0, ve)
+
+        # Mixed-CE loss: λ · CE(logits, y_a) + (1−λ) · CE(logits, y_b).
+        # The trainer normally handles the shift_labels step. To keep
+        # this method drop-in for the trainer's per-batch loop we
+        # compute CE on the standard next-token alignment here.
+        shift_a = torch.full_like(y, -100)
+        shift_a[:, :-1] = y[:, 1:]
+        shift_b = torch.full_like(y_b, -100)
+        shift_b[:, :-1] = y_b[:, 1:]
+        ce_a = F.cross_entropy(
+            logits.view(-1, self.config.vocab_size),
+            shift_a.view(-1),
+            ignore_index=-100,
+        )
+        ce_b = F.cross_entropy(
+            logits.view(-1, self.config.vocab_size),
+            shift_b.view(-1),
+            ignore_index=-100,
+        )
+        loss = lam * ce_a + (1.0 - lam) * ce_b
+        return loss, logits, lam

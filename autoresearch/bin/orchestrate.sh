@@ -29,21 +29,21 @@ recover_to () { case "$1" in
   tasting) echo needs-taste;; repitching) echo needs-repitch;;
   reviewing) echo needs-review;; revising) echo needs-revision;;
   planning) echo needs-plan;; recoding) echo needs-recode;;
-  codereviewing) echo needs-codereview;; *) echo "";; esac; }
+  *) echo "";; esac; }
 
 # needs-* -> canonical prompt file (the worker reads & follows it EXACTLY)
 prompt_file () { case "$1" in
   needs-taste) echo idea-taste.md;; needs-repitch) echo idea-miner.md;;
   needs-review) echo idea-reviewer.md;; needs-revision) echo idea-reviser.md;;
   needs-plan|needs-recode) echo code-implementer.md;;
-  needs-codereview) echo code-reviewer.md;; *) echo "";; esac; }
+  *) echo "";; esac; }
 
 # needs-* -> short role label (for the worker prompt + session name)
 role () { case "$1" in
   needs-taste) echo taste;; needs-repitch) echo repitch;;
   needs-review) echo review;; needs-revision) echo revise;;
   needs-plan) echo plan;; needs-recode) echo recode;;
-  needs-codereview) echo codereview;; *) echo "";; esac; }
+  *) echo "";; esac; }
 
 # is a tmux session busy (mid-generation)?  busy=0 means busy, 1 means idle/dead
 is_busy () {

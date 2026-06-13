@@ -8,6 +8,11 @@ from .cope import CoPE
 from .deberta import DeBERTaRelativePositionBias
 from .fox import FoX
 from .canon_conv import CanonConv
+from .soft_moe import SoftMoEFFN
+from .mod_router import MoDRouter
+from .short_conv import ShortConv1D
+from .switch_ffn import SwitchFFN
+from .expert_choice_moe import ExpertChoiceMoE
 
 
 class Rotary(nn.Module):
@@ -468,6 +473,121 @@ def make_norm(dim: int, norm_type: str = "rmsnorm", use_layernorm: bool = False)
     return nn.RMSNorm(dim)
 
 
+class FocalModulationBlock(nn.Module):
+    """148 — Focal Modulation Networks (Yang et al. 2022,
+    arXiv:2203.11926, NeurIPS 2022).
+
+    Drop-in replacement for the attention sub-block. Three stages:
+      1. **Hierarchical Context Aggregation** — stack of depthwise
+         causal Conv1d at multiple kernel sizes (default 3, 5, 7) on
+         the time axis. Identity-init (center tap = 1, rest = 0) so
+         each conv is a pass-through at step 0. The multi-scale
+         context is the *sum* of conv outputs.
+      2. **Gather** — `nn.Linear(d_model, d_model, bias=True)` that
+         projects the multi-scale context into modulation space.
+         **Zero-init** (W=0, b=0) so the modulation signal is exactly
+         `0` at step 0 regardless of the conv outputs.
+      3. **Modulate** — `x ← x + σ(W_g x + b_g) * (W_q x ⊙ W_h · z)`,
+         where `z` is the gathered context, `W_q` is xavier-init, and
+         `W_h`, `W_g` are zero-init with `bias_g = -10.0` so the gate
+         starts at ≈ 0. With the gather+h_proj zero-init, the
+         modulation contribution is **exactly 0 at step 0** ⇒ output
+         `= x` bit-identical to baseline (with `use_focal_mod=False`,
+         the module is never built and the MHA path is untouched).
+
+    Args:
+        d_model: channel dim of the residual stream (B, T, d_model).
+        kernels: tuple of depthwise Conv1d kernel sizes (default
+            (3, 5, 7)). At least one element required.
+        dropout: dropout applied to the block output (default 0.1).
+
+    Forward:
+        x: [B, T, d_model]
+        Returns: [B, T, d_model] = x + dropout(g · (W_q x ⊙ W_h z))
+        where `z = gather(sum_k DWConv_k(left_pad(x, k-1, time)))`.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        kernels: tuple = (3, 5, 7),
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.d_model = int(d_model)
+        # Clamp kernels to ints ≥ 1.
+        self.kernels = tuple(max(1, int(k)) for k in kernels)
+        if not self.kernels:
+            raise ValueError("FocalModulationBlock requires at least one kernel size")
+
+        # (1) Hierarchical context aggregation: one depthwise Conv1d
+        # per kernel. `groups=d_model` ⇒ depthwise; `bias=False` because
+        # the gate absorbs any constant offset. Identity-init: center
+        # tap = 1, rest = 0 — so each conv is a pass-through at step 0
+        # and the multi-scale context equals `count(kernels) · x` at
+        # init. (Doesn't matter for step-0 parity because the gather
+        # linear is zero-init, but identity init is more stable at
+        # training start.)
+        self.context_convs = nn.ModuleList()
+        for k in self.kernels:
+            conv = nn.Conv1d(
+                d_model, d_model, kernel_size=k, padding=0,
+                groups=d_model, bias=False,
+            )
+            with torch.no_grad():
+                w = torch.zeros(d_model, 1, k)
+                w[:, 0, k // 2] = 1.0
+                conv.weight.copy_(w)
+            self.context_convs.append(conv)
+
+        # (2) Gather: linear from d_model to d_model. Zero-init ⇒
+        # `z = 0` at step 0 exactly. This is the *single* parameter
+        # that controls step-0 identity.
+        self.gather = nn.Linear(d_model, d_model, bias=True)
+        nn.init.zeros_(self.gather.weight)
+        nn.init.zeros_(self.gather.bias)
+
+        # (3) Modulate. Three linears:
+        #   - q_proj: W_q x (xavier-init — the only non-zero weight)
+        #   - h_proj: W_h z (zero-init — combined with zero-init gather
+        #     gives h_mod = 0 exactly at step 0)
+        #   - gate_proj: W_g x + b_g (zero-init weight, bias=-10 so
+        #     σ(0+b) ≈ 4.5e-5 even if x is not zero-mean)
+        self.q_proj = nn.Linear(d_model, d_model, bias=True)
+        nn.init.xavier_uniform_(self.q_proj.weight)
+        nn.init.zeros_(self.q_proj.bias)
+        self.h_proj = nn.Linear(d_model, d_model, bias=True)
+        nn.init.zeros_(self.h_proj.weight)
+        nn.init.zeros_(self.h_proj.bias)
+        self.gate_proj = nn.Linear(d_model, d_model, bias=True)
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.constant_(self.gate_proj.bias, -10.0)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, T, d_model] → conv1d expects [B, d_model, T]
+        h = x.transpose(1, 2)
+        # Sum of causal depthwise convs at multiple scales. Left-pad
+        # by (k-1, 0) on the time axis so position t can only attend
+        # to positions ≤ t (we don't set `padding=k//2` on the conv —
+        # that would pad both sides and leak future tokens).
+        context = x  # [B, T, d_model] (residual start at step 0 ≡ x)
+        for k, conv in zip(self.kernels, self.context_convs):
+            h_pad = F.pad(h, (k - 1, 0))
+            context = context + conv(h_pad).transpose(1, 2)
+        # (2) Gather: z = gather(context). Zero-init ⇒ z = 0 at step 0.
+        z = self.gather(context)
+        # (3) Modulate: output = x + σ(W_g x + b_g) * (W_q x ⊙ W_h z).
+        # At step 0: z = 0 ⇒ W_h z = 0 ⇒ (W_q x ⊙ 0) = 0 ⇒ σ(·)·0 = 0
+        # ⇒ output = x. Bit-identical to baseline at step 0.
+        q = self.q_proj(x)
+        h_mod = self.h_proj(z)
+        gate = torch.sigmoid(self.gate_proj(x))
+        out = x + gate * (q * h_mod)
+        return self.dropout(out)
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(
         self,
@@ -587,6 +707,40 @@ class MultiHeadAttention(nn.Module):
         # stash, no blend). See
         # `autoresearch/ideas/021-value-residual/plan.md`.
         use_value_residual: bool = False,
+        # 129 — YOCO shared KV (Sun et al. 2024, arXiv:2405.05254).
+        # When set, the MHA skips its W_K, W_V slices of the merged
+        # qkvo_proj and reads K, V from the supplied `shared_kv`
+        # tuple `(K_g, V_g)`, each of shape `[B, T, kv_size]`. The
+        # cross-layer shared KV is computed ONCE on the lower half's
+        # final residual stream by `models/yoco.py:GlobalKVHead`,
+        # and passed into every upper-half `YOCOLlamaBlock` via
+        # the `shared_kv` kwarg on `TransformerBlock.forward`.
+        # Inside the MHA, `K_g` still goes through k_norm + RoPE;
+        # `V_g` is used as-is. Q is computed normally from x and
+        # goes through q_norm + RoPE per the standard path. With
+        # `use_shared_kv=False` (default) the MHA never reads
+        # `shared_kv` and the baseline K, V projection path is
+        # bit-identical. See `autoresearch/ideas/129-yoco/idea.md`.
+        use_shared_kv: bool = False,
+        # 134 — Mega EMA on V (Ma et al. 2022, arXiv:2209.10655). When
+        # set, the V stream is concatenated with `V_ema = W_V @ u` where
+        # `u_t = β·u_{t-1} + (1-β)·x_t` is a per-channel exponential
+        # moving average over the residual stream input. `β ∈ [0, 1]`
+        # is parametrized as `σ(mega_beta_raw)` so it stays bounded
+        # during training; raw is zero-init ⇒ β=0.5 at step 0 (the
+        # natural "half-smoothed" midpoint). At tiny1m3m the doubled
+        # V stream has shape `[B, T, 2·kv_size] = [B, T, d_model]`
+        # (since 2·kv_size = 2·n_kv_heads·d_k = n_heads·d_k = d_model),
+        # so the standard head reshape still works (n_kv_heads effective
+        # doubles to match n_heads). The first-half (V_raw) and second-
+        # half (V_ema) compete via softmax over the doubled K dim.
+        # Cost: 1 scalar/layer (12 at tiny1m3m, negligible). NOT
+        # byte-identical to baseline at step 0 — the concat doubles the
+        # V stream. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/134-mega-ema/idea.md`.
+        use_mega: bool = False,
+        mega_beta: float = 0.9,
+        mega_use_input: bool = True,
         norm_type: str = "rmsnorm",
         qk_norm_type: str = "rmsnorm",
         v_norm_type: str = "",
@@ -646,6 +800,25 @@ class MultiHeadAttention(nn.Module):
         # output (sibling of Q5 talking_heads_q, but on the output
         # side of softmax). M init I → einsum is a no-op at step 0.
         use_talking_heads_out: bool = False,
+        # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
+        # per-token Bernoulli mask on K during training, applied AFTER
+        # RoPE + GQA repeat_interleave (so K is in [B, n_heads, T, d_k]
+        # layout). Mask shape `[B, n_heads, T, 1]`; elements drawn
+        # i.i.d. Bernoulli(1 - drop_key_rate); rescale by `1/(1-p)`
+        # so the expected K magnitude matches the un-masked baseline
+        # (inverted-dropout convention, matches `F.dropout` and
+        # modded-nanogpt value-residual rescale). Inference
+        # (`self.training == False`) and `drop_key_rate=0` both skip
+        # the mask ⇒ forward graph bit-identical to baseline. Distinct
+        # from value-side regularizers (use_value_channel_gate is
+        # additive on V, use_kda_channel_gate is bounded multiplicative
+        # on V) and from score-side regularizers (use_fox is post-
+        # softmax A·D, use_ssmax is logit-temperature). The lever is
+        # *where* the random gate fires (on K, not V or A) — that is
+        # the structural choice with a different inductive bias. See
+        # `autoresearch/ideas/147-dropkey/idea.md`.
+        use_drop_key: bool = False,
+        drop_key_rate: float = 0.1,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -792,6 +965,13 @@ class MultiHeadAttention(nn.Module):
         if self.use_value_residual:
             self.lambda_v = nn.Parameter(torch.zeros(()))
             self._v_residual = None
+        # 129 — YOCO: when set, the MHA reads shared K, V from the
+        # `shared_kv` kwarg on `forward`, skipping the W_K, W_V
+        # slices of the merged qkvo_proj. Default off → the W_K,
+        # W_V slices are used as in the standard path; baseline
+        # forward is bit-identical. See
+        # `models/yoco.py` and `autoresearch/ideas/129-yoco/idea.md`.
+        self.use_shared_kv = use_shared_kv
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
@@ -904,6 +1084,27 @@ class MultiHeadAttention(nn.Module):
         self.use_k_gain = use_k_gain
         if self.use_k_gain:
             self.k_gain = nn.Parameter(torch.zeros(self.n_heads))
+        # 134 — Mega EMA: per-channel β scalar, parametrized via sigmoid
+        # so β ∈ [0, 1] is bounded during training. raw init 0 ⇒
+        # β=0.5 at step 0 (midpoint between the paper's β=0 "no
+        # smoothing" and β=1 "constant EMA" extremes). The same W_V
+        # slice of `qkvo_proj` is reused for the EMA projection
+        # (zero new projection params — the EMA input `u` flows
+        # through the existing V weight matrix). Only one extra
+        # parameter: d_model scalars per layer for the β buffer.
+        self.use_mega = use_mega
+        if self.use_mega:
+            self.mega_beta_raw = nn.Parameter(torch.zeros(d_model))
+            self.mega_use_input = mega_use_input
+            # At tiny1m3m, 2·n_kv_heads must equal n_heads for the
+            # head reshape to work without GQA bookkeeping changes.
+            # We assert this and document the constraint — other
+            # scales need extra plumbing.
+            assert 2 * self.n_kv_heads == self.n_heads, (
+                f"use_mega requires 2·n_kv_heads == n_heads "
+                f"(got n_kv_heads={self.n_kv_heads}, n_heads={self.n_heads}); "
+                f"the doubled V stream only bit-fits when n_kv_heads = n_heads / 2"
+            )
         # #49 QK-norm-post-RoPE: apply RMSNorm to Q,K AFTER RoPE (modded-
         # nanogpt trick) instead of the default BEFORE RoPE. Different
         # mathematical operating point. Flag-only, no extra params.
@@ -1028,6 +1229,13 @@ class MultiHeadAttention(nn.Module):
         # Attention sinks are where massive activations originate, so this
         # attacks the outlier problem at its source. Zero extra params.
         self.use_attn_sink = use_attn_sink
+        # 147 — DropKey (Xu et al. 2022). Per-head Bernoulli gate on K
+        # during training. Stored on self; the actual mask sample and
+        # apply is in `forward()` right after `K.transpose(1, 2)`. No
+        # extra params — pure stochastic regularizer. Default off →
+        # forward graph bit-identical to baseline.
+        self.use_drop_key = use_drop_key
+        self.drop_key_rate = float(drop_key_rate)
 
         # ============================================================================
         # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
@@ -1392,7 +1600,7 @@ class MultiHeadAttention(nn.Module):
         Kr = K * cos + rotate_half(K) * sin
         return Qr, Kr
 
-    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None):
+    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None):
         batch_size, seq_len = x.size(0), x.size(1)
         # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
         # to post-norm. Reject the misconfiguration loudly so the
@@ -1401,30 +1609,95 @@ class MultiHeadAttention(nn.Module):
             "use_cope=True is mutually exclusive with use_qk_norm_post_rope=True "
             "(CoPE replaces RoPE; the post-RoPE norm has nothing to act on)."
         )
+        # 129 — YOCO: when the flag is on, the MHA must be given a
+        # shared_kv tuple. Reject the misconfiguration loudly so the
+        # runner doesn't accidentally launch it without plumbing.
+        if self.use_shared_kv:
+            assert shared_kv is not None and len(shared_kv) == 2, (
+                "use_shared_kv=True requires shared_kv=(K_g, V_g) kwarg "
+                "passed by YOCOLlamaBlock.forward"
+            )
 
         # ============ MERGED QKV PROJECTION ============
         # Single matmul instead of 3 separate projections
-        qkv = F.linear(x, self.qkvo_proj[:self.qkv_size])
-        
-        # Split the result into Q, K, V
-        # #72 Tied QK (PaLM): Q and K share the same W matrix. Use a
-        # separate qk_proj parameter; the Q/K slices of qkvo_proj are
-        # unused in this mode. V is still from its qkvo_proj slice.
-        # #73 MLA: K, V come from a low-rank latent. The latent is
-        # computed once per layer (down-project input), then
-        # up-projected per head to K, V.
-        if self.use_tied_qk:
-            qk = F.linear(x, self.qk_proj)
-            Q, K = qk.split([self.q_size, self.kv_size], dim=-1)
-            V = F.linear(x, self.qkvo_proj[self.qkv_size - self.kv_size:self.qkv_size])
-        elif self.use_mla:
-            latent = F.linear(x, self.mla_dkv)  # [B, T, mla_latent_dim]
-            K = F.linear(latent, self.mla_uk)    # [B, T, kv_size]
-            V = F.linear(latent, self.mla_uv)    # [B, T, kv_size]
+        # 129 — YOCO upper half: when `use_shared_kv=True`, we only need
+        # the Q slice of the merged qkvo_proj. The K, V projections are
+        # SKIPPED — shared K_g, V_g are supplied via `shared_kv` and
+        # used directly below. Q still goes through q_norm + RoPE per
+        # the standard path.
+        if self.use_shared_kv:
             Q = F.linear(x, self.qkvo_proj[:self.q_size])
+            K, V = shared_kv
         else:
-            Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+            qkv = F.linear(x, self.qkvo_proj[:self.qkv_size])
+
+            # Split the result into Q, K, V
+            # #72 Tied QK (PaLM): Q and K share the same W matrix. Use a
+            # separate qk_proj parameter; the Q/K slices of qkvo_proj are
+            # unused in this mode. V is still from its qkvo_proj slice.
+            # #73 MLA: K, V come from a low-rank latent. The latent is
+            # computed once per layer (down-project input), then
+            # up-projected per head to K, V.
+            if self.use_tied_qk:
+                qk = F.linear(x, self.qk_proj)
+                Q, K = qk.split([self.q_size, self.kv_size], dim=-1)
+                V = F.linear(x, self.qkvo_proj[self.qkv_size - self.kv_size:self.qkv_size])
+            elif self.use_mla:
+                latent = F.linear(x, self.mla_dkv)  # [B, T, mla_latent_dim]
+                K = F.linear(latent, self.mla_uk)    # [B, T, kv_size]
+                V = F.linear(latent, self.mla_uv)    # [B, T, kv_size]
+                Q = F.linear(x, self.qkvo_proj[:self.q_size])
+            else:
+                Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
+
+        # 134 — Mega EMA on V (Ma et al. 2022, arXiv:2209.10655).
+        # The V stream is concatenated with `V_ema = W_V @ u` where
+        # `u_t = β·u_{t-1} + (1-β)·x_t` is a causal EMA over the input
+        # residual stream `x`. β ∈ [0, 1] per-channel (parametrized via
+        # sigmoid so it stays bounded during training); raw init 0 ⇒
+        # β=0.5 at step 0 (midpoint between paper's β=0 and β=1
+        # extremes). The EMA convolution is implemented as a depthwise
+        # causal `conv1d` over the T axis with kernel `(1-β)·β^k` —
+        # O(T²) flops per layer (≈4M flops at tiny1m3m's T=2048, ≤1%
+        # of the d_model²·T FFN cost). The concat doubles the V stream
+        # from `[B, T, kv_size]` to `[B, T, 2·kv_size]`. The standard
+        # head reshape then sees 2·n_kv_heads "heads" of width d_k
+        # (asserted at construction to equal n_heads at tiny1m3m), so
+        # SDPA runs unchanged and the O projection reads `[B, T, 2·kv_size
+        # = d_model]` → `[B, T, d_model]`. NOT byte-identical to baseline
+        # at step 0 — the EMA is non-trivially smoothed at β=0.5 and
+        # the concat doubles V. The lever is explicitly NOT an identity
+        # trick; per the idea, the design is "β=0 collapse to gated
+        # attention (closed 024)" and "β=1 collapse to constant EMA";
+        # β=0.5 is the natural midpoint.
+        if self.use_mega:
+            # β ∈ [0, 1] per-channel, bounded.
+            beta = torch.sigmoid(self.mega_beta_raw)  # [d_model]
+            # EMA source: either the input residual `x` (paper form)
+            # or the projected V_raw. Both are d_model-shaped (V_raw
+            # is reshaped as `[..., 2·kv_size]`; flatten via padding is
+            # not free, so we use x as the EMA source by default).
+            ema_src = x if self.mega_use_input else V
+            # Kernel: kernel[d, k] = (1-β[d]) · β[d]^k for k ≥ 0.
+            arange = torch.arange(seq_len, device=x.device, dtype=x.dtype)
+            # [d_model, 1, T]
+            kernel = (1.0 - beta).view(-1, 1, 1) * beta.view(-1, 1, 1).pow(
+                arange.view(1, 1, -1)
+            )
+            # Causal depthwise conv1d: pad T-1 on the left so kernel
+            # index k aligns with source position (T-k) at output 0.
+            src_perm = ema_src.transpose(1, 2)  # [B, d_model, T]
+            padded = F.pad(src_perm, (seq_len - 1, 0))
+            u_perm = F.conv1d(padded, kernel, groups=self.d_model)  # [B, d_model, T]
+            u = u_perm.transpose(1, 2)  # [B, T, d_model]
+            # Project u through the V slice of qkvo_proj (no new params).
+            W_V = self.qkvo_proj[self.qkv_size - self.kv_size:self.qkv_size]
+            V_ema = F.linear(u, W_V)  # [B, T, kv_size]
+            # Concatenate V_raw and V_ema to get V_mega of shape
+            # `[B, T, 2·kv_size]`. The head reshape below treats this
+            # as 2·n_kv_heads heads (asserted == n_heads at construction).
+            V = torch.cat([V, V_ema], dim=-1)
 
         # ============================================================================
         # Query-tweaks (Batch 1-3, 5-6): x-dependent Q modifications.
@@ -1470,11 +1743,19 @@ class MultiHeadAttention(nn.Module):
         # operating point from V.)
         if self.use_key_embed and ve is not None:
             K = K + F.linear(ve, self.key_embed_proj)
-        
+
         # Reshape to multi-head format
+        # 134 — Mega: V_mega has shape `[B, T, 2·kv_size]` (concat of
+        # V_raw + V_ema). We treat the doubled V stream as 2·n_kv_heads
+        # heads; the construction-time assert guarantees this equals
+        # n_heads at tiny1m3m. K is unchanged (no concat on the K side
+        # — the Mega idea's primary lever is the V-side smoothing, and
+        # adding K doubles the head count to 3·n_kv_heads which breaks
+        # the GQA bookkeeping). Q is also unchanged.
+        V_n_kv_heads = (2 * self.n_kv_heads) if self.use_mega else self.n_kv_heads
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
         K = K.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
-        V = V.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
+        V = V.reshape(batch_size, seq_len, V_n_kv_heads, self.d_k)
         
         # Apply RoPE
         # #49 QK-norm-post-RoPE: by default we apply RMSNorm to Q,K BEFORE
@@ -1509,9 +1790,15 @@ class MultiHeadAttention(nn.Module):
         # RoPE. Zero-init baseline. Applied AFTER repeat_interleave so
         # the per-head scalar matches the final head count (n_heads).
         # Repeat K/V for GQA if needed
+        # 134 — Mega: when on, V_n_kv_heads = 2·n_kv_heads == n_heads
+        # (asserted at construction), so no repeat_interleave on V.
+        # K is unchanged (still n_kv_heads), so K still gets the GQA
+        # repeat to expand to n_heads. After both repeats, K and V
+        # are both [B, n_heads, T, d_k] for SDPA.
         if self.n_kv_heads != self.n_heads:
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
-            V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
+            if not self.use_mega:
+                V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
         if self.use_k_gain:
             K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
 
@@ -1598,6 +1885,29 @@ class MultiHeadAttention(nn.Module):
 
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
+
+        # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
+        # per-token Bernoulli mask on K applied AFTER the [B, T, H, D]
+        # → [B, H, T, D] transpose (so K and the mask shape align) and
+        # AFTER GQA repeat_interleave (so the mask broadcasts cleanly
+        # across the GQA-replicated K). The mask `M ~ Bernoulli(1-p)`
+        # has shape `[B, n_heads, T, 1]` and is applied as
+        # `K ← K * M / (1-p)` (inverted-dropout rescale). At eval
+        # (`self.training == False`) the mask is identity, so the
+        # forward graph is bit-identical to the no-DropKey baseline.
+        # When `use_drop_key=False` (default), the branch is never
+        # taken. With `drop_key_rate=0.0`, the mask is all-ones and
+        # `K = K * 1 / 1 = K` — also bit-identical. See
+        # `autoresearch/ideas/147-dropkey/idea.md`.
+        if self.use_drop_key and self.training and self.drop_key_rate > 0.0:
+            p = self.drop_key_rate
+            keep_prob = 1.0 - p
+            # Per-(batch, head, token) coin; broadcast across d_k.
+            key_mask = torch.empty(
+                batch_size, self.n_heads, seq_len, 1,
+                device=K.device, dtype=K.dtype,
+            ).bernoulli_(keep_prob)
+            K = K * key_mask / keep_prob
 
         # 021 — Value Residual: stash post-transpose V on layer 0
         # (`v_residual is None`); blend `(1-λ)·V + λ·V_1` on layer
@@ -2019,9 +2329,28 @@ class TransformerBlock(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
+        # per-token Bernoulli mask on K during training. Pass-through
+        # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
+        use_drop_key: bool = False,
+        drop_key_rate: float = 0.1,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
+        # 142 — LayerScale (Touvron et al. 2021, arXiv:2103.17239). Per-channel
+        # learnable diagonal scale `gamma ∈ R^{d_model}` on each sublayer's
+        # residual branch. Direct form `x = x + gamma * sub_block(x)` (NOT
+        # the reparam `(1+γ)` form used by `use_layerscale` above). Init
+        # `gamma = layer_scale_init * ones(d_model)` (default 1e-4) → at
+        # step 0 the residual contribution is `1e-4 × sub_block(x)`, four
+        # orders of magnitude smaller than the residual stream magnitude,
+        # so the val loss at step 0 is within fp32 noise of baseline. The
+        # per-channel selectivity is qualitatively different from scalar
+        # ReZero (130) and whole-residual Sub-LN (017). Default off →
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/142-layerscale/idea.md`.
+        use_layer_scale: bool = False,
+        layer_scale_init: float = 1e-4,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -2147,6 +2476,21 @@ class TransformerBlock(nn.Module):
         # forward branch is never taken). See
         # `autoresearch/ideas/023-canon-conv/plan.md`.
         use_canon_conv: bool = False,
+        # 143 — ShortConv (Hyena ShortConv variant, Poli/Massaroli
+        # et al. 2023, arXiv:2302.10866): one causal depthwise Conv1d
+        # per block on the residual stream, immediately before the
+        # attention sublayer's pre-LN (same placement as CanonConv
+        # 023). Identity-init weights (center tap = 1, rest = 0) and
+        # a per-block scalar output gate `g` init 0 → step-0 ≡
+        # no-conv baseline. Different from CanonConv by (a) the
+        # identity-init weights (vs Kaiming-uniform) and (b) the
+        # parameterizable kernel size `short_conv_kernel` (3 or 4).
+        # Pre-LN read. Default off → baseline path bit-identical
+        # (the conv module is never built, the forward branch is
+        # never taken). See
+        # `autoresearch/ideas/143-shortconv/idea.md`.
+        use_short_conv: bool = False,
+        short_conv_kernel: int = 3,
         # 021 — Value Residual Learning. Passed through to
         # MultiHeadAttention (see the MHA `use_value_residual` kwarg
         # for the mechanism). Default off → baseline path bit-identical.
@@ -2165,6 +2509,102 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/111-drop-path/idea.md`.
         use_drop_path: bool = False,
         drop_path_max: float = 0.1,
+        # 131 — LayerDrop (Fan, Grave, Joulin 2019, arXiv:1904.09728,
+        # ICLR 2020). Block-level stochastic depth: per-block
+        # Bernoulli gate shared across the batch. With probability
+        # `1 - p_l` skip the entire block (`x ← x`); with probability
+        # `p_l` keep and rescale by `1/p_l` so the expected residual
+        # matches baseline. `p_l` is computed from `layer_index`,
+        # `n_layers`, and `layerdrop_p`/`layerdrop_schedule`. Eval has
+        # no stochasticity. Distinct from DropPath (111): DropPath
+        # uses a linear schedule `p_l = 1 - drop_path_max·l/(L-1)` with
+        # p_0 = 1 (never drop the first block); LayerDrop is the
+        # `constant` paper default `p_l = p` for all `l`, optionally
+        # with a `linear`/`stochastic_depth` schedule. The
+        # flag-on lever is *not* byte-identical to baseline at step 0
+        # (the kept-block rescale `1/p_l` magnifies the residual); the
+        # flag-off path is bit-identical. See
+        # `autoresearch/ideas/131-layer-drop/idea.md`.
+        use_layerdrop: bool = False,
+        layerdrop_p: float = 0.2,
+        layerdrop_schedule: str = "constant",
+        # 117 — Soft MoE FFN replacement (Puigcerver et al. 2024).
+        # When `use_soft_moe=True`, swap the standard dense FFN for
+        # `SoftMoEFFN` (E parallel narrower FFNs + softmax dispatch/
+        # combine). Each expert has width `d_ff / soft_moe_n_experts`
+        # so total FFN params stay at the baseline budget. Default
+        # off → baseline FFN path bit-identical (the `SoftMoEFFN`
+        # module is never built). See `models/soft_moe.py` +
+        # `autoresearch/ideas/117-soft-moe/idea.md`.
+        use_soft_moe: bool = False,
+        soft_moe_n_experts: int = 4,
+        soft_moe_n_slots: int = 4,
+        # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258).
+        # When `use_mod=True`, wrap the block's residual update with a
+        # per-token top-k router. Default off → `MoDRouter` is never
+        # built, baseline forward graph is bit-identical. See
+        # `models/mod_router.py` +
+        # `autoresearch/ideas/118-mixture-of-depths/idea.md`.
+        use_mod: bool = False,
+        mod_capacity: float = 0.5,
+        mod_router_hidden: int = 64,
+        # 146 — Switch FFN (Fedus, Zoph, Shazeer 2022, arXiv:2101.03961):
+        # when `use_switch_ffn=True`, swap the standard dense FFN for
+        # `SwitchFFN` (E parallel full-width FFNs + top-1 router).
+        # Default off → baseline FFN path bit-identical (the
+        # `SwitchFFN` module is never built). See
+        # `models/switch_ffn.py` +
+        # `autoresearch/ideas/146-sparse-ffn/idea.md`.
+        use_switch_ffn: bool = False,
+        n_ffn_experts: int = 4,
+        expert_capacity_factor: float = 1.25,
+        # 145 — Expert-Choice MoE (Zhou, Lei, et al. 2022,
+        # arXiv:2202.09368). INVERTED routing direction vs Switch
+        # FFN: each expert picks its own top-k tokens (k = ceil(N/E))
+        # instead of each token picking its top-1 expert. Load
+        # balance is by construction — every expert processes
+        # exactly k tokens — so NO auxiliary load-balancing loss is
+        # needed (the auxiliary-loss knob is the structural
+        # difference from 117-soft-moe, which uses *soft* slot
+        # assignment). When `use_expert_choice_moe=True`, swap the
+        # standard dense FFN for `ExpertChoiceMoE` (E parallel
+        # full-width FFNs + a `nn.Linear(d_model, n_experts)` zero-
+        # init router). Default off → baseline FFN path bit-
+        # identical (the module is never built). See
+        # `models/expert_choice_moe.py` and
+        # `autoresearch/ideas/145-expert-choice/idea.md`.
+        use_expert_choice_moe: bool = False,
+        n_moe_experts: int = 4,
+        # 129 — YOCO shared KV (Sun et al. 2024, arXiv:2405.05254).
+        # When set, the inner MHA is built with `use_shared_kv=True`,
+        # which makes the MHA skip its W_K, W_V slices of the merged
+        # qkvo_proj and read K, V from the `shared_kv` kwarg passed
+        # on `forward`. Used by `models/yoco.py:YOCOLlamaBlock` for
+        # the upper-half block stack. Default off → standard path.
+        # See `autoresearch/ideas/129-yoco/idea.md`.
+        use_shared_kv: bool = False,
+        # 134 — Mega EMA on V (Ma et al. 2022, arXiv:2209.10655).
+        # Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_mega` for the mechanism. Default
+        # off → baseline path bit-identical. Tiny1M3M satisfies the
+        # construction-time assert `2·n_kv_heads == n_heads`
+        # (n_kv_heads=2, n_heads=4). See
+        # `autoresearch/ideas/134-mega-ema/idea.md`.
+        use_mega: bool = False,
+        mega_beta: float = 0.9,
+        mega_use_input: bool = True,
+        # 148 — Focal Modulation Networks (Yang et al. 2022,
+        # arXiv:2203.11926, NeurIPS 2022). Replaces the attention
+        # sub-block with a focal modulation block (no softmax, no
+        # QKᵀ). The MHA is still built (cheap) but is never called
+        # when `use_focal_mod=True`. Default off → baseline path
+        # bit-identical (the focal module is never built, MHA path
+        # is unchanged). At step 0 the focal block's `gather` and
+        # `h_proj` linears are zero-init so the modulation
+        # contribution is exactly 0 ⇒ output `= x` ≡ no-op. See
+        # `autoresearch/ideas/148-focal-mod/idea.md`.
+        use_focal_mod: bool = False,
+        focal_mod_kernels: tuple = (3, 5, 7),
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -2188,6 +2628,9 @@ class TransformerBlock(nn.Module):
             use_attn_output_channel_gate=use_attn_output_channel_gate,
             use_exclusive_self_attn=use_exclusive_self_attn,
             use_kda_channel_gate=use_kda_channel_gate,
+            # 147 — DropKey: per-head Bernoulli gate on K during training.
+            use_drop_key=use_drop_key,
+            drop_key_rate=drop_key_rate,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,
@@ -2211,6 +2654,14 @@ class TransformerBlock(nn.Module):
             use_softpick=use_softpick,
             use_ssmax=use_ssmax,
             use_value_residual=use_value_residual,
+            # 129 — YOCO shared KV pass-through to the MHA. Default
+            # off → standard path. See `autoresearch/ideas/129-yoco/idea.md`.
+            use_shared_kv=use_shared_kv,
+            # 134 — Mega EMA on V pass-through to the MHA. Default
+            # off → baseline path bit-identical.
+            use_mega=use_mega,
+            mega_beta=mega_beta,
+            mega_use_input=mega_use_input,
             use_tied_qk=use_tied_qk,
             use_mla=use_mla,
             mla_latent_dim=mla_latent_dim,
@@ -2262,7 +2713,49 @@ class TransformerBlock(nn.Module):
             use_q_noise_reg=use_q_noise_reg,
             value_embed_rank=value_embed_rank,
         )
-        if ffn_variant == "squared_relu":
+        if use_soft_moe:
+            # 117 — Soft MoE: E parallel narrower FFNs + softmax
+            # dispatch/combine. See `models/soft_moe.py` for the
+            # mechanism. Each expert uses the same `ffn_variant` as
+            # the baseline would have used (squared_relu by default).
+            self.feed_forward = SoftMoEFFN(
+                d_model, d_ff,
+                n_experts=soft_moe_n_experts,
+                n_slots=soft_moe_n_slots,
+                dropout=dropout,
+                ffn_variant=ffn_variant,
+            )
+        elif use_switch_ffn:
+            # 146 — Switch FFN: E parallel full-width FFNs + top-1
+            # router. See `models/switch_ffn.py` for the mechanism.
+            # Each expert uses the same `ffn_variant` as the baseline
+            # would have used. Router is zero-init ⇒ all tokens
+            # route to expert 0 at step 0 ⇒ output = a standard FFN.
+            self.feed_forward = SwitchFFN(
+                d_model, d_ff,
+                n_experts=n_ffn_experts,
+                capacity_factor=expert_capacity_factor,
+                dropout=dropout,
+                ffn_variant=ffn_variant,
+            )
+        elif use_expert_choice_moe:
+            # 145 — Expert-Choice MoE: E parallel full-width FFNs +
+            # top-k-per-expert router. See
+            # `models/expert_choice_moe.py` for the mechanism. Each
+            # expert uses the same `ffn_variant` as the baseline.
+            # Router is zero-init ⇒ all expert-token scores are 0 ⇒
+            # every expert processes the same set of k tokens with
+            # uniform softmax weights ⇒ output ≈ uniform mean of
+            # E identically-init'd FFNs (NOT byte-identical to a
+            # single FFN at step 0 — documented caveat mirroring
+            # 117-soft-moe).
+            self.feed_forward = ExpertChoiceMoE(
+                d_model, d_ff,
+                n_experts=n_moe_experts,
+                dropout=dropout,
+                ffn_variant=ffn_variant,
+            )
+        elif ffn_variant == "squared_relu":
             self.feed_forward = SquaredReLUFeedForward(d_model, d_ff, dropout)
         elif ffn_variant == "swiglu":
             self.feed_forward = SwiGLUFeedForward(d_model, d_ff, dropout)
@@ -2288,6 +2781,27 @@ class TransformerBlock(nn.Module):
         if self.use_layerscale:
             self.attn_layerscale = nn.Parameter(torch.zeros(d_model))
             self.ffn_layerscale = nn.Parameter(torch.zeros(d_model))
+        # 142 — LayerScale (Touvron et al. 2021, arXiv:2103.17239). Per-channel
+        # learnable diagonal scale `gamma ∈ R^{d_model}` on each sublayer's
+        # residual branch. Direct form `x = x + gamma * sub_block(x)` (NOT
+        # the reparam `(1+γ)` form used by `use_layerscale` above). Init
+        # `gamma = layer_scale_init * ones(d_model)` (default 1e-4) → at
+        # step 0 the residual contribution is `1e-4 × sub_block(x)`, four
+        # orders of magnitude smaller than the residual stream magnitude,
+        # so the val loss at step 0 is within fp32 noise of baseline (the
+        # "soft warmup" the paper specifies). Per-channel vs scalar
+        # (ReZero, 130) is the headline architectural novelty. Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/142-layerscale/idea.md`.
+        self.use_layer_scale = use_layer_scale
+        self.layer_scale_init = float(layer_scale_init)
+        if self.use_layer_scale:
+            self.attn_gamma = nn.Parameter(
+                torch.full((d_model,), self.layer_scale_init)
+            )
+            self.ffn_gamma = nn.Parameter(
+                torch.full((d_model,), self.layer_scale_init)
+            )
         # 017 — Sub-LN / Sandwich block: one fresh `nn.LayerNorm(d_model)`
         # per sublayer (γ=1, β=0 init → identity at step 0). When off,
         # the modules are not constructed and the pre-norm baseline is
@@ -2332,6 +2846,24 @@ class TransformerBlock(nn.Module):
         self.use_canon_conv = use_canon_conv
         if self.use_canon_conv:
             self.canon_conv = CanonConv(d_model)
+        # 143 — ShortConv: identity-init depthwise causal Conv1d on
+        # the residual stream, with a per-block scalar output gate
+        # `g=0` at init. Constructed lazily; never called when
+        # `use_short_conv=False` so the baseline path is bit-
+        # identical. See `models/short_conv.py` for the module doc.
+        self.use_short_conv = use_short_conv
+        self.short_conv_kernel = int(short_conv_kernel)
+        if self.use_short_conv:
+            assert self.short_conv_kernel in (3, 4), (
+                f"short_conv_kernel={self.short_conv_kernel} must be 3 or 4"
+            )
+            self.short_conv = ShortConv1D(d_model, kernel_size=self.short_conv_kernel)
+            # Per-block scalar gate `g=0` → step-0 ≡ no-conv baseline.
+            # The conv has identity init internally, so g=1 would give
+            # `x = x + x = 2x` at step 0 (NOT identity). The gate
+            # scales the conv contribution to 0 at init, matching the
+            # canon_conv gating pattern.
+            self.short_conv_gate = nn.Parameter(torch.zeros(1))
         # 111 — DropPath / Stochastic Depth (Huang et al. 2016). The
         # `p_l` is computed in `forward` from `drop_path_max`,
         # `n_layers` (already a block attr, used by DeepNorm), and
@@ -2339,6 +2871,39 @@ class TransformerBlock(nn.Module):
         # the entire branch is skipped → baseline path bit-identical.
         self.use_drop_path = use_drop_path
         self.drop_path_max = float(drop_path_max)
+        # 131 — LayerDrop. Same per-step coin structure as DropPath
+        # but the schedule is independent (`layerdrop_schedule`):
+        # "constant" → p_l = p (paper default); "linear" → p_l ramps
+        # from 0 to p over L; "stochastic_depth" → p_l = p·l/(L-1).
+        # Default off → no gate computed → baseline path bit-identical.
+        self.use_layerdrop = use_layerdrop
+        self.layerdrop_p = float(layerdrop_p)
+        self.layerdrop_schedule = str(layerdrop_schedule or "constant")
+        # 118 — Mixture-of-Depths: per-block `MoDRouter` that scores
+        # every token, picks the top-k, and gates the block's residual
+        # update to that subset. Default off → no router built, baseline
+        # forward graph is bit-identical. See `models/mod_router.py`.
+        self.use_mod = use_mod
+        self.mod_capacity = float(mod_capacity)
+        self.mod_router_hidden = int(mod_router_hidden)
+        if self.use_mod:
+            self.mod_router = MoDRouter(d_model, hidden=self.mod_router_hidden)
+        else:
+            self.mod_router = None
+
+        # 148 — Focal Modulation. Built lazily; never called when
+        # `use_focal_mod=False` so the baseline MHA path is
+        # bit-identical. See `FocalModulationBlock` above.
+        self.use_focal_mod = use_focal_mod
+        self.focal_mod_kernels = tuple(int(k) for k in (focal_mod_kernels or (3, 5, 7)))
+        if self.use_focal_mod:
+            self.focal_mod = FocalModulationBlock(
+                d_model,
+                kernels=self.focal_mod_kernels,
+                dropout=dropout,
+            )
+        else:
+            self.focal_mod = None
 
     def _init_resid(self, resid_mode: str, d_model: int, n_layers: int):
         """Build params for the selected residual-add lever. Each sublayer
@@ -2463,7 +3028,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -2489,6 +3054,47 @@ class TransformerBlock(nn.Module):
                     return x  # block skipped entirely
                 drop_path_scale = 1.0 / p_l
         x_orig = x if drop_path_scale != 1.0 else None
+        # 131 — LayerDrop (block-level skip, independent schedule).
+        # Schedules (selected via `self.layerdrop_schedule`):
+        #   "constant"         → p_l = layerdrop_p (paper default, p=0.2).
+        #   "linear"           → p_l = layerdrop_p · l/(L-1) (paper
+        #                        stable-training variant — more drops
+        #                        at later layers).
+        #   "stochastic_depth" → p_l = layerdrop_p · l/(L-1) too (the
+        #                        paper's "stochastic depth" schedule
+        #                        starts at 0 and ramps up — same math
+        #                        as `linear` here; the naming follows
+        #                        the paper's section 3.1).
+        # One coin flip per block per step, shared across the batch.
+        # When the block is kept, rescale the residual delta by 1/p_l
+        # so expected magnitude matches baseline. Eval has no
+        # stochasticity. Distinct from DropPath (111) above: DropPath
+        # is a per-sample/per-batch gate on the residual branch inside
+        # the block, with a fixed `p_l = 1 - drop_path_max·l/(L-1)`
+        # schedule that starts at p_0=1; LayerDrop is a per-batch gate
+        # on the WHOLE block, with `constant` paper default. See
+        # `autoresearch/ideas/131-layer-drop/idea.md`.
+        layerdrop_scale = 1.0
+        if self.use_layerdrop and self.training and layer_index is not None:
+            if self.n_layers > 1:
+                l = float(layer_index) / float(self.n_layers - 1)
+            else:
+                l = 0.0
+            sched = self.layerdrop_schedule
+            if sched == "linear" or sched == "stochastic_depth":
+                p_l = self.layerdrop_p * l
+            else:  # "constant" (paper default)
+                p_l = self.layerdrop_p
+            p_l = float(max(1e-6, min(1.0, p_l)))
+            if torch.rand(()) >= p_l:
+                return x  # block skipped entirely (identity pass-through)
+            layerdrop_scale = 1.0 / p_l
+        layerdrop_orig = x if layerdrop_scale != 1.0 else None
+        # 118 — Mixture-of-Depths: capture the block's input so we can
+        # gate the residual delta `(x_after - x_in)` by the per-token
+        # router at the end of forward. Skipped (no-router) when
+        # `use_mod=False` → zero overhead on the baseline path.
+        x_in = x if self.use_mod else None
         # Re-inject the original embedding before attention/MLP (#20)
         if self.use_embed_residual:
             x = self.resid_m0 * x + self.resid_m1 * x0
@@ -2502,6 +3108,17 @@ class TransformerBlock(nn.Module):
         if self.use_canon_conv:
             x = self.canon_conv(x)
 
+        # 143 — ShortConv: identity-init depthwise causal Conv1d on
+        # the residual stream, immediately before the attention
+        # sublayer's pre-LN. Per-block scalar gate `g=0` at init →
+        # bit-identical to no-conv baseline at step 0. The conv has
+        # identity init (center tap = 1, rest = 0) so the conv output
+        # equals the input — the gate absorbs this so `x = x + 0·x = x`.
+        # ONE conv per block (matches CanonConv's placement pin). See
+        # `autoresearch/ideas/143-shortconv/idea.md`.
+        if self.use_short_conv:
+            x = x + self.short_conv_gate * self.short_conv(x)
+
         if self.use_parallel_block:
             # #98 Parallel block: attn and FFN both read one shared normed
             # input; their outputs are summed into the residual together.
@@ -2509,15 +3126,25 @@ class TransformerBlock(nn.Module):
             # 024 — pass the raw residual `x` to the MHA gate (pre-LN
             # signal). `n = norm1(x)` is the post-LN signal; the spec
             # pins the gate input as the pre-LN residual.
-            attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual)
+            # 148 — Focal Modulation: replace the MHA call with the
+            # focal block. The focal block takes only the normed input
+            # (no `ve`, `gate_x`, `v_residual`, `shared_kv` args).
+            if self.use_focal_mod:
+                attn_out = self.focal_mod(n)
+            else:
+                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
+            if self.use_layer_scale:
+                attn_out = attn_out * self.attn_gamma
             ffn_in = n
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            if self.use_layer_scale:
+                ff_out = ff_out * self.ffn_gamma
             return x + self.dropout(attn_out) + self.dropout(ff_out)
 
         if self.use_post_norm:
@@ -2527,9 +3154,18 @@ class TransformerBlock(nn.Module):
             # original Transformer design — sometimes called "post-norm").
             # 024 — post-norm: sublayer input is already the raw residual,
             # pass it as the gate signal.
-            attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual)
+            # 148 — Focal Modulation: replace the MHA call with the
+            # focal block. Post-norm passes the raw residual (not the
+            # normed one) — focal mod is post-LN-style, so this is the
+            # correct input.
+            if self.use_focal_mod:
+                attn_out = self.focal_mod(x)
+            else:
+                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
+            if self.use_layer_scale:
+                attn_out = attn_out * self.attn_gamma
             # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity
             # at step 0, so post-norm baseline path stays bit-identical
             # when use_sub_ln=False). When on, this constrains each
@@ -2544,6 +3180,8 @@ class TransformerBlock(nn.Module):
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            if self.use_layer_scale:
+                ff_out = ff_out * self.ffn_gamma
             if self.use_sub_ln:
                 ff_out = self.sub_ln_ffn(ff_out)
             x = self.norm2(x + self.dropout(ff_out))
@@ -2552,9 +3190,16 @@ class TransformerBlock(nn.Module):
             # 024 — pass the raw residual `x` (pre-LN signal) to the MHA
             # gate. The MHA's primary input is `norm1(x)` (post-LN); the
             # gate reads the pre-LN residual.
-            attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual)
+            # 148 — Focal Modulation: replace the MHA call with the
+            # focal block. Reads the same normed input as MHA.
+            if self.use_focal_mod:
+                attn_out = self.focal_mod(self.norm1(x))
+            else:
+                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
+            if self.use_layer_scale:
+                attn_out = attn_out * self.attn_gamma
             # 017 — Sub-LN wrap on the sublayer output (γ=1, β=0 ⇒ identity
             # at step 0, so pre-norm baseline path stays bit-identical
             # when use_sub_ln=False). When on, this constrains each
@@ -2577,6 +3222,8 @@ class TransformerBlock(nn.Module):
             ff_out = self.feed_forward(ffn_in)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
+            if self.use_layer_scale:
+                ff_out = ff_out * self.ffn_gamma
             if self.use_sub_ln:
                 ff_out = self.sub_ln_ffn(ff_out)
             # R1 ReZero (pre-norm branch, FFN): same gate on the FFN add.
@@ -2594,4 +3241,32 @@ class TransformerBlock(nn.Module):
         # extra ops on the baseline path.
         if x_orig is not None:
             x = x_orig + (x - x_orig) * drop_path_scale
+        # 131 — LayerDrop rescale: same structure as DropPath but the
+        # kept-block rescale is `1/p_l` for the LayerDrop schedule
+        # (constant by default). `layerdrop_scale == 1.0` (and thus
+        # `layerdrop_orig is None`) when the flag is off or eval mode
+        # — short-circuited, no extra ops on the baseline path.
+        if layerdrop_orig is not None:
+            x = layerdrop_orig + (x - layerdrop_orig) * layerdrop_scale
+        # 118 — Mixture-of-Depths: gate the block's residual delta by
+        # the per-token router. Routed tokens get `c · delta`, the rest
+        # get `0`. `c = k/T` keeps the expected per-token contribution
+        # equal to the dense baseline. The router reads from `x_in`
+        # (the block input, pre-norm) so the routing decision is a
+        # function of the pre-block residual stream. Default off →
+        # `x_in is None` → this branch is skipped → baseline path
+        # bit-identical.
+        if x_in is not None:
+            scores = self.mod_router(x_in)            # [B, T] in [0,1]
+            B, T = scores.shape
+            k = max(1, int(round(self.mod_capacity * T)))
+            # Top-k indices per batch row. Deterministic ordering via
+            # `largest=True, sorted=False`; tie-breaks don't matter for
+            # the lever (the router has no useful signal at step 0).
+            _, top_k_idx = torch.topk(scores, k, dim=-1, largest=True, sorted=False)
+            mask = torch.zeros_like(scores)
+            mask.scatter_(1, top_k_idx, 1.0)          # [B, T]
+            c = float(k) / float(T)
+            delta = x - x_in
+            x = x_in + (mask.unsqueeze(-1) * c) * delta
         return x

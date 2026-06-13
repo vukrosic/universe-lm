@@ -49,7 +49,7 @@ realities are in [`runner.md`](runner.md) §0/§3a — the ones that bite:
    verdict vs the bar (WIN / NULL / FAIL), and the leaderboard line.
 5. **Close the loop:**
    - finished and judged → `flip.sh {{IDEA_SLUG}} done run-button "Δ=<x>; <WIN|NULL>"`
-   - run crashed (OOM/NaN/bad flag) → **do not write a null** → `flip.sh {{IDEA_SLUG}} needs-codereview run-button "run FAILED: <1-line cause>"`
+   - run crashed (OOM/NaN/bad flag) → **do not write a null** → `flip.sh {{IDEA_SLUG}} needs-recode run-button "run FAILED: <1-line cause>"`
 
 ## Finally — last command you run
 

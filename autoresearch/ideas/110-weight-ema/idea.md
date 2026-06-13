@@ -1,8 +1,8 @@
 ---
 id: 110-weight-ema
-status: implementing
+status: done
 round: 1
-updated: 2026-06-13T09:54:45Z
+updated: 2026-06-13T14:21:30Z
 transfer-risk: low
 plain: It tries to average the model's weights over training so the version it scores on is the calm middle of the noise, not the latest jittery step.
 ---
@@ -68,3 +68,43 @@ our baseline trajectory is already calm enough at 92 steps that
 averaging buys nothing). A win of even 0.005-0.01 on val would compound
 with the other WINS in the leaderboard and not require touching any
 architecture code.
+
+## Plan
+
+- **Files touched:**
+  - `configs/llm_config.py` — add 4 EMA flags to `LLMConfig`:
+    `use_ema_eval: bool = False`, `ema_decay: float = 0.999`,
+    `ema_warmup_steps: int = 100`, `ema_eval_only: bool = True`. Add
+    `Tiny1M3MEMAConfig(Tiny1M3MConfig)` preset with `use_ema_eval=True`
+    (the A/B treatment subclass).
+  - `training/trainer.py` — add `ModelEMA` helper class with
+    `.state_dict()` so checkpointing round-trips, a one-line EMA update
+    after `optimizer.step()` (decay ramps from 0 → `ema_decay` over
+    `ema_warmup_steps` ⇒ step-0 EMA ≡ live model ⇒ step-0 val byte-
+    identical to baseline), and an `ema_eval_only` branch that swaps
+    `p.data` ← `ema` before `evaluate_model(...)`, runs the standard
+    eval, then restores `p.data` ← `live`. The live `θ` is the
+    checkpointed / saved / resumed model — only the *val score* moves.
+  - `train_llm.py` — add CLI flags `--use_ema_eval`, `--ema_decay`,
+    `--ema_warmup_steps`, `--ema_eval_only` (matching the existing
+    flag pattern).
+
+- **Config flag name:** `use_ema_eval` (plus `ema_decay`,
+  `ema_warmup_steps`, `ema_eval_only`).
+
+- **Zero-init at step 0:** `decay(step=0) = 0 / ema_warmup_steps = 0`,
+  so the EMA update is `θ_ema ← 0·θ_ema + 1·θ = θ_init`. The val score
+  at step 0 reads `θ_ema == θ_live` ⇒ bit-identical to baseline.
+
+- **Run command (treatment):**
+  ```bash
+  python train_llm.py \
+    --config_class configs.llm_config.Tiny1M3MEMAConfig \
+    --seed 42 --dataset_path processed_data/pretrain_1B \
+    --warmup false
+  ```
+  Or the local-equivalent `python _arq_110-weight-ema.py`.
+
+- **Reading final val loss:** `plots/metrics_<TOKENS>_<TS>.json` →
+  `final_metrics.val_loss` (same convention as every other idea; the
+  runner pulls this from `remote-results/.../results.json`).

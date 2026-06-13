@@ -90,6 +90,30 @@ class LLMConfig:
     # #21 LayerScale: zero-init per-channel scales on attention and MLP residual
     # outputs. Starts as exact baseline via branch *= (1 + gate).
     use_layerscale: bool = False
+    # 142 — LayerScale (Touvron et al. 2021, arXiv:2103.17239). Per-channel
+    # learnable diagonal scale `gamma ∈ R^{d_model}` on each sublayer's
+    # residual branch. Direct form `x = x + gamma * sub_block(x)` (NOT the
+    # reparam `(1+g)` form used by the existing `use_layerscale` flag above).
+    # Init `gamma = layer_scale_init * ones(d_model)` (default 1e-4) → at
+    # step 0 the residual contribution is `1e-4 × sub_block(x)`, four
+    # orders of magnitude smaller than the residual stream magnitude, so
+    # the val loss at step 0 is within fp32 noise of the baseline (the
+    # "soft warmup" the paper specifies). Distinct from the existing
+    # `use_layerscale` lever: that one is reparam `(1+g)` with g=0 init
+    # (identity at step 0); this one is direct `g·sub_block` with g=ε init
+    # (soft-warmup). Per-channel vs scalar (ReZero) is the headline
+    # architectural novelty — see `autoresearch/ideas/142-layerscale/`.
+    use_layer_scale: bool = False
+    layer_scale_init: float = 1e-4
+    # 130 — ReZero (Bachlechner et al. 2020, arXiv:2003.04887): per-sublayer
+    # learnable scalar α on the residual add (one for attention, one for
+    # FFN), init 0 ⇒ the entire stack is the identity at step 0 and each
+    # layer earns its residual contribution during training. Replaces
+    # the baseline add `x = x + f(x)` with `x = x + α·f(x)`. Off by
+    # default → baseline path bit-identical. Cost: 2 scalars/block
+    # (n_layers × 2 = 24 scalars at tiny1m3m; negligible). See
+    # `autoresearch/ideas/130-rezero/idea.md`.
+    use_re_zero: bool = False
     # #29 value embeddings (speedrun records 55/63): inject the (factorized) token
     # embedding into attention V at every layer via a tiny per-layer projection,
     # zero-inited so step 0 == baseline. Reuses the existing rank-r table as the
@@ -230,6 +254,23 @@ class LLMConfig:
     # itself). Default off → baseline path bit-identical. See
     # `autoresearch/ideas/023-canon-conv/plan.md`.
     use_canon_conv: bool = False
+    # 143 — ShortConv (Hyena ShortConv variant, Poli/Massaroli et al.
+    # 2023, arXiv:2302.10866): one identity-init depthwise causal
+    # Conv1d per block on the residual stream, immediately before the
+    # attention sublayer's pre-LN (same placement as CanonConv 023).
+    # Weights are identity-initialized (center tap = 1, rest = 0) and
+    # a per-block scalar output gate `g` is init 0 → step-0 ≡
+    # no-conv baseline (the conv has identity init but the gate
+    # scales the contribution to 0, so `x = x + 0·x = x` at step 0).
+    # The conv is a *pre-attention* local aggregator: cheap k-neighbor
+    # context before the global attention pass. Differs from
+    # CanonConv by (a) the identity-init weights (vs Kaiming-uniform)
+    # and (b) the parameterizable kernel `short_conv_kernel` (3 or 4).
+    # Pre-LN read. Default off → baseline path bit-identical (the
+    # `ShortConv1D` module is never built, the forward branch is
+    # never taken). See `autoresearch/ideas/143-shortconv/idea.md`.
+    use_short_conv: bool = False
+    short_conv_kernel: int = 3
     # 021 — Value Residual Learning (Zhou/Wu/Jiang 2024,
     # arXiv:2410.17897). Cross-layer V shortcut: stash the projected V
     # from layer 0 (post-W_V, post-GQA repeat_interleave, post-transpose,
@@ -281,6 +322,31 @@ class LLMConfig:
     # init = no-op at step 0. 1-D parameter of size vocab_size, routes to AdamW.
     # Logit op — flows into eval CE legitimately. Re-learns token frequency.
     use_vocab_bias: bool = False
+    # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
+    # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When on,
+    # replace the single output softmax with `n_mos_components` parallel
+    # vocab-sized heads mixed by per-token π = softmax(W_π · h). The
+    # mixture output is `P(v) = Σ_k π_k · softmax(W_k · h)[v]`, computed
+    # in log space via `logsumexp_k (log π_k + log_softmax(W_k · h))`.
+    # The structural lever is the *rank* of the output distribution: a
+    # single `softmax(W·h)` has rank ≤ d_model, but a K-mixture has
+    # effective rank ≤ K·d_model. Identity at step 0: W_π.weight = 0 and
+    # W_π.bias = [+1e4, -1e4, ..., -1e4] ⇒ `softmax(W_π·h) = [1, 0, ...,
+    # 0]` exactly in fp32 (the `exp(-2e4)` terms underflow to 0), so
+    # `logsumexp` reduces to `log_softmax(W_0 · h)` — bit-identical to
+    # the standard tied head. The K fresh heads cost `K·vocab·d_model`
+    # params (12.6M at tiny1m3m with K=4 — a sizeable param injection,
+    # acknowledged as a confound). Default off → baseline path
+    # bit-identical (no MoS module built, no forward-graph branches).
+    # See `autoresearch/ideas/144-mos/idea.md`.
+    use_mos: bool = False
+    n_mos_components: int = 4
+    # Forward chunk size (along B*T) for the MoS head. Default 256
+    # tokens keeps peak memory well under 1 GiB at tiny1m3m (with
+    # K=4, V=49152, fp32). Increase for fewer kernel launches at the
+    # cost of more peak memory; decrease if you hit OOM on smaller
+    # GPUs. Only consulted when `use_mos=True`.
+    mos_chunk_size: int = 256
     # #72 Tied QK (PaLM-style): Q and K share the same projection
     # matrix. The merged QK is shape [q_size + kv_size, d_model],
     # output is split into Q (q_size) and K (kv_size). Real arch
@@ -400,6 +466,28 @@ class LLMConfig:
     # See `autoresearch/ideas/111-drop-path/idea.md`.
     use_drop_path: bool = False
     drop_path_max: float = 0.1
+    # 131 — LayerDrop (Fan, Grave, Joulin 2019, arXiv:1904.09728, ICLR
+    # 2020). Whole-layer stochastic depth: per-block Bernoulli gate
+    # during training: with probability `1 - p_l` skip the entire block
+    # (`x ← x`); with probability `p_l` keep and rescale by `1/p_l` so
+    # the expected residual matches baseline. Coin is shared across
+    # the batch (one flip per block per step) — different from
+    # DropPath (111) which is per-batch coin AND per-sample (well, here
+    # both are per-batch, but LayerDrop is BLOCK-level, not residual-
+    # branch-level). `layerdrop_schedule`:
+    #   "constant"          → p_l = layerdrop_p for all l (paper default)
+    #   "linear"            → p_l = (l/(L-1)) · layerdrop_p (paper stable variant)
+    #   "stochastic_depth"  → p_l = layerdrop_p · (l/(L-1)) (drops start at 0)
+    # Eval has no stochasticity. With `use_layerdrop=False` (default)
+    # the gate is never applied → baseline path bit-identical.
+    # NOTE: with the flag ON, step-0 is NOT byte-identical to baseline
+    # — the kept-block rescale `1/p_l` magnifies the residual by 1/p_l
+    # (e.g. 5× at p_l=0.2). The lever is explicitly an own-control,
+    # not an identity trick. See
+    # `autoresearch/ideas/131-layer-drop/idea.md`.
+    use_layerdrop: bool = False
+    layerdrop_p: float = 0.2
+    layerdrop_schedule: str = "constant"
     # 024 — Gated Attention (Qiu et al. 2025, arXiv:2505.06708): per-head
     # *scalar* sigmoid gate on the head output `o_h = A_h V_h`, applied
     # post-AV and pre-merge with the O projection: `o_h ← o_h · 2·σ(W_g·x+b)`.
@@ -415,6 +503,194 @@ class LLMConfig:
     # off → baseline path bit-identical. See
     # `autoresearch/ideas/024-gated-attention/plan.md`.
     use_gated_attn: bool = False
+
+    # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head
+    # Bernoulli gate on K during training: sample `M ~ Bernoulli(1-p)`
+    # of shape `[B, n_heads, T, 1]` and apply `K ← K · M / (1-p)`
+    # (inverted-dropout rescale so the expected magnitude matches the
+    # un-dropped baseline). The mask is per-head, per-token, and
+    # independent across batch — finer granularity than DropPath
+    # (111, per-batch coin, per-block) and orthogonal to value-side
+    # regularizers (use_value_channel_gate, use_kda_channel_gate) and
+    # to score-side regularizers (use_fox, use_ssmax). At inference
+    # (training mode off) the mask is identity ⇒ forward graph is
+    # bit-identical to the no-DropKey baseline. With
+    # `use_drop_key=False` (default) the K tensor is never modified,
+    # so baseline path is bit-identical at any rate. Default
+    # `drop_key_rate=0.1` matches the ViT-B/16 paper default;
+    # `drop_key_rate=0.0` collapses to no masking regardless of the
+    # flag. See `autoresearch/ideas/147-dropkey/idea.md`.
+    use_drop_key: bool = False
+    drop_key_rate: float = 0.1
+
+    # 134 — Mega: Moving Average Equipped Gated Attention
+    # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
+    # standard V projection with `V_mega = concat(V, V_ema)` where
+    # `V_ema = β·V_ema_{t-1} + (1-β)·V_raw_t` is a learned per-channel
+    # exponential moving average over the V projection input. The
+    # attention weights then softmax over the doubled key dim and
+    # the AV product sums over both halves. `mega_beta` is a
+    # per-channel learnable scalar in `[0, 1]` parametrized as
+    # `β = σ(raw)` so it stays bounded during training; raw is
+    # zero-init ⇒ β = 0.5 at step 0 (the natural "half-smoothed"
+    # midpoint between the paper's β=0 "no smoothing" and β=1
+    # "constant EMA" extremes). At step 0 β=0.5 ⇒ V_mega is NOT
+    # identical to V; the lever is explicitly NOT a baseline-
+    # identity trick. At β=0 the EMA collapses to the current
+    # token's V (concat → gated attention, the closed 024 lever);
+    # at β=1 it collapses to a constant u_t (no signal). The Mega
+    # paper's default β=0.9 is achieved when `raw = log(9) ≈ 2.2`;
+    # the optimizer finds the right operating point during
+    # training. `mega_use_input=True` (default) feeds the residual
+    # stream `x` into the EMA; `False` would feed the projected
+    # V (but `x` carries the most recent context and is what the
+    # paper actually smooths). Default off → baseline path
+    # bit-identical (no Parameter created, no concat applied).
+    # See `autoresearch/ideas/134-mega-ema/idea.md`.
+    use_mega: bool = False
+    mega_beta: float = 0.9  # paper default; raw scalar parametrized as sigmoid
+    mega_use_input: bool = True  # EMA on pre-projection residual x (paper form)
+
+    # 129 — YOCO: You Only Cache Once (Sun et al. 2024, arXiv:2405.05254,
+    # ICLR 2024 workshop). Decoder-decoder cross-layer KV reuse: the
+    # model is split into a lower half (standard sliding-window self-
+    # attention, default `yoco_lower_window=512`) and an upper half
+    # where each layer's attention reads a SHARED `(K_g, V_g)` cache
+    # projected from the lower half's final residual stream — instead
+    # of computing per-layer K, V from the input. Saves ~50% of the
+    # upper-half K/V projection params (the W_K, W_V slices of
+    # `qkvo_proj` are unused on the upper half) and at inference
+    # collapses the KV cache from `O(L·d·T)` to `O(d·T)`. The lever
+    # is the cross-layer information flow itself, not the cache
+    # saving (which doesn't affect the tiny1m3m val-loss A/B).
+    # `yoco_split` is the 0-indexed layer where the split happens (the
+    # LAST lower-half layer is `yoco_split - 1`; the FIRST upper-half
+    # layer is `yoco_split`); with default 6 and n_layers=12 the lower
+    # half has 6 layers, the upper half has 6 layers. The lower half
+    # runs standard sliding-window self-attention (turning
+    # `use_sliding_window=True` and `sliding_window_size=yoco_lower_window`
+    # on those blocks only). The upper half uses `YOCOLlamaBlock` whose
+    # MHA has `use_shared_kv=True` — the K, V projections are skipped
+    # and replaced with a single shared `GlobalKVHead` projection that
+    # runs ONCE on the lower-half output. Identity at step 0: the
+    # `GlobalKVHead` projections have normal init std=0.02 (matching
+    # the rest of the model), so K_g, V_g are `O(0.02)` at step 0 →
+    # upper-half attention output is small but non-zero. NOT
+    # byte-identical to the standard self-attention baseline at
+    # step 0 (the standard path uses per-layer K, V projections
+    # with std=0.02 init → same magnitude order), but the deviation
+    # is bounded by `O(0.02²)` which is within the NULL band. With
+    # `use_yoco=False` (default) the YOCO path is never built and
+    # the baseline forward graph is bit-identical.
+    # See `autoresearch/ideas/129-yoco/idea.md`.
+    use_yoco: bool = False
+    yoco_split: int = 6
+    yoco_lower_window: int = 512
+
+    # 117 — Soft MoE (Puigcerver, Riquelme, Mustafa, Houlsby 2024,
+    # arXiv:2406.06589, ICLR 2025). Drop-in FFN replacement: E parallel
+    # narrower FFNs + softmax-based dispatch/combine so gradients flow to
+    # all experts (no top-k, no balancing loss, no straight-through).
+    # Each expert has width `d_ff / soft_moe_n_experts` so total FFN
+    # params stay at the budget. Dispatch and combine are derived from
+    # small per-token linear projections (`W_d, W_c` of shape
+    # `[soft_moe_n_experts * soft_moe_n_slots, d_model]`) — zero-init
+    # ⇒ uniform softmaxes at step 0 ⇒ every expert sees roughly the
+    # same weighted average of all input tokens ⇒ layer collapses to
+    # ~a single FFN applied to `mean(X)`. NOT byte-identical to the
+    # single-FFN baseline when flag is ON (the mean-over-tokens
+    # aggregation changes the per-token output), but with
+    # `use_soft_moe=False` (default) the `SoftMoEFFN` module is never
+    # built and the baseline path is bit-identical. See
+    # `models/soft_moe.py` for the full mechanism +
+    # `autoresearch/ideas/117-soft-moe/idea.md`.
+    use_soft_moe: bool = False
+    soft_moe_n_experts: int = 4
+    soft_moe_n_slots: int = 4
+
+    # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
+    # per-token router at each transformer block decides whether the
+    # block fires for the token. Top-k tokens (k = mod_capacity·T) get the
+    # block's residual update, the rest are passed through unchanged. The
+    # kept tokens' residual update is rescaled by `c = k/T` so the
+    # expected per-token contribution matches the dense baseline.
+    # `mod_capacity=0.5` is the paper's default. `mod_router_hidden=64`
+    # gives a 2-layer MLP `W_1 ∈ R^{d×h}`, `W_2 ∈ R^{h×1}` per block;
+    # zero-init both ⇒ `σ(0) = 0.5` uniform scores ⇒ top-k is an
+    # arbitrary subset at step 0. With `use_mod=False` (default) the
+    # `MoDRouter` is never built and the baseline forward graph is
+    # bit-identical. See `models/mod_router.py` +
+    # `autoresearch/ideas/118-mixture-of-depths/idea.md`.
+    use_mod: bool = False
+    mod_capacity: float = 0.5
+    mod_router_hidden: int = 64
+
+    # 148 — Focal Modulation Networks (Yang et al. 2022,
+    # arXiv:2203.11926, NeurIPS 2022). Replaces the attention sub-block
+    # with a three-stage focal modulator: (1) hierarchical context
+    # aggregation via a stack of depthwise causal Conv1d at multiple
+    # kernel sizes (default 3, 5, 7); (2) gather linear that projects
+    # the multi-scale context into modulation space; (3) modulate via
+    # `output = x + σ(W_g x + b_g) * (W_q x ⊙ W_h · context)`. Different
+    # inductive bias from softmax attention: no QKᵀ, no softmax, no
+    # O(T²) memory. Step-0 identity: `gather` and `h_proj` are both
+    # zero-init, so the modulation signal is exactly `0` at step 0
+    # and `output = x` — bit-identical to baseline when flag is off.
+    # With `use_focal_mod=False` (default) the `FocalModulationBlock`
+    # is never built and the MHA path is bit-identical. Cost when on:
+    # 3 × d_model × K depthwise conv params + 3 × d_model² linear
+    # params ≈ 3 × 64 × 5 + 3 × 64² ≈ 960 + 12,288 ≈ 13.2K extra
+    # params per block × 12 blocks ≈ 159K (~17% of the tiny1m3m
+    # budget). See `autoresearch/ideas/148-focal-mod/idea.md`.
+    use_focal_mod: bool = False
+    focal_mod_kernels: tuple = (3, 5, 7)
+
+    # 146 — Switch FFN (Fedus, Zoph, Shazeer 2022, arXiv:2101.03961):
+    # replace the dense FFN with N parallel FFN "experts" and a
+    # top-1 learned router per token. The simplest form of sparse
+    # mixture-of-experts in the FFN position. Distinct from
+    # 117-soft-moe (slot assignment, all experts always used) and
+    # 118-MoD (skip-routing) — Switch uses *top-1 hard routing*.
+    # When `use_switch_ffn=True`, swap the standard dense FFN for
+    # `SwitchFFN` (E parallel full-width FFNs + top-1 router).
+    # Each expert is full-width (no narrowing), so the FFN-param cost
+    # multiplies by `n_ffn_experts` (default 4×) — a real param
+    # injection. `expert_capacity_factor` controls the per-expert
+    # token cap = `ceil(N/E) * capacity_factor`; tokens beyond
+    # capacity pass through unchanged (residual identity, paper §2.2).
+    # Identity at step 0: `W_router` is zero-init ⇒ argmax over
+    # uniform-zero returns index 0 for every token ⇒ all tokens
+    # route to expert 0 ⇒ output = expert_0(x) = a standard dense
+    # FFN (with the same squared_relu/swiglu/etc. variant the
+    # baseline would have used). With `use_switch_ffn=False`
+    # (default) the `SwitchFFN` module is never built and the
+    # baseline FFN path is bit-identical. See `models/switch_ffn.py`
+    # and `autoresearch/ideas/146-sparse-ffn/idea.md`.
+    use_switch_ffn: bool = False
+    n_ffn_experts: int = 4
+    expert_capacity_factor: float = 1.25
+
+    # 145 — Expert-Choice MoE (Zhou, Lei, et al. 2022,
+    # arXiv:2202.09368). Inverted routing direction vs Switch FFN:
+    # each expert picks its own top-k tokens (k = ceil(N/E)) instead
+    # of each token picking its top-1 expert. Load balance is by
+    # construction — every expert processes exactly k tokens — so
+    # NO auxiliary load-balancing loss is required. When
+    # `use_expert_choice_moe=True`, swap the standard dense FFN for
+    # `ExpertChoiceMoE` (E parallel full-width FFNs + a
+    # `nn.Linear(d_model, n_experts)` zero-init router). Each expert
+    # is full-width so the FFN-param cost multiplies by `n_moe_experts`
+    # (default 4×). At step 0 the router is zero-init ⇒ all
+    # expert-token scores are 0 ⇒ every expert processes the same
+    # set of k tokens with uniform softmax weights ⇒ output ≈
+    # uniform mean of E identically-init'd FFNs (close to a single
+    # FFN but NOT byte-identical — same caveat as 117-soft-moe).
+    # With `use_expert_choice_moe=False` (default) the
+    # `ExpertChoiceMoE` module is never built and the baseline FFN
+    # path is bit-identical. See `models/expert_choice_moe.py` and
+    # `autoresearch/ideas/145-expert-choice/idea.md`.
+    use_expert_choice_moe: bool = False
+    n_moe_experts: int = 4
 
     # 109 — KDA channel gate (Kimi Linear, arXiv:2510.26692): per-channel
     # *bounded* diagonal gate on the V stream of each head. KDA replaces
@@ -533,6 +809,143 @@ class LLMConfig:
     use_lookahead: bool = False
     lookahead_k: int = 5
     lookahead_alpha: float = 0.5
+    # 116 — Hyper-Connections (mHC, Xie et al. 2024, arXiv:2409.19606):
+    # multi-stream residual that splits `d_model` into `hc_n_resid`
+    # parallel streams of width `d_l = d_model // hc_n_resid`, each mixed
+    # via per-position `(A_l, B_l, C_l) ∈ R^{n_resid × n_resid}`. Identity
+    # init (A=B=C=I) ⇒ streams don't mix at step 0 ⇒ baseline forward
+    # graph is bit-identical to the pre-norm residual path (B=A=C=I
+    # reduces to `block(x)`). Default off → baseline path bit-identical.
+    # Cost: 3·n_resid² × n_layers scalars (288 at tiny1m3m with n_resid=4,
+    # negligible). See `autoresearch/ideas/116-hyper-connections/idea.md`.
+    use_hyper_connections: bool = False
+    hc_n_resid: int = 4
+    # 115 — R-Drop: Regularized Dropout for Neural Networks
+    # (Liang et al. 2021, arXiv:2106.14448, NeurIPS 2021). Run the model
+    # forward twice per step with different dropout masks, average the two
+    # CE losses, and add `rdrop_alpha · 0.5·(KL(p_1‖p_2)+KL(p_2‖p_1))`
+    # to pull the model's logits toward dropout-invariance. `rdrop_alpha`
+    # is linearly warmed from 0 → target over `rdrop_warmup_steps` so at
+    # step 0 the loss is the (mean of two) CE only — bit-identical to the
+    # single-CE baseline modulo the doubled forward (which is runtime,
+    # not math). With `use_rdrop=False` (default) the trainer takes the
+    # single-forward path → byte-identical to baseline. See
+    # `autoresearch/ideas/115-rdrop/idea.md`.
+    use_rdrop: bool = False
+    rdrop_alpha: float = 1.0   # target alpha; paper sweeps 1.0–5.0
+    rdrop_warmup_steps: int = 1000  # step-0 invariance: alpha=0 here
+    # 110 — Model-Weight EMA (Polyak-Ruppert averaging, Polyak 1990;
+    # used in RoBERTa, MAE, MoCo v3, modded-nanogpt speedrun SWA).
+    # Maintain a shadow copy `θ_ema ← μ·θ_ema + (1−μ)·θ` updated each
+    # step. `μ` ramps linearly from 0 to `ema_decay` over the first
+    # `ema_warmup_steps` ⇒ step-0 EMA = live θ ⇒ step-0 val byte-
+    # identical to baseline. `ema_eval_only=True` (default) means the
+    # live `θ` is the saved/resumed model and the EMA is *only* swapped
+    # in for the val pass; training and checkpointing stay on the live
+    # trajectory. With `use_ema_eval=False` (default) the trainer does
+    # no shadow copy and the baseline path is bit-identical. See
+    # `autoresearch/ideas/110-weight-ema/idea.md`.
+    use_ema_eval: bool = False
+    ema_decay: float = 0.999
+    ema_warmup_steps: int = 100
+    ema_eval_only: bool = True
+    # 119 — SAM: Sharpness-Aware Minimization
+    # (Foret et al. 2020, arXiv:2010.01412, ICLR 2021). Wraps the
+    # 1-D / embedding / norm AdamW path with an adversarial ascent
+    # step `w ← w + ρ · ∇L(w) / ‖∇L(w)‖` followed by descent at the
+    # perturbed point. The Muon 2-D path is unchanged — SAM only
+    # applies to the AdamW bucket (per-paper default for Adam-SAM).
+    # At step 0 the perturbation is non-zero (O(ρ) along the
+    # gradient direction), so the first-step gradient differs from
+    # AdamW by O(ρ). With `rho = 0.0` SAM collapses to AdamW (the
+    # first_step is a no-op, the second_step is parent's step on
+    # the same grad) — the flag-off path stays bit-identical. With
+    # `use_sam=False` (default) the trainer uses plain
+    # `torch.optim.AdamW` unchanged. See `optimizers/sam.py` for
+    # the mechanism and `autoresearch/ideas/119-sam/idea.md` for
+    # the bet.
+    use_sam: bool = False
+    sam_rho: float = 0.05
+    # 138 — LookSAM: Periodic Sharpness-Aware Minimization (Du et al.
+    # 2022, ICLR 2023, arXiv:2205.13539). Compute-efficient variant of
+    # SAM (119): the SAM-style 2-backward ascent-descent step fires
+    # only every K steps; the K-1 steps in between are plain AdamW.
+    # With paper default K=5, effective compute is ~1.2x (vs. SAM's
+    # 2x) at ~80% of the flatness benefit. Mutex with `use_sam`: if
+    # both are on, `use_sam` wins (full SAM is the more aggressive
+    # variant). With `use_looksam=False` (default) the trainer uses
+    # plain `torch.optim.AdamW` unchanged — the LookSAM class is
+    # never instantiated, baseline path bit-identical. Identity at
+    # step 0: with K=5 the first 4 steps are plain AdamW
+    # (`step_count=0..3`, `next_is_sam=False`); the first SAM step
+    # fires at `step_count=4`. So LookSAM is *more* bit-identical
+    # at step 0 than full SAM (119), which always runs the SAM
+    # ascent on the first step. See `optimizers/looksam.py` and
+    # `autoresearch/ideas/138-looksam/idea.md`.
+    use_looksam: bool = False
+    looksam_k: int = 5
+    looksam_rho: float = 0.05
+    # 121 — Prodigy: An Expeditiously Adaptive Parameter-Free Optimizer
+    # (Mishchenko & Defazio 2023, arXiv:2306.06101, NeurIPS 2023 L4DC /
+    # COLT 2024). Successor to D-Adaptation (120): smooth *continuous*
+    # Adam-style gradient similarity `s_t = ⟨sign(g_t/√v_t), sign(g_{t-k}/√v_{t-k})⟩`
+    # feeds `D ← D · exp(β3·s_t)` — eliminating D-Adaptation's noisy
+    # binary ramp-up. Plus a *displacement-based* warm-start: the first
+    # `prodigy_warmup_steps` (default 10) steps are unit-LR AdamW and
+    # `D_0` is set to `‖w_0 − w_k‖ / k` — the natural step size for the
+    # measured trajectory, no hand-tuned guess. `prodigy_d0` is the
+    # warm-start D scalar (paper default 1.0; *not* the production LR —
+    # the production LR is `D_t`, which Prodigy discovers). `beta3` is
+    # the D-update coefficient η (paper default 0.01; bounded per-step
+    # multiplicative change in [exp(-0.01), exp(0.01)] ≈ [0.99, 1.01]).
+    # Identity at step 0: the first `warmup_steps` calls are unit-LR
+    # AdamW (i.e. `D_0 = d0` is the multiplier on the AdamW update),
+    # so they are NOT bit-identical to AdamW with `adamw_lr` — this is
+    # the lever. After warmup, D jumps to the measured displacement
+    # and the LR-discovery loop engages. With `use_prodigy=False`
+    # (default) the trainer uses `torch.optim.AdamW` unchanged — the
+    # Prodigy class is never instantiated. See `optimizers/prodigy.py`
+    # and `autoresearch/ideas/121-prodigy/idea.md`.
+    use_prodigy: bool = False
+    prodigy_d0: float = 0.01
+    prodigy_warmup_steps: int = 10
+    prodigy_beta3: float = 0.01
+    prodigy_d_max: float = 1.0     # paper §3.1 default; upper clamp on D.
+                                    # Without this, D grows as e^t per step
+                                    # (~1e40 by step 92) and explodes on
+                                    # the first small-gradient plateau. The
+                                    # re-code uses d0=0.01 *and* d_max=1.0
+                                    # for defense in depth (the previous
+                                    # d0=1.0 caused a 12.01 → 10348 blowup
+                                    # at step 25 of the 2026-06-13 GPU run).
+    prodigy_min_d: float = 1e-6    # lower clamp on D (prevents collapse on
+                                    # sign-disagreement spike).
+    prodigy_update_clip: float = 1.0  # per-param max-norm on
+                                       # delta = eff_lr · adam_update. Final
+                                       # safety net against a too-large
+                                       # eff_lr from a discovery-loop spike.
+    # 113 — GaLore: Gradient Low-Rank Projection
+    # (Zhao et al. 2024, arXiv:2403.03507, NeurIPS 2024). For each 2-D
+    # weight matrix, project the gradient into a rank-`galore_rank`
+    # subspace via orthonormal P, Q, run AdamW in the r×r projected
+    # space, then project the update back. AdamW state is r×r instead
+    # of n×m (memory win, moot at 0.94M). Every `galore_proj_every`
+    # steps, P, Q are refreshed from the SVD of a running gradient
+    # EMA. Routes ONLY the 2-D non-embed, non-norm slot; 1-D / embed
+    # / norm stay on plain AdamW. The forward graph is unchanged, so
+    # val_loss at step 0 (computed before any optimizer step) is
+    # bit-identical to baseline. The first optimizer step itself
+    # differs from AdamW's first step (it operates on a rank-r
+    # projection), which is the inherent behavior of GaLore. With
+    # `use_galore=False` (default) the trainer's existing Muon path
+    # is unchanged. See `autoresearch/ideas/113-galore/idea.md`.
+    use_galore: bool = False
+    galore_rank: int = 4           # projection rank r (paper sweet spot 4-256)
+    galore_proj_every: int = 200   # SVD basis refresh cadence (paper default)
+    galore_lr: float = 0.006       # matches adamw_lr; tune in tandem if at all
+    galore_beta1: float = 0.9
+    galore_beta2: float = 0.999
+    galore_eps: float = 1e-8
     # Cautious Muon (Liang et al. 2024, arXiv 2411.16085): one-line sign-mask
     # on the orthogonalized update — zero out components whose sign disagrees
     # with the current gradient. Suppresses stale-momentum artifacts. Bit-
@@ -569,6 +982,47 @@ class LLMConfig:
     # averaging handles late-training stabilization). See
     # autoresearch/ideas/006-schedule-free-adamw/plan.md.
     use_schedule_free_adamw: bool = False
+    # 120 — D-Adaptation (Defazio 2023, arXiv:2301.11933 / arXiv:2201.11941,
+    # ICML 2023). Eliminates the learning-rate knob by maintaining a log-scale
+    # running lower bound `D` on the distance from `w_init` to `w_optimal` and
+    # deriving the effective LR as `lr_t = D_t / ‖g_t‖`. The 1st/2nd moments
+    # of AdamW are retained intact — only the outer LR scaling is replaced.
+    # Routes ONLY the 1-D / embedding / norm / head path to `DAdaptAdamW`; the
+    # Muon 2-D path is unchanged (D-Adapt is ortho to Muon, lives only on the
+    # AdamW bucket). At step 0 `D = 1e-6` warm-start ⇒ `lr_0 ≈ 1e-6 / ‖g_0‖`
+    # (essentially zero); after ~10–20 steps `D` reaches a typical AdamW-
+    # equivalent value. This first-step ramp-up is the lever's signature, not
+    # a bug. Default off → trainer uses plain `torch.optim.AdamW` unchanged,
+    # baseline path bit-identical. See `optimizers/dadaptation.py` for the
+    # mechanism and `autoresearch/ideas/120-dadaptation/idea.md` for the bet.
+    use_dadapt: bool = False
+    dadapt_d0_lr: float = 1.0     # η, log-LR update constant (paper default 1.0)
+    dadapt_min_lr: float = 0.0    # lower clamp on D (paper default 0.0)
+    dadapt_d_max: float = 1.0     # upper clamp on D (paper §3.1, default 1.0).
+                                  # Also caps the derived lr_t = D/‖g_t‖.
+                                  # Required for stability at tiny1m3m — without
+                                  # this `D` grows as e^t per step (~1e40 by
+                                  # step 92) and explodes on the first small-
+                                  # gradient plateau (val 10.81 → 36.89 → 7e15).
+    dadapt_eps: float = 1e-8      # floor for lr_t = D/‖g_t‖ (also Adam eps)
+    # 114 — MARS: Variance-Reduced AdamW (Yuan et al. 2024,
+    # arXiv:2401.03855). Subclass of AdamW that adds a lag-based
+    # variance-reduction correction `g̃_t = g_t + mix_coef *
+    # (m_{t-lag} − m_{t-2*lag})` to the *gradient* passed to AdamW.
+    # Per-parameter `v` is untouched; only the gradient input is
+    # modified. Ring buffer of past `exp_avg` snapshots of length
+    # `2*lag` is maintained per param. Identity at step 0: the
+    # buffer is empty for the first `2*lag` steps ⇒ correction
+    # undefined ⇒ g̃_t = g_t ⇒ bit-identical to plain AdamW. Paper
+    # default `lag=10`, `mix_coef=0.5`; `lr_scale=1.0` (paper does
+    # not require LR re-tuning). With `use_mars=False` (default)
+    # the trainer uses `torch.optim.AdamW` unchanged — the
+    # MARSAdamW class is never instantiated. See
+    # `autoresearch/ideas/114-mars/idea.md`.
+    use_mars: bool = False
+    mars_lag: int = 10
+    mars_mix_coef: float = 0.5
+    mars_lr_scale: float = 1.0
     # RetNet retention kernel (Sun et al. 2023, arXiv 2307.08621):
     # per-head learnable decay γ_h replaces softmax attention with a
     # linear-recurrence kernel. v1 = kernel + synthetic probe only
@@ -600,6 +1054,347 @@ class LLMConfig:
     # `use_cautious_lion` flag is gated by the trainer so it cannot fire
     # on the AdamW path. See autoresearch/ideas/011-cautious-lion/plan.md.
     use_cautious_lion: bool = False
+    # Tiger optimizer (Chen et al. 2024, arXiv:2401.16691): sign-based
+    # optimizer with per-parameter magnitude EMA — `update = m / (√v + ε)`
+    # where `m` is the gradient EMA (β1=0.9) and `v` is the EMA of |g|
+    # (β2=0.999). Distinct from Lion (which has unit-magnitude sign
+    # updates); Tiger's per-parameter magnitude EMA gives a tighter LR
+    # sensitivity and matches AdamW at ~5-10x lower LR (paper).
+    # Replaces Muon on the 2-D non-embedding, non-norm routing slot
+    # when `use_tiger=True`. Default off → Muon path is bit-identical.
+    # 1-D / embedding / head stay on AdamW — Tiger's sign-stable but
+    # magnitude-scaled update can be aggressive on the embedding
+    # (paper §5.2 recommends AdamW for embedding). Cold-start with
+    # `m_0 = 0`, `v_0 = 0` ⇒ first step is `update = 0/ε = 0` ⇒ no
+    # parameter change at step 0 ⇒ byte-identical to baseline at
+    # step 0 (no paper warmstart `v_0 = |g_0|`, which would shift
+    # the first step to a unit sign step). `tiger_lr=1e-3` matches
+    # `adamw_lr / 6` (paper-recommended for tiny models). See
+    # `autoresearch/ideas/122-tiger/idea.md`.
+    use_tiger: bool = False
+    tiger_lr: float = 1e-3
+    tiger_beta1: float = 0.9
+    tiger_beta2: float = 0.999
+    tiger_eps: float = 1e-8
+    # 123 — CAME: Confidence-guided Adaptive Memory Efficient
+    # Optimization (Luo et al. 2023, arXiv:2307.02085, NeurIPS 2023).
+    # AdamW replacement for the 1-D / embedding / norm / head path
+    # when `use_came=True`. The update is
+    #     m_t = β1·m_{t-1} + (1−β1)·g_t
+    #     v_t = β2·v_{t-1} + (1−β2)·g_t²
+    #     res_t = (m_t − g_t) / (√v_t + ε)
+    #     conf_t = max(res_t, 0) + ε
+    #     update = m_t / (√v_t + ε) · conf_t / (|m_t| + ε)
+    # — i.e. a confidence-rescaled AdamW where the rescaling
+    # down-weights updates when the gradient agrees with the
+    # running momentum (residual small) and applies a residual-
+    # shaped step when they disagree. Cold-start `m_0 = 0`,
+    # `v_0 = 0` ⇒ first-step residual is negative, clipped to
+    # 0, confidence = ε, update ≈ 0 ⇒ byte-identical to baseline
+    # at step 0. Default off → AdamW path unchanged, baseline
+    # bit-identical. See `optimizers/came.py` for the mechanism
+    # and `autoresearch/ideas/123-came/idea.md` for the bet.
+    use_came: bool = False
+    came_lr: float = 0.006
+    came_beta1: float = 0.9
+    came_beta2: float = 0.999
+    came_eps: float = 1e-8
+    # Per-element magnitude clip on the raw `update` before the LR
+    # scaling in `optimizers/came.py`. Bounds any single step's
+    # per-element displacement to `±came_update_clip · lr`. Protects
+    # against the `m̂ / ε² ≈ 1e16` blowup when `v̂ ≈ 0` and `m̂` is
+    # non-trivial (the 2026-06-13 GPU divergence — val loss 10.81 →
+    # 6.79e7 at step 25). Default `10.0` is well above the natural
+    # ~1.0 per-element magnitude on a healthy trajectory, so it is
+    # effectively inactive on a normal Adam-like regime and only
+    # triggers in the runaway-`v̂`-zero blowup case. See
+    # `autoresearch/ideas/123-came/idea.md` for the post-mortem.
+    came_update_clip: float = 10.0
+    # 124 — RAdam: Rectified Adam (Liu et al. 2019, arXiv:1908.03265,
+    # ICLR 2020). Replaces the AdamW 1-D / embedding / norm / head
+    # path with `RAdam` when `use_radam=True`. The 2-D Muon path is
+    # unchanged (RAdam is an AdamW replacement, like 114-MARS,
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME). The update applies
+    # a variance-bounded correction `ρ_t` to Adam's bias-corrected
+    # step: when the variance of `1/(1−β2^t)` is high (early steps),
+    # RAdam falls back to an SGD-only `m̂_t` step (no `v̂_t`); once
+    # `ρ_t > 4` (≈ `t > 4/(1−β2)`) it switches to the full Adam-
+    # normalized update with the variance-aware `√ρ_t` rescale. This
+    # *removes the manual warmup knob* — RAdam auto-detects when the
+    # effective LR is safe. At step 0 (t=1) `ρ_1 ≪ 4` ⇒ SGD-fallback
+    # path ⇒ `update = (1−β1)·g_0`. NOT bit-identical to AdamW's first
+    # step (which uses the full Adam-normalized update), but the
+    # magnitude is comparable (O(β1) smaller). This first-step
+    # divergence is the lever, not a bug. With `use_radam=False`
+    # (default) plain `torch.optim.AdamW` is used — baseline
+    # bit-identical. `radam_lr=0.006` matches `adamw_lr` (paper does
+    # not require re-tuning). See `optimizers/radam.py` for the
+    # mechanism and `autoresearch/ideas/124-radam/idea.md` for the bet.
+    use_radam: bool = False
+    radam_lr: float = 0.006
+    radam_beta1: float = 0.9
+    radam_beta2: float = 0.999
+    radam_eps: float = 1e-8
+    # 126 — AdaShift: Decorrelated Adam via Delayed Gradients
+    # (Zhou et al. 2019, arXiv:1810.00143, NeurIPS 2019 workshop).
+    # Replaces the AdamW 1-D / embedding / norm / head path with
+    # `AdaShift` when `use_adashift=True`. The 2-D Muon path is
+    # unchanged (AdaShift is an AdamW replacement, like 114-MARS,
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam). The
+    # update uses a *delayed* gradient `g_{t-n}²` for the 2nd
+    # moment, decorrelating `v_t` from `m_t` (which both use `g_t`):
+    #     m_t = β1·m_{t-1} + (1-β1)·g_t
+    #     v_t = β2·v_{t-1} + (1-β2)·g_{t-n}²
+    #     update = m̂_t / (√v̂_t + ε)
+    # Per-parameter state keeps a queue of past `n` gradients
+    # (clones, fp32, length bounded by n). The paper's
+    # warm-start `v_0 = g_0²` is used on the first step so
+    # `v_1 = β2·g_0²` — NOT bit-identical to AdamW's first step
+    # (`v_1 = (1-β2)·g_0²`) but same magnitude order (O(β2)
+    # different). The first-step displacement is the lever, not a
+    # bug. With `n = 0` AdaShift collapses to AdamW; the
+    # `adashift_n = 3` default is the paper's recommended delay.
+    # With `use_adashift=False` (default) plain `torch.optim.AdamW`
+    # is used — baseline path bit-identical. See
+    # `optimizers/adashift.py` for the mechanism and
+    # `autoresearch/ideas/126-adashift/idea.md` for the bet.
+    use_adashift: bool = False
+    adashift_lr: float = 0.006
+    adashift_beta1: float = 0.9
+    adashift_beta2: float = 0.999
+    adashift_eps: float = 1e-8
+    adashift_n: int = 3
+    # 135 — Adan: Adaptive Nesterov Momentum with N-Step Lookback
+    # (Xie et al. 2022, arXiv:2208.06677, TPAMI 2022 / ICLR 2023
+    # workshop). Replaces the AdamW 1-D / embedding / norm / head
+    # path with `Adan` when `use_adan=True`. The 2-D Muon path is
+    # unchanged (Adan is an AdamW replacement, like 114-MARS,
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam,
+    # 126-AdaShift, 127-GC, 128-SD). The mechanism (paper Algorithm
+    # 1) combines (1) a 1-step first moment, (2) an N-step lookback
+    # variance estimate, and (3) a Nesterov-style extrapolated
+    # gradient:
+    #     g_la = g_t + β_la · (g_t − g_{t−1})
+    #     m_t = β1·m + (1−β1)·g_la
+    #     v_t = β2·v + (1−β2)·mean(g_{t..t-N+1}²)
+    #     update = m_t / (√v_t + ε)         (no bias correction)
+    # `adan_n_lookback=4` is the paper's default N. `adan_lookahead_beta=0.5`
+    # is the paper's default Nesterov coefficient. At step 0
+    # `prev_grad=None` ⇒ lookahead term falls back to `g_0` ⇒
+    # `m_1 = (1−β1)·g_0`, `v_1 = (1−β2)·g_0²` (queue length 1) ⇒
+    # `update_0 = g_0 / (|g_0| + ε) ≈ sign(g_0)`. NOT bit-identical
+    # to AdamW's first step (which uses bias-corrected
+    # `m̂/√v̂`), but the magnitudes are similar — the first-step
+    # displacement is the lever's signature. The N=4 lookback ramps
+    # in over the first 4 steps. With `use_adan=False` (default) the
+    # `Adan` class is never instantiated and the trainer uses
+    # `torch.optim.AdamW` unchanged. See `optimizers/adan.py` and
+    # `autoresearch/ideas/135-adan/idea.md`.
+    use_adan: bool = False
+    adan_lr: float = 0.006
+    adan_beta1: float = 0.9
+    adan_beta2: float = 0.999
+    adan_eps: float = 1e-8
+    adan_lookahead_beta: float = 0.5
+    adan_n_lookback: int = 4
+    # 140 — Sophia: Scalable Stochastic Second-order Optimizer
+    # (Liu, Wang, et al. 2023, arXiv:2305.14342, ICML 2023). Replaces
+    # the AdamW 1-D / embedding / norm / head path with `Sophia` when
+    # `use_sophia=True`. The 2-D Muon path is unchanged (Sophia is an
+    # AdamW replacement, like 114-MARS, 119-SAM, 121-Prodigy, 135-Adan).
+    # The mechanism is the diagonal-Hessian-aware update
+    #     m_t  = β1·m + (1−β1)·g_t
+    #     h_t  = β2·h + (1−β2)·h_hat_t         (h_hat sampled every k)
+    #     update = clip(g, ±ρ) / max(h, ε)
+    #     θ_t  = θ_{t−1} − lr·(update + λ·θ_{t−1})   (decoupled WD)
+    # The diagonal Hessian is sampled via Hutchinson's trace
+    # estimator: `u ~ Rademacher(±1)` per parameter, then
+    # `h_hat = u · ∇(g·u)`, computed by an extra backward on the
+    # scalar `g·u` (one extra backward every `sophia_hessian_freq`
+    # steps — paper default 10, so ~1.1× amortized backward cost at
+    # 92 update steps). The trainer handles the extra backward; see
+    # `training/trainer.py` for the wiring. Defaults match the
+    # paper's 125M model (lr=6e-3, β1=0.965, β2=0.99, ρ=0.04) with
+    # a per-parameter `update_clip=1.0` safety guard that bounds
+    # the cold-start `h_t≈0` amplification to a single AdamW-
+    # magnitude step. With `use_sophia=False` (default) the
+    # `Sophia` class is never instantiated and the trainer uses
+    # plain `torch.optim.AdamW` unchanged — baseline path
+    # bit-identical. See `optimizers/sophia.py` for the mechanism
+    # and `autoresearch/ideas/140-sophia/idea.md` for the bet.
+    use_sophia: bool = False
+    sophia_lr: float = 6e-3
+    sophia_beta1: float = 0.965
+    sophia_beta2: float = 0.99
+    sophia_eps: float = 1e-8
+    sophia_rho: float = 0.04
+    sophia_hessian_freq: int = 10
+    sophia_update_clip: float = 1.0
+    # 136 — AdaPNM: Adaptive Positive-Negative Momentum
+    # (Ding, Zhou, Zhu, Ye, Jiao 2019, arXiv:1906.01520, NeurIPS 2019).
+    # Replaces the AdamW 1-D / embedding / norm / head path with
+    # `AdaPNM` when `use_adapnm=True`. The 2-D Muon path is
+    # unchanged (AdaPNM is an AdamW replacement, like 114-MARS,
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam,
+    # 126-AdaShift, 135-Adan, 127-GC, 128-SD). The mechanism
+    # maintains TWO parallel momentum buffers — one for the
+    # positive part of the gradient `m+_t = β1·m+_{t-1} +
+    # (1−β1)·max(g_t, 0)` and one for the negative part
+    # `m-_t = β1·m-_{t-1} + (1−β1)·max(-g_t, 0)`. The combined
+    # direction `m_t = m+_t − m-_t` is algebraically equal to
+    # the standard EMA `β1·m_{t-1} + (1−β1)·g_t` because
+    # `max(g, 0) − max(-g, 0) = g` element-wise — the lever's
+    # factored-state trick preserves AdamW's update direction
+    # while opening the door to future per-side processing.
+    # The 2nd moment `v_t = β2·v_{t-1} + (1−β2)·g_t²` is
+    # standard Adam-style. Cold-start `m+_0 = m-_0 = v_0 = 0`
+    # ⇒ first-step update = `(1−β1)·g_0 / (√((1−β2)·g_0²) + ε)`,
+    # approximately equal to AdamW's first step (within an
+    # `O(β1)` factor — AdamW applies bias correction `m̂_1 =
+    # m_1 / (1−β1)`, AdaPNM does not). With `use_adapnm=False`
+    # (default) plain `torch.optim.AdamW` is used — baseline
+    # path bit-identical. See `optimizers/adapnm.py` and
+    # `autoresearch/ideas/136-adapnm/idea.md`.
+    use_adapnm: bool = False
+    adapnm_lr: float = 0.006
+    adapnm_beta1: float = 0.9
+    adapnm_beta2: float = 0.999
+    adapnm_eps: float = 1e-8
+    # 127 — Gradient Centralization (Yong et al. 2020, arXiv:2004.01461,
+    # ICONIP 2020). Pre-step hook that subtracts the mean from each
+    # gradient matrix before the AdamW update runs. For 2-D weight
+    # `W ∈ R^{n×m}` the mean is taken along `gc_axis` (default 1, the
+    # output axis), giving each output neuron zero-mean input
+    # gradient. For 4-D conv weights, the mean is taken per-filter
+    # over the spatial axes. The transform is `g ← g − mean(g,
+    # dim=axis)` — a single linear operator that removes the
+    # constant component without changing the variance.
+    # Compositional: when `use_gc=True` and no specific AdamW
+    # replacement is active, the trainer routes AdamW-eligible params
+    # through `GCAdamW` (subclass of `torch.optim.AdamW`). The per-
+    # parameter `(m, v)` state is untouched — only the gradient
+    # input is centered. The forward graph is unchanged, so `val_loss`
+    # at step 0 (computed before any optimizer step) is bit-identical
+    # to baseline. The first optimizer step itself differs from
+    # AdamW's first step (the centered gradient has zero mean per
+    # output neuron, removing the constant component that AdamW's
+    # first step otherwise sees) — this is the lever's signature, not
+    # a bug. With `use_gc=False` (default) plain `torch.optim.AdamW`
+    # is used — baseline path bit-identical. See
+    # `optimizers/grad_centralization.py` for the mechanism and
+    # `autoresearch/ideas/127-grad-centralization/idea.md` for the bet.
+    use_gc: bool = False
+    gc_axis: int = 1
+    # 125 — PSGD: Preconditioned Stochastic Gradient Descent
+    # (Li, Chen, Milenkovic, Giannakis 2024, arXiv:2405.13856,
+    # NeurIPS 2024). The most recent (NeurIPS 2024) high-quality
+    # optimizer paper with explicit ≥100M-scale LM wins (GPT-2
+    # small/medium/large match or beat AdamW at same compute).
+    # Replaces Muon on the 2-D non-embedding, non-norm routing slot
+    # when `use_psgd=True`. PSGD learns an online preconditioner
+    # that whitens the gradient per axis. For 2-D W ∈ R^{n×m}:
+    #     P ← P + α · (g g^T / m − I)        (n×n)
+    #     Q ← Q + α · (W W^T / n − I)        (m×m)
+    #     update = P · g · Q                  (whitened step)
+    #     w ← w − lr · (β·m_prev + (1−β)·update)
+    # For 1-D params (norms, biases, embeddings): diagonal `D` with
+    # `D ← D + α · (g² − 1)` and `update = D · g`. The 1-D / embedding
+    # / norm slot stays on AdamW per the paper's default (we keep
+    # the same routing as Muon / Lion / Tiger / GaLore). `psgd_alpha`
+    # is the preconditioner EMA rate (paper default 1e-3). `psgd_beta`
+    # is the momentum coefficient (paper default 0.9). At α=0 PSGD
+    # collapses to SGD-with-momentum. At step 0 (P=I, Q=I, m=0) the
+    # first update is `I · g · I = g` and the first step is
+    # `w ← w − lr · g` (SGD, not AdamW — the lever's first-step
+    # signature). With `use_psgd=False` (default) the `PSGD` class
+    # is never instantiated and the trainer uses the existing Muon
+    # path bit-identically. See `optimizers/psgd.py` for the
+    # mechanism and `autoresearch/ideas/125-psgd/idea.md` for the bet.
+    use_psgd: bool = False
+    psgd_lr: float = 0.01
+    psgd_alpha: float = 1e-3
+    psgd_beta: float = 0.9
+    # 128 — Spectral Decoupling (Yong, Pehlivan, Morariu, Tsang 2022,
+    # arXiv:2202.05380, NeurIPS 2022). Replaces the AdamW 1-D /
+    # embedding / norm / head path with `SDAdamW` — a thin subclass
+    # of `torch.optim.AdamW` that projects each per-param gradient
+    # off the weight direction (`g ← g − (⟨g,w⟩/‖w‖²)·w`) before
+    # delegating to AdamW's `.step()`. Decoupled WD `λ·w` is
+    # unchanged (it acts along w — magnitude shrinkage is preserved).
+    # The 2-D Muon path is unchanged (SD is an AdamW replacement, like
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 114-MARS, 123-CAME, 124-RAdam,
+    # 126-AdaShift, 127-GC). Identity at step 0: with symmetric inits
+    # `⟨g_0, w_0⟩` is small but nonzero, so the projection removes
+    # an `O(1/n)` component of `g_0`. NOT bit-identical to AdamW's
+    # first step (small `O(1/n)` correction), but the deviation is
+    # bounded and well within the NULL band. `sd_lambda=1.0` is the
+    # paper's full projection. `sd_lambda=0.0` collapses SD to
+    # plain AdamW (the projection is inert). With `use_sd=False`
+    # (default) plain `torch.optim.AdamW` is used — baseline path
+    # bit-identical. See `optimizers/spectral_decoupling.py` and
+    # `autoresearch/ideas/128-spectral-decoupling/idea.md`.
+    use_sd: bool = False
+    sd_lambda: float = 1.0
+    # 137 — AdamP: Adam with Projection-Based Update
+    # (He, Liu, Mao, Chen, Zhang 2020, arXiv:2006.08217, NeurIPS
+    # 2020). Replaces the AdamW 1-D / embedding / norm / head path
+    # with `AdamP` when `use_adamp=True`. The 2-D Muon path is
+    # unchanged (AdamP is an AdamW replacement, like 114-MARS,
+    # 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam,
+    # 126-AdaShift, 127-GC, 128-SD). The mechanism projects the
+    # Adam update `Δ = m̂/√v̂` onto the orthogonal complement of
+    # `w` (removes the component of Δ along w, leaving only the
+    # perpendicular component) so the update rotates direction
+    # without changing magnitude. The L2 reg is applied as the
+    # paper's `λ · ‖w‖ · ŵ` (pure magnitude shrinkage, no
+    # rotation). Identity at step 0: for symmetric inits
+    # `‖Δ_0 · w_0 / ‖w_0‖²‖` is `O(1/√d)`, so the projection
+    # removes a small component of Δ_0 and the first AdamP step
+    # ≈ the first AdamW step modulo an `O(1/√d)` correction. With
+    # `adamp_lambda=0.0` the projection is fully inert and
+    # `AdamP` collapses to plain AdamW — bit-identical baseline.
+    # With `use_adamp=False` (default) plain `torch.optim.AdamW`
+    # is used — baseline bit-identical. See `optimizers/adamp.py`
+    # and `autoresearch/ideas/137-adamp/idea.md`.
+    use_adamp: bool = False
+    adamp_lr: float = 0.006
+    adamp_beta1: float = 0.9
+    adamp_beta2: float = 0.999
+    adamp_eps: float = 1e-8
+    adamp_lambda: float = 1.0  # projection strength (0.0 = inert)
+    # 141 — AdaBelief: Adapting Stepsizes by the Belief in Observed
+    # Gradients (Zhuang, Liu, Tran, Hoang, Chang, et al. 2020,
+    # arXiv:2010.07468, NeurIPS 2020). Replaces the AdamW 1-D /
+    # embedding / norm / head path with `AdaBelief` when
+    # `use_adabelief=True`. The 2-D Muon path is unchanged
+    # (AdaBelief is an AdamW replacement, like 114-MARS, 119-SAM,
+    # 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam, 126-AdaShift,
+    # 127-GC, 128-SD, 135-Adan, 136-AdaPNM, 137-AdamP). The
+    # mechanism replaces AdamW's 2nd moment `v_t = E[g²]` with
+    # the *residual* variance `s_t = E[(g_t − m_t)²] + ε`, where
+    # `m_t` is the running momentum. Step magnitude is large when
+    # the current gradient agrees with the momentum (small
+    # residual — we trust the direction) and small when they
+    # disagree (large residual). AdamW does the *opposite* — a
+    # large `g²` shrinks the step — which is wrong when a large
+    # gradient is a *good* direction, not a noisy one. At step 0
+    # `m_0 = 0`, `s_0 = ε`; first-step residual is `g_0 −
+    # (1−β1)·g_0 = β1·g_0`, so `s_1 = (1−β2)·β1²·g_0² + ε` and
+    # `update_0 ≈ g_0 / √(0.081·g_0² + ε) ≈ 3.5·sign(g_0)` — NOT
+    # bit-identical to AdamW's first step (AdamW would use
+    # `m̂/√v̂ = g_0/|g_0| = sign(g_0)`), but the magnitude is the
+    # same order. The first-step displacement is the lever's
+    # signature, not a bug. The forward graph is unchanged, so the
+    # *pre-step-0 forward* output is bit-identical to baseline.
+    # With `use_adabelief=False` (default) plain `torch.optim.AdamW`
+    # is used — baseline path bit-identical. See
+    # `optimizers/adabelief.py` and
+    # `autoresearch/ideas/141-adabelief/idea.md`.
+    use_adabelief: bool = False
+    adabelief_lr: float = 0.006
+    adabelief_beta1: float = 0.9
+    adabelief_beta2: float = 0.999
+    adabelief_eps: float = 1e-8
     # Moonlight Muon RMS rescale (Kimi / Moonshot AI, arXiv:2502.16982,
     # Feb 2025): replaces the default `shape_aspect` per-tensor scale
     # with `c·sqrt(max(d_in, d_out))` so every 2-D weight has an
@@ -634,6 +1429,44 @@ class LLMConfig:
     # and the baseline path stays bit-identical. See
     # autoresearch/ideas/029-v-norm/plan.md.
     use_v_layernorm: bool = False
+
+    # 132 — Born-Again Networks: Self-Distillation with EMA Teacher
+    # (Furlanello, Lipton, Tschiatschek, Prabhudesai, Urbach 2018,
+    # arXiv:1805.04770). Maintain a shadow copy of the model
+    # `θ_teacher ← (1−β)·θ_teacher + β·θ_student` updated each
+    # optimizer step. Add a per-step distillation term
+    # `L_distill = α · T² · KL(softmax(teacher/T) ‖ softmax(student/T))`
+    # on top of CE. Identity at step 0: the shadow is a clone of the
+    # live init, so the teacher forward produces identical logits to
+    # the student ⇒ KL = 0 ⇒ loss = CE (byte-identical to baseline
+    # at step 0). With `use_born_again=False` (default) the teacher
+    # is never built and the loss term is zero ⇒ baseline path
+    # bit-identical throughout. See `autoresearch/ideas/132-born-again/idea.md`.
+    use_born_again: bool = False
+    born_again_beta: float = 0.999  # EMA "speed" (higher = teacher tracks closer)
+    born_again_alpha: float = 1.0   # KL weight on top of CE
+    born_again_temp: float = 2.0    # distillation temperature; KL scaled by T²
+
+    # 133 — SeqMix: Token-Level Mixup for Language Modeling
+    # (Guo, Mao, Zhang 2019, arXiv:1908.02951, extended to LM).
+    # When on, the trainer samples a paired sequence from the batch,
+    # computes embeddings for both via the model's existing
+    # token_embedding (and emb_proj if emb_rank is set), and mixes
+    # them at the embedding level:
+    #   emb_mixed = λ · emb_a + (1 − λ) · emb_b,   λ ~ Beta(α, α)
+    # The residual stream is fed `emb_mixed * emb_scale`; the rest of
+    # the model runs unchanged. The loss is the λ-weighted mix of the
+    # two CEs against the unmixed targets:
+    #   L_mixed = λ · CE(logits, y_a) + (1 − λ) · CE(logits, y_b)
+    # α=0.4 is the paper default; λ is almost always in (0.05, 0.95),
+    # so the mixed loss differs from the unmixed CE by a non-trivial
+    # amount at step 0 — the lever's documented signature. With
+    # `use_seqmix=False` (default) `model.seqmix_forward` is never
+    # called and the trainer takes the standard `model(x)` +
+    # `F.cross_entropy(...)` path — baseline path bit-identical.
+    # See `autoresearch/ideas/133-seqmix/idea.md`.
+    use_seqmix: bool = False
+    seqmix_alpha: float = 0.4
 
     # Evaluation
     eval_every: Optional[int] = None
@@ -753,9 +1586,68 @@ class Tiny1M3MConfig(LLMConfig):
 
 
 @dataclass
+class Tiny1M3MReZeroConfig(Tiny1M3MConfig):
+    """Tiny1M3M with ReZero residual scaling (Bachlechner et al. 2020,
+    arXiv:2003.04887).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Each
+    transformer block builds two learnable scalars `α_attn` and
+    `α_ffn` (init 0) on the residual adds. At step 0 both gates are
+    0, so the residual add becomes a no-op and the model is the
+    identity function — bit-identical to baseline in the limit of
+    fp32 (the `α·f` term is exactly 0). The optimizer then grows
+    the α's during training; the lever is whether layer-specific
+    residual scaling helps at 12L. Cost: 2 scalars/block × 12
+    blocks = 24 scalars total (negligible).
+
+    Transfer-risk: high. The paper's headline wins are at 100L
+    (CIFAR-10 / T2T-ViT) and modest at 12L (GPT-2 125M). tiny1m3m
+    is at 12L so the lever is least likely to fire. NULL band
+    |Δ| < 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/130-rezero/idea.md`.
+    """
+    use_re_zero: bool = True
+
+
+@dataclass
 class Tiny1M3MSWANConfig(Tiny1M3MConfig):
     """Tiny1M3M with SWAN on the matrix-weight slot."""
     use_swan: bool = True
+
+
+@dataclass
+class Tiny1M3MShortConvConfig(Tiny1M3MConfig):
+    """Tiny1M3M with pre-attention ShortConv (Hyena ShortConv variant).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Adds a depthwise causal Conv1d on the residual stream, applied
+    BEFORE the attention sublayer (pre-attention, pre-LN on the conv
+    path; right after the canon_conv branch when both are on). The
+    conv has identity init (last tap = 1, rest = 0) and is gated by a
+    per-block scalar `g` (init 0), so at step 0 `g · ShortConv1D(x) = 0`
+    and the block reduces to the no-conv baseline. The conv's
+    identity init is a *good* starting structure that the gate can
+    smoothly grow into once training begins.
+
+    From Poli, Massaroli, et al. 2023, "Hyena Hierarchy: Towards Larger
+    Convolutional Language Models" (arXiv:2302.10866) — specifically
+    the ShortConv variant (single depthwise Conv1d, kernel 3 or 4,
+    pre-attention local aggregator). The lever is qualitatively
+    different from 023-canon-conv (post-attention concat, kaiming
+    init) — ShortConv is *pre-attention* and *identity-init*, so the
+    conv's local-mixing contribution is built on a "pass-through"
+    starting point rather than a learned filter.
+
+    Strictly orthogonal to canon_conv (different placement, different
+    init) and to attention-side levers (FIRE / CoPE / FoX / Softpick).
+    Default off → baseline path bit-identical. Cost: n_layers ×
+    (kernel·d_model + 1) extra params (~2.3K at tiny1m3m, +0.25%).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/143-shortconv/plan.md`.
+    """
+    use_short_conv: bool = True
+    short_conv_kernel: int = 3
 
 
 @dataclass
@@ -775,6 +1667,51 @@ class Tiny1M5MConfig(Tiny1M3MConfig):
 class Tiny1M3MQGainConfig(Tiny1M3MConfig):
     """Tiny1M3M with per-head Q-gain."""
     use_q_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MYOCOConfig(Tiny1M3MConfig):
+    """Tiny1M3M with YOCO: You Only Cache Once
+    (Sun et al. 2024, arXiv:2405.05254, ICLR 2024 workshop).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Splits the 12L model at layer 6: the lower half (layers 0..5)
+    runs standard sliding-window self-attention with `yoco_lower_window=512`;
+    the upper half (layers 6..11) uses `YOCOLlamaBlock` whose attention
+    reads a SHARED `(K_g, V_g)` cache projected from the lower half's
+    final residual stream. The K_g, V_g projections live on a single
+    `GlobalKVHead` module (one `nn.Linear(d_model, kv_size)` per of
+    K_g, V_g) and are computed once per forward, before the upper-
+    half block loop. The upper-half block's per-layer K, V projections
+    are skipped (the MHA's `use_shared_kv=True` flag bails out before
+    the W_K, W_V slices of `qkvo_proj`).
+
+    At step 0 the lower half's output is small but non-zero (standard
+    init std=0.02 throughout), so K_g, V_g are `O(0.02)` → upper-half
+    attention output is `O(0.02²)` per token. NOT byte-identical to
+    the standard 12L self-attention baseline at step 0, but the
+    magnitude order matches the standard path's per-layer
+    `O(0.02²)` step-0 attention output.
+
+    Net new params:
+    - `GlobalKVHead`: 2 × d_model × kv_size = 2 × 64 × 32 = 4,096.
+    - Upper-half W_K, W_V slices of qkvo_proj: SKIPPED (per-layer
+      W_K, W_V still built but unused; they get pruned naturally by
+      Muon's orthogonalization). Saves roughly
+      `n_upper × 2 × kv_size × d_model = 6 × 2 × 32 × 64 = 24,576`
+      params of "active" weight that doesn't drive attention (these
+      are still allocated in the merged qkvo_proj, but the gradient
+      through W_K_l, W_V_l is zero when use_shared_kv is on). On the
+      lower half the full qkvo_proj is used as normal.
+
+    PASS ≤ ctrl − 0.005 (small/null band — at 12L the cross-layer
+    KV sharing is plausibly a wash; the win at the original paper's
+    32L+ scale is unlikely to transfer to 12L). NULL band |Δ| <
+    0.005. DRIFT > +0.005 (the lower-half burden of producing the
+    shared K_g, V_g is wasted if the upper half doesn't use them well).
+    See `autoresearch/ideas/129-yoco/idea.md`.
+    """
+    use_yoco: bool = True
 
 
 @dataclass
@@ -898,6 +1835,429 @@ class Tiny1M3MCautiousLionConfig(Tiny1M3MLionConfig):
     autoresearch/ideas/011-cautious-lion/plan.md.
     """
     use_cautious_lion: bool = True
+
+
+@dataclass
+class Tiny1M3MTigerConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Tiger (Chen et al. 2024) on the 2-D non-embed slot.
+
+    A/B vs the plain-Muon ctrl (`Tiny1M3MConfig`, val 6.4306). Tiger
+    replaces Muon on the 2-D non-embedding, non-norm routing slot —
+    the same routing slot that Lion uses (closed 011). 1-D / embedding
+    / head stay on AdamW. Tiger's update is `m / (√v + ε)` where
+    `m` is the gradient EMA (β1=0.9) and `v` is the EMA of |g|
+    (β2=0.999). The per-parameter magnitude EMA is the key
+    differentiator from Lion's pure sign update: Tiger's update
+    magnitude scales with the recent per-parameter gradient size,
+    not unit magnitude. `tiger_lr=1e-3` ≈ `adamw_lr / 6` per paper.
+    Forward graph unchanged ⇒ step-0 val_loss is bit-identical to
+    baseline (the optimizer only changes step ≥ 1).
+
+    PASS ≤ −0.01 vs the tiny1m3m ctrl. NULL band |Δ| < 0.01.
+    DRIFT > +0.01 (Tiger's magnitude scaling is more aggressive
+    than Lion's at tiny scale; the paper's LR-5x-lower rule is
+    scale-free but the second-moment noise floor differs at 0.94M).
+    See `autoresearch/ideas/122-tiger/idea.md`.
+    """
+    use_tiger: bool = True
+
+
+@dataclass
+class Tiny1M3MCAMEConfig(Tiny1M3MConfig):
+    """Tiny1M3M with CAME (Luo et al. 2023) on the AdamW path.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `CAME` — a confidence-rescaled AdamW variant. The 2-D Muon
+    path is unchanged (CAME is an AdamW replacement, not a Muon
+    replacement, just like 119-SAM, 120-DAdapt, 121-Prodigy,
+    122-MARS, 114-MARS). The update is
+        m_t = β1·m_{t-1} + (1−β1)·g_t
+        v_t = β2·v_{t-1} + (1−β2)·g_t²
+        res_t = (m_t − g_t) / (√v_t + ε)
+        conf_t = max(res_t, 0) + ε
+        update = m_t / (√v_t + ε) · conf_t / (|m_t| + ε)
+    The `conf_t` factor adjusts the update magnitude by the
+    momentum/gradient agreement (small residual when they agree
+    → tiny update; large residual when they disagree → residual-
+    shaped step in the consensus direction). Cold-start `m_0=0`,
+    `v_0=0` ⇒ first-step residual is negative, clipped to 0,
+    `conf_0 = ε`, update ≈ 0 ⇒ baseline path byte-identical at
+    step 0.
+
+    **Round-1 fix (after 2026-06-13 GPU blowup):** `came_lr = 0.001`
+    (was 0.006 — paper default, 6× too aggressive at this scale).
+    At tiny1m3m the `v̂` noise floor is high (β2=0.999 EMA averages
+    over very few samples), and the confidence factor can rescale
+    `m̂/denom` beyond ±1 in the residual regime; the paper's `lr =
+    adamw_lr` recipe is calibrated for ≥100M where `v̂` averages
+    out, not 0.94M / 92-step. The lower LR matches the v1 plan's
+    "10-100× scale-down" guidance. Pair with `came_update_clip=10.0`
+    in `optimizers/came.py` (per-element magnitude cap on the raw
+    `update` to bound the `m̂/ε² ≈ 1e16` blowup in the `v̂≈0`
+    cold-start transient).
+
+    PASS ≤ −0.005 (small/null band — the lever's effect is in the
+    per-parameter update *magnitude* adjustment on a 92-step
+    trajectory, where AdamW's `v` noise floor is already partially
+    damped by the long warmup-decay schedule). NULL band |Δ| <
+    0.005. DRIFT > +0.005 (the confidence rescaling adds compute
+    for no gain at this scale). See
+    `autoresearch/ideas/123-came/idea.md`.
+    """
+    use_came: bool = True
+    came_lr: float = 0.001  # 6x lower than paper default (round-1 fix)
+    came_beta1: float = 0.9
+    came_beta2: float = 0.999
+    came_eps: float = 1e-8
+    came_update_clip: float = 10.0
+
+
+@dataclass
+class Tiny1M3MRAdamConfig(Tiny1M3MConfig):
+    """Tiny1M3M with RAdam: Rectified Adam (Liu et al. 2019, arXiv:1908.03265).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `RAdam` — the variance-bounded Adam variant. The 2-D Muon path
+    is unchanged (RAdam is an AdamW replacement, like 114-MARS,
+    119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME). The mechanism:
+    compute the closed-form `ρ_t = sma_length / (1−β2^t)` from
+    Liu et al. 2019 §3.2. When `ρ_t > 4` (≈ `t > 4/(1−β2)`), RAdam
+    uses the full variance-bounded Adam step
+    `update = m̂_t · √(ρ_t) / (√v̂_t + ε)`. Otherwise (early steps),
+    it falls back to the SGD-only step `update = m̂_t` (no `v̂_t`).
+    This auto-detects when the early-step LR spike is unsafe and
+    *removes the need for a manual warmup*. The 2-D Muon path is
+    unchanged.
+
+    At step 0 (t=1) `ρ_1 ≪ 4` ⇒ SGD-fallback path ⇒ first step is
+    `(1−β1)·g_0`. NOT bit-identical to AdamW's first step (which
+    uses the full Adam-normalized update), but the magnitude is
+    comparable (O(β1) smaller). The first-step divergence is the
+    lever's signature, not a bug. With `use_radam=False` (default)
+    plain `torch.optim.AdamW` is used — baseline path bit-identical.
+
+    `radam_lr=0.006` matches `adamw_lr` (paper does not require
+    re-tuning — RAdam's variance-bounded correction handles the
+    early-step instability that warmup usually addresses).
+
+    PASS ≤ ctrl − 0.005 (small/null band — the lever is on the
+    early-step LR transition, which only matters in the warmup
+    window at tiny1m3m's 92-step budget). NULL band |Δ| < 0.005.
+    DRIFT > +0.005 (the SGD-fallback path at step 0 + the
+    closed-form correction at later steps adds variance without
+    removing it at this scale). See
+    `autoresearch/ideas/124-radam/idea.md`.
+    """
+    use_radam: bool = True
+    radam_lr: float = 0.006
+    radam_beta1: float = 0.9
+    radam_beta2: float = 0.999
+    radam_eps: float = 1e-8
+
+
+@dataclass
+class Tiny1M3MPSGDConfig(Tiny1M3MConfig):
+    """Tiny1M3M with PSGD: Preconditioned Stochastic Gradient Descent
+    (Li et al. 2024, arXiv:2405.13856, NeurIPS 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces Muon on the 2-D non-embedding, non-norm routing slot
+    with `PSGD`. 1-D / embedding / norm stay on AdamW (the paper's
+    default). PSGD learns an online preconditioner `(P, Q)` for 2-D
+    params that whitens the gradient per axis:
+        P ← P + α · (g g^T / m − I)         (n×n)
+        Q ← Q + α · (W W^T / n − I)         (m×m)
+        update = P · g · Q                   (whitened step)
+    `psgd_alpha=1e-3` is the paper's recommended preconditioner EMA
+    rate. `psgd_lr=0.01` is in the paper's recommended range.
+    `psgd_beta=0.9` is the momentum coefficient. The 0.94M context
+    is *favorable* to PSGD because the preconditioner matrices are
+    small (~4k floats per slot at d_model=64).
+
+    At step 0 (P=I, Q=I, m=0) the first update is `I · g · I = g`
+    and the first step is `w ← w − lr · g` (SGD-with-momentum, not
+    AdamW — the lever's first-step signature). At α=0 PSGD
+    collapses to SGD-with-momentum. With `use_psgd=False` (default)
+    the existing Muon path is bit-identical to baseline.
+
+    PASS ≤ ctrl − 0.005 (taste's mid-band for an optimizer-side
+    lever at 12L depth; PSGD's per-axis whitening is qualitatively
+    different from Muon's orthogonalization, but the lever is
+    small at 0.94M where AdamW's per-parameter v is already
+    well-conditioned). NULL band |Δ| < 0.005. DRIFT > +0.005 (the
+    8k floats of P+Q state per 2-D slot is overhead without
+    benefit at this scale). See `autoresearch/ideas/125-psgd/idea.md`.
+    """
+    use_psgd: bool = True
+    psgd_lr: float = 0.01
+    psgd_alpha: float = 1e-3
+    psgd_beta: float = 0.9
+
+
+@dataclass
+class Tiny1M3MSDConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Spectral Decoupling (Yong et al. 2022,
+    arXiv:2202.05380, NeurIPS 2022) on the AdamW 1-D / embedding /
+    norm path.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Replaces the AdamW 1-D / embedding / norm / head
+    path with `SDAdamW` — a thin subclass of `torch.optim.AdamW`
+    that projects each per-param gradient off the weight
+    direction (`g ← g − (⟨g,w⟩/‖w‖²)·w`) before delegating to
+    AdamW's `.step()`. The decoupled WD `λ·w` is unchanged (it
+    acts along w — magnitude-shrinking role is preserved). The
+    2-D Muon path is unchanged (SD is an AdamW replacement, like
+    119-SAM, 120-DAdapt, 121-Prodigy, 114-MARS, 123-CAME,
+    124-RAdam, 126-AdaShift, 127-GC).
+
+    The forward graph is unchanged, so step-0 `val_loss` (no
+    optimizer step yet) is bit-identical to baseline. The first
+    optimizer step differs from AdamW's first step by an
+    `O(1/n)` correction (the projection removes a small
+    `⟨g_0, w_0⟩ / ‖w_0‖² · w_0` term — bounded by the symmetry
+    of the init). `sd_lambda=1.0` is the paper's full projection.
+    This first-step displacement is the lever's signature, not
+    a bug.
+
+    PASS ≤ ctrl − 0.005 (small/null band — the lever's effect
+    is on the per-step gradient direction; at 0.94M with the
+    warmup-decay schedule the per-step displacement is at most
+    `O(1/n)` per param, cumulative over 92 steps ≈ small).
+    NULL band |Δ| < 0.005. DRIFT > +0.005 (the projection adds
+    compute for no gain at this scale — the rotation effect is
+    small when the per-step gradient direction is already
+    dominated by m_t/v_t normalization). See
+    `autoresearch/ideas/128-spectral-decoupling/idea.md`.
+    """
+    use_sd: bool = True
+    sd_lambda: float = 1.0
+
+
+@dataclass
+class Tiny1M3MAdanConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Adan: Adaptive Nesterov Momentum with N-Step Lookback
+    (Xie et al. 2022, arXiv:2208.06677, TPAMI 2022 / ICLR 2023 workshop).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with `Adan`
+    — the N-step variance + Nesterov-style extrapolated gradient
+    optimizer. The 2-D Muon path is unchanged (Adan is an AdamW
+    replacement, like 114-MARS, 119-SAM, 120-DAdapt, 121-Prodigy,
+    123-CAME, 124-RAdam, 126-AdaShift, 127-GC, 128-SD). The update
+    is (paper Algorithm 1):
+        g_la = g_t + β_la · (g_t − g_{t−1})             (Nesterov)
+        m_t = β1·m_{t-1} + (1−β1)·g_la
+        v_t = β2·v_{t-1} + (1−β2)·mean(g_{t..t-N+1}²)   (N-step)
+        update = m_t / (√v_t + ε)                       (no bias-correction)
+    `adan_n_lookback=4` is the paper's default N. `adan_lookahead_beta=0.5`
+    is the paper's default Nesterov coefficient. The forward graph
+    is unchanged, so step-0 `val_loss` (no optimizer step yet) is
+    bit-identical to baseline. The first optimizer step has
+    `update_0 ≈ sign(g_0)` (no bias correction, queue length 1) —
+    NOT bit-identical to AdamW's first step (which uses bias-
+    corrected `m̂/√v̂`), but the magnitude is similar and the N=4
+    lookback ramps in over the first 4 steps. This first-step
+    displacement is the lever's signature, not a bug. With
+    `use_adan=False` (default) plain `torch.optim.AdamW` is used —
+    baseline path bit-identical.
+
+    PASS ≤ ctrl − 0.005 (small/null band — the lever is on the
+    variance *smoothing* over N=4 steps, which has a small effect at
+    0.94M where the per-step gradient is already well-behaved).
+    NULL band |Δ| < 0.005. DRIFT > +0.005 (the N=4 lookback queue
+    is overhead without gain at this scale). See
+    `autoresearch/ideas/135-adan/idea.md`.
+    """
+    use_adan: bool = True
+    adan_lr: float = 0.006
+    adan_beta1: float = 0.9
+    adan_beta2: float = 0.999
+    adan_eps: float = 1e-8
+    adan_lookahead_beta: float = 0.5
+    adan_n_lookback: int = 4
+
+
+@dataclass
+class Tiny1M3MSophiaConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Sophia: Scalable Stochastic Second-order Optimizer
+    (Liu, Wang, et al. 2023, arXiv:2305.14342, ICML 2023).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4216).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `Sophia`. The 2-D Muon path is unchanged (Sophia is an AdamW
+    replacement, like 114-MARS, 119-SAM, 121-Prodigy, 135-Adan).
+    The update is the diagonal-Hessian-aware preconditioned step
+        m_t  = β1·m + (1−β1)·g_t
+        h_t  = β2·h + (1−β2)·h_hat_t       (h_hat every k=10 steps)
+        update = clip(g, ±ρ) / max(h, ε)
+        θ    ← θ − lr·(update + λ·θ)        (decoupled WD)
+    The diagonal Hessian `h_hat` is sampled via Hutchinson's
+    trace estimator: `u ~ Rademacher(±1)` per parameter, then
+    `h_hat = u · ∇(g·u)` (one extra backward on the scalar `g·u`,
+    amortized ~1.1× backward cost at k=10 and 92 update steps).
+    The trainer handles the extra backward; see
+    `training/trainer.py` for the wiring and
+    `autoresearch/ideas/140-sophia/idea.md` for the bet.
+
+    Defaults match the paper's 125M model: lr=6e-3, β1=0.965,
+    β2=0.99, ρ=0.04, k=10. `sophia_update_clip=1.0` is a per-
+    parameter magnitude safety guard against the cold-start
+    `h_t≈0` amplification (the paper does not specify this; we
+    add it to bound the very first step to AdamW magnitude). At
+    step 0 `m_0 = h_0 = 0` and the first update magnitude is
+    bounded by `lr · 1.0`; the first Hutchinson sample fires at
+    step `k-1` and `h_t` becomes `O(g²)` thereafter ⇒ proper
+    curvature-preconditioned steps from step k onward. This
+    first-step guard is the lever's signature, not a bug.
+
+    With `use_sophia=False` (default) plain `torch.optim.AdamW` is
+    used — baseline path bit-identical. The Hutchinson extra
+    backward is also gated by `use_sophia=True` so the baseline
+    training cost is unchanged when the flag is off.
+
+    PASS ≤ ctrl − 0.01 (curvature-aware steps at sub-million
+    params have noisy Hessian estimates; gain plausibly shrinks at
+    0.94M where the diagonal Hessian has high variance per-step).
+    NULL band |Δ| < 0.01. DRIFT > +0.01 (Hutchinson noise at small
+    scale hurts more than curvature helps). See
+    `autoresearch/ideas/140-sophia/idea.md`.
+    """
+    use_sophia: bool = True
+    sophia_lr: float = 6e-3
+    sophia_beta1: float = 0.965
+    sophia_beta2: float = 0.99
+    sophia_eps: float = 1e-8
+    sophia_rho: float = 0.04
+    sophia_hessian_freq: int = 10
+    sophia_update_clip: float = 1.0
+
+
+@dataclass
+class Tiny1M3MAdaPNMConfig(Tiny1M3MConfig):
+    """Tiny1M3M with AdaPNM: Adaptive Positive-Negative Momentum
+    (Ding, Zhou, Zhu, Ye, Jiao 2019, arXiv:1906.01520, NeurIPS 2019).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `AdaPNM`. The 2-D Muon path is unchanged (AdaPNM is an AdamW
+    replacement, like 114-MARS, 119-SAM, 120-DAdapt, 121-Prodigy,
+    123-CAME, 124-RAdam, 126-AdaShift, 135-Adan, 127-GC, 128-SD).
+    The mechanism maintains TWO parallel momentum buffers:
+        m+_t = β1·m+_{t-1} + (1−β1)·max(g_t, 0)
+        m-_t = β1·m-_{t-1} + (1−β1)·max(-g_t, 0)
+        m_t  = m+_t − m-_t
+        v_t  = β2·v_{t-1} + (1−β2)·g_t²
+        update = m_t / (√v_t + ε)
+    The combined direction `m+_t − m-_t` is algebraically equal
+    to the standard EMA `β1·m_{t-1} + (1−β1)·g_t` because
+    `max(g, 0) − max(-g, 0) = g` element-wise. So today's AdaPNM
+    *degenerates to a (no-bias-correction) AdamW* at convergence —
+    the dual-momentum buffer is a factored state representation,
+    not a different direction. The lever's value is the option
+    to apply per-side processing later (e.g. different effective
+    β1 for positive vs negative components), not a today's-step
+    win.
+
+    Cold-start identity at step 0: `m+_0 = m-_0 = v_0 = 0` ⇒
+    first step update = `(1−β1)·g_0 / (√((1−β2)·g_0²) + ε)`.
+    NOT bit-identical to AdamW's first step (AdamW applies bias
+    correction `m̂_1 = m_1 / (1−β1) = g_0`; AdaPNM does not).
+    The first-step displacement is the lever's signature, not a
+    bug. The forward graph is unchanged, so step-0 `val_loss`
+    (computed before any optimizer step) is bit-identical to
+    baseline.
+
+    `adapnm_lr=0.006` matches `adamw_lr` (paper does not require
+    re-tuning — the dual-momentum factored state matches AdamW's
+    direction up to the bias-correction difference).
+
+    PASS ≤ ctrl − 0.005 (small/null band — the lever is on the
+    factored state representation, not the update direction; at
+    0.94M with shared `β1` for both halves, today's AdaPNM
+    degenerates to a no-bias-correction AdamW). NULL band |Δ| <
+    0.005. DRIFT > +0.005 (the 2× memory overhead for `m+` and
+    `m-` adds cost without mathematical benefit at this scale
+    unless future per-side processing is enabled). See
+    `autoresearch/ideas/136-adapnm/idea.md`.
+    """
+    use_adapnm: bool = True
+    adapnm_lr: float = 0.006
+    adapnm_beta1: float = 0.9
+    adapnm_beta2: float = 0.999
+    adapnm_eps: float = 1e-8
+
+
+@dataclass
+class Tiny1M3MBornAgainConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Born-Again Networks self-distillation
+    (Furlanello et al. 2018, arXiv:1805.04770).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Maintains a teacher model as a slow EMA copy of the
+    student: `θ_teacher ← (1−β)·θ_teacher + β·θ_student` with
+    `born_again_beta=0.999` (paper default). Adds the distillation
+    loss `L_distill = α · T² · KL(softmax(teacher/T) ‖ softmax(student/T))`
+    with `born_again_alpha=1.0` and `born_again_temp=2.0` on top of
+    the standard CE. The teacher's forward uses a parameter-swap
+    around `model(x)` under `torch.no_grad()` (no buffers needed —
+    dropout is 0.0 by default and RoPE caches are deterministic
+    from position ids). One extra forward per step (no_grad ⇒ no
+    autograd graph).
+
+    Identity at step 0: the shadow is a clone of the live init ⇒
+    teacher forward == student forward ⇒ KL = 0 ⇒ loss == CE. At
+    tiny1m3m's 92-step budget, `β=0.999` gives the teacher a
+    half-life of `log(0.5)/log(1−0.999) ≈ 693` steps, so the
+    teacher is dominated by early-step student states throughout
+    the run — the distillation signal is small but persistent.
+
+    PASS ≤ ctrl − 0.005 (small/null band — the lever is on the
+    logit-level EMA, not the parameter-level trajectory; at 0.94M
+    the EMA is far from saturated and the teacher is close to the
+    student most of the time). NULL band |Δ| < 0.005. DRIFT > +0.005
+    (the extra forward adds compute without gain at this scale).
+    See `autoresearch/ideas/132-born-again/idea.md`.
+    """
+    use_born_again: bool = True
+    born_again_beta: float = 0.999
+    born_again_alpha: float = 1.0
+    born_again_temp: float = 2.0
+
+
+@dataclass
+class Tiny1M3MGCConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Gradient Centralization (Yong et al. 2020,
+    arXiv:2004.01461) on the AdamW 1-D / embedding / norm path.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Routes AdamW-eligible params through `GCAdamW`, a thin subclass
+    of `torch.optim.AdamW` that subtracts the per-row mean from each
+    2-D gradient matrix before the AdamW update runs. For 1-D
+    tensors (norms, biases) GC is a no-op (no output-axis semantics);
+    for 2-D tensors (the factorized embedding, `emb_proj`, `out_proj`)
+    the mean is taken along `gc_axis=1` (the output axis), giving
+    each output row zero-mean gradient. The 2-D Muon path is
+    unchanged (Muon sees the uncentered gradient and applies its own
+    orthogonalization).
+
+    The forward graph is unchanged, so step-0 `val_loss` is
+    bit-identical to baseline. The first optimizer step differs from
+    AdamW's first step (centered gradient has zero mean per output
+    neuron). This first-step displacement is the lever's signature,
+    not a bug.
+
+    PASS ≤ ctrl − 0.005 (the lever is on the optimizer input — small
+    per-step effect on a 92-step trajectory). NULL band |Δ| < 0.005.
+    DRIFT > +0.005 (centering is per-param overhead without benefit
+    at this scale if the gradient mean was already near zero). See
+    `optimizers/grad_centralization.py` for the mechanism and
+    `autoresearch/ideas/127-grad-centralization/idea.md` for the bet.
+    """
+    use_gc: bool = True
+    gc_axis: int = 1
 
 
 @dataclass
@@ -1225,6 +2585,380 @@ class Tiny1M3MLookaheadConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MSAMConfig(Tiny1M3MConfig):
+    """Tiny1M3M with SAM: Sharpness-Aware Minimization
+    (Foret et al. 2020, arXiv:2010.01412, ICLR 2021).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Wraps the AdamW path (1-D / embedding / norm) with `AdamSAM`:
+    on every step, do an adversarial ascent to `w + ε̂` (ε̂ = ρ ·
+    ∇L(w) / ‖∇L(w)‖), re-run a forward+backward at the perturbed
+    point, then apply AdamW to the perturbed-point gradient. The
+    Muon 2-D path is unchanged (Muon steps on the w-grad, not the
+    perturbed grad — the SAM perturbation is scoped to the AdamW
+    bucket only). `sam_rho=0.05` is the paper default for Adam-
+    SAM (Foret et al. 2020 §5; Kwon et al. 2023 §3.2).
+
+    At step 0 the perturbation is non-zero (O(ρ) along the
+    gradient direction), so the first-step gradient differs from
+    AdamW by ~5% in magnitude along the steepest-ascent axis.
+    The lever's inherent first-step cost of one extra backward
+    pass is the price of the flatness regularization. The 2x
+    backward cost halves throughput at large scale; at 0.94M
+    (~92 steps) it is ~free.
+
+    PASS ≤ ctrl − 0.005 (small/null band — taste puts leverage at
+    the low end for a 92-step trajectory where the loss surface
+    may already be smooth enough that the ρ-ball contains no
+    useful adversarial information). NULL band |Δ| < 0.005.
+    DRIFT > +0.005 (the doubled backward cost hurts more than
+    the flatness helps at this scale). See
+    `autoresearch/ideas/119-sam/idea.md`.
+    """
+    use_sam: bool = True
+    sam_rho: float = 0.05
+
+
+@dataclass
+class Tiny1M3MLookSAMConfig(Tiny1M3MConfig):
+    """Tiny1M3M with LookSAM: Periodic SAM (Du et al. 2022, ICLR 2023,
+    arXiv:2205.13539). Compute-efficient variant of SAM (119).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Wraps the AdamW path (1-D / embedding / norm) with `LookSAM`:
+    every K-th step, do an adversarial ascent to `w + ε̂`, re-run a
+    forward+backward at the perturbed point, then apply AdamW to the
+    perturbed-point gradient. The K-1 steps in between are plain
+    AdamW on the w-grad. The Muon 2-D path is unchanged. With
+    `looksam_k=5` and `looksam_rho=0.05` (paper defaults), effective
+    compute is ~1.2x vs. SAM's 2x — the lever keeps the flatness
+    regularization at ~80% of SAM's gain while halving the overhead.
+
+    Identity at step 0: with K=5 the first 4 steps are plain AdamW
+    (`step_count=0..3`), so the first-step gradient is bit-identical
+    to AdamW. The first SAM ascent fires at `step_count=4` (the
+    5th step). This is *more* bit-identical at step 0 than full SAM
+    (119), which runs the ascent on the first step.
+
+    PASS ≤ ctrl − 0.005 (mid-band — periodic SAM is a regularization
+    lever at 12L depth, the periodic form is the compute-efficient
+    variant; null if the flatness benefit needs every-step sharpness
+    information at this scale). NULL band |Δ| < 0.005. DRIFT >
+    +0.005 (the periodic SAM overhead hurts more than the flatness
+    helps at 0.94M). See `autoresearch/ideas/138-looksam/idea.md`.
+    """
+    use_looksam: bool = True
+    looksam_k: int = 5
+    looksam_rho: float = 0.05
+
+
+@dataclass
+class Tiny1M3MRDropConfig(Tiny1M3MConfig):
+    """Tiny1M3M with R-Drop: KL-Regularized Dropout (Liang et al. 2021).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). For every
+    train step, run the model forward **twice** with different dropout
+    masks, take the mean of the two next-token CE losses, and add a
+    symmetric KL penalty `α · 0.5·(KL(p_1‖p_2)+KL(p_2‖p_1))` to
+    regularize the model toward dropout-invariant logits. `α` is
+    linearly warmed from 0 → 1.0 over the first 1000 steps so the
+    step-0 loss is `(CE_1+CE_2)/2` — bit-identical to the single-CE
+    baseline modulo the doubled forward (well within run-to-run
+    variance). Doubled forward means ~2× per-step wall-clock at
+    0.94M, acceptable. Eval stays single-forward plain CE.
+
+    PASS ≤ ctrl − 0.005 (taste's mid-band for a regularization lever
+    at 12L depth; paper gains are small at this scale but the
+    mechanism is scale-free). NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/115-rdrop/idea.md`.
+    """
+    use_rdrop: bool = True
+    rdrop_alpha: float = 1.0
+    rdrop_warmup_steps: int = 1000
+
+
+@dataclass
+class Tiny1M3MHyperConnectionsConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Hyper-Connections (Xie et al. 2024, arXiv:2409.19606).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Splits the residual stream into `hc_n_resid=4` parallel streams of
+    width `d_l = 16` each, with per-position `(A_l, B_l, C_l) ∈ R^{4×4}`
+    mixing matrices (48 scalars/position × 12 = 576 total). Identity init
+    (A=B=C=I) ⇒ step-0 forward graph is bit-identical to the pre-norm
+    residual path. The model has to *learn* to mix streams during
+    training. Strictly orthogonal to every closed and active lever in
+    the queue: it is the only mechanism that *expands* the residual
+    stream itself, not a regularization or attention-side tweak.
+
+    Sub-LN and DropPath already closed as nulls at 6L/12L, and the
+    bet is at the small end of the paper's reported effect (DeepSeek-V3
+    headline wins are at 100L+). The slot tests whether the
+    multi-stream *capacity* lever survives the 12L regime even when
+    the regularization levers don't.
+
+    PASS ≤ ctrl − 0.005 (mid-band for an architectural expansion at
+    6L/12L; mid-band because the prior closed-nulls of sub-LN and
+    DropPath suggest residual-stream levers often don't fire at this
+    depth, but the multi-stream *expansion* lever is qualitatively
+    different — capacity, not regularization). NULL band |Δ| < 0.005.
+    DRIFT > +0.005 (stream-mixing overhead hurts more than it helps).
+    See `autoresearch/ideas/116-hyper-connections/idea.md`.
+    """
+    use_hyper_connections: bool = True
+    hc_n_resid: int = 4
+
+
+@dataclass
+class Tiny1M3MMARSConfig(Tiny1M3MConfig):
+    """Tiny1M3M with MARS Variance-Reduced AdamW (Yuan et al. 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Routes the 1-D / embedding / norm / head path to `MARSAdamW` (a
+    thin subclass of `torch.optim.AdamW` that adds a lag-based
+    variance-reduction correction `g̃_t = g_t + mix_coef *
+    (m_{t-lag} − m_{t-2*lag})` to the *gradient* input). The 2-D
+    Muon path is unchanged. At step 0 the ring buffer is empty ⇒
+    correction undefined ⇒ g̃_t = g_t ⇒ bit-identical to plain
+    AdamW for the first `2*lag=20` steps. The paper recommends
+    `lag=10`, `mix_coef=0.5` (Yuan et al. 2024 §3.2 / Table 1);
+    the LR is the same as the parent AdamW (no re-tuning
+    required).
+
+    PASS ≤ ctrl − 0.005 (small/null band — taste puts leverage at
+    the low end for a 92-step trajectory where AdamW's per-
+    parameter v noise is already partially damped by the long
+    warmup-decay schedule). NULL band |Δ| < 0.005. DRIFT > +0.005
+    (the correction adds variance, not removes it, at this scale).
+    See `autoresearch/ideas/114-mars/idea.md`.
+    """
+    use_mars: bool = True
+    mars_lag: int = 10
+    mars_mix_coef: float = 0.5
+    mars_lr_scale: float = 1.0
+
+
+@dataclass
+class Tiny1M3MProdigyConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Prodigy: Parameter-Free AdamW (Mishchenko & Defazio 2023).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Routes the 1-D / embedding / norm / head path to `Prodigy`. The
+    2-D Muon path is unchanged (Prodigy is an AdamW replacement, not
+    a Muon replacement). Prodigy maintains a group-level step-size
+    estimate `D_t` updated each step from a continuous Adam-style
+    gradient similarity `s_t = ⟨sign(g_t/√v_t), sign(g_{t-k}/√v_{t-k})⟩`
+    via `D ← D · exp(β3·s_t)` — eliminating D-Adaptation's noisy
+    binary ramp-up. The first `prodigy_warmup_steps=10` steps are
+    unit-LR AdamW (D = d0 = 1.0) and `D_0` is then reset to
+    `‖w_0 − w_k‖ / k` — a *displacement-based* warm-start that puts
+    D in the right ballpark from step 11 onward.
+
+    `prodigy_d0=1.0` is the warm-start scalar (NOT the production
+    LR — the production LR is `D_t`, which Prodigy discovers). The
+    user's `lr` parameter to Prodigy is more like a "unit
+    conversion" between AdamW's update and the trajectory; we
+    default it to `1.0` (paper default). The first 10 steps move
+    the model by `‖w_0 − w_k‖` units of AdamW-LR=1, so `D_0 ≈
+    ‖Δ‖/10` which is the natural step size for that trajectory.
+
+    At tiny1m3m's 92-step budget the 10-step warmup is ~11% of the
+    run — non-trivial. The bet is that Prodigy's smoother ramp-up
+    wins at this scale because it eliminates the early LR
+    misallocation. A null would say "the LR ramp-up is a small
+    fraction of total loss at 0.94M"; a win would say "every step
+    at tiny1m3m matters and Prodigy uses the first 10 steps
+    better than hand-tuned `adamw_lr=0.006`".
+
+    PASS ≤ ctrl − 0.005 (small/null band — taste's mid-band for an
+    LR-removal lever at 12L depth; the lever is about ramp-up
+    *quality*, not raw capacity). NULL band |Δ| < 0.005. DRIFT
+    > +0.005. See `autoresearch/ideas/121-prodigy/idea.md`.
+    """
+    use_prodigy: bool = True
+    prodigy_d0: float = 0.01      # 100× below paper default; the previous
+                                  # d0=1.0 caused the 2026-06-13 GPU blowup
+                                  # (12.01 → 10348 at step 25). With d0=0.01
+                                  # the first 10 warmup steps are in the same
+                                  # ballpark as a hand-tuned AdamW lr=0.006.
+    prodigy_warmup_steps: int = 10
+    prodigy_beta3: float = 0.01
+    prodigy_d_max: float = 1.0    # paper §3.1 default; bounds the
+                                  # discovery loop. Required for stability
+                                  # at tiny1m3m (prevents unbounded D
+                                  # growth on a sign-agreement run).
+    prodigy_min_d: float = 1e-6   # lower clamp on D.
+    prodigy_update_clip: float = 1.0  # per-param max-norm on the
+                                       # in-place step.
+
+
+@dataclass
+class Tiny1M3MEMAConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Polyak-Ruppert Weight EMA (Polyak 1990; RoBERTa,
+    MAE, MoCo v3, modded-nanogpt speedrun SWA).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Maintains a shadow copy of the live parameters updated each step
+    as `θ_ema ← μ·θ_ema + (1−μ)·θ` with `μ` ramping linearly from 0
+    to 0.999 over the first 100 steps. At step 0 `μ=0` ⇒ `θ_ema = θ_live`,
+    so the val score at step 0 is bit-identical to the baseline.
+    `ema_eval_only=True` keeps `θ_live` as the saved/resumed model and
+    only swaps in the EMA for the val pass — training and
+    checkpointing stay on the live trajectory.
+
+    The mechanism is one line per step (`ema_params[n].mul_(μ).add_(p,
+    alpha=1-μ)`) and a swap-in/swap-out around `evaluate_model(...)`.
+    Cost: a clone of every trainable parameter (~0.94M floats at
+    tiny1m3m), no per-step math beyond one in-place EMA update.
+
+    PASS ≤ ctrl − 0.005 (small/null band — taste puts leverage at the
+    low end for a 92-step trajectory where the per-step
+    signal-to-noise is already high). NULL band |Δ| < 0.005.
+    DRIFT > +0.005 (the EMA averaging would slow convergence and
+    raise val loss if the lever is hurting). See
+    `autoresearch/ideas/110-weight-ema/idea.md`.
+    """
+    use_ema_eval: bool = True
+    ema_decay: float = 0.999
+    ema_warmup_steps: int = 100
+    ema_eval_only: bool = True
+
+
+@dataclass
+class Tiny1M3MMegaConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Mega EMA on V (Ma et al. 2022, arXiv:2209.10655).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    The V stream is concatenated with `V_ema = W_V @ u` where
+    `u_t = β·u_{t-1} + (1-β)·x_t` is a per-channel EMA over the input
+    residual stream. β ∈ [0, 1] is parametrized via sigmoid of a
+    learnable per-channel scalar (`mega_beta_raw`, init 0 ⇒ β=0.5 at
+    step 0). The EMA is computed once per layer via a depthwise causal
+    conv1d over the T axis with kernel `(1-β)·β^k`. The concat doubles
+    the V stream from `[B, T, kv_size]` to `[B, T, 2·kv_size]` and the
+    head reshape treats this as 2·n_kv_heads heads (asserted == n_heads
+    at tiny1m3m: 2·2 = 4). Same W_V slice is reused for V_ema (zero
+    new projection params). Cost: 1 d_model-dim parameter/layer for
+    the β buffer (12 × 64 = 768 floats at tiny1m3m, ~0.1%). NOT byte-
+    identical to baseline at step 0 — the EMA at β=0.5 is half-
+    smoothed (not the current token), and the concat doubles V.
+
+    PASS ≤ ctrl − 0.005 (mid-band for an attention-side V smoothing
+    lever at 12L depth; the EMA's effect is on the per-token value
+    stream, which the standard softmax attention already covers via
+    the K·V dot product, so the lever is plausibly a wash at 0.94M).
+    NULL band |Δ| < 0.005. DRIFT > +0.005 (the doubled V stream adds
+    compute for no gain at this scale). See
+    `autoresearch/ideas/134-mega-ema/idea.md`.
+    """
+    use_mega: bool = True
+    mega_beta: float = 0.9
+    mega_use_input: bool = True
+
+
+@dataclass
+class Tiny1M3MGaLoreConfig(Tiny1M3MConfig):
+    """Tiny1M3M with GaLore: Gradient Low-Rank Projection (Zhao et al. 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the Muon 2-D non-embed, non-norm slot with GaLore: each
+    2-D weight matrix's gradient is projected into a rank-4 subspace
+    via orthonormal P, Q; AdamW runs in the 4×4 projected space; the
+    update is projected back. P, Q refresh from the SVD of a running
+    gradient EMA every 200 steps (paper defaults). 1-D / embedding /
+    norm stay on plain AdamW. The forward graph is unchanged, so
+    step-0 val_loss is bit-identical to baseline.
+
+    `galore_rank=4` is the paper's sweet spot at the 1B tier; at
+    0.94M the per-parameter second-moment noise is already small
+    so the lever's effect is at the small end. A null would say the
+    heavy-tail gradient structure is not load-bearing at this scale;
+    a win would compound with the closed-WIN stack (Muon orth +
+    AdamW 1-D). A regression would say the rank-r constraint is
+    actively hurting — a known failure mode if the gradient's top-r
+    components are *not* where AdamW is needed (e.g. if
+    `use_galore` is stacked with muon or with an already-orthogonal
+    optimizer on the same slot).
+
+    PASS ≤ ctrl − 0.005 (taste's mid-band for an orthogonal
+    optimizer-side lever at 12L depth; paper effect is small at this
+    scale but the memory-side lever is a no-op at 0.94M and the
+    *quality* side is what we're testing). NULL band |Δ| < 0.005.
+    DRIFT > +0.005. See `autoresearch/ideas/113-galore/idea.md`.
+    """
+    use_galore: bool = True
+    galore_rank: int = 4
+    galore_proj_every: int = 200
+    galore_lr: float = 0.006
+    galore_beta1: float = 0.9
+    galore_beta2: float = 0.999
+    galore_eps: float = 1e-8
+
+
+@dataclass
+class Tiny1M3MSoftMoEConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Soft MoE FFN replacement (Puigcerver et al. 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the standard dense FFN with `SoftMoEFFN` (E=4 parallel
+    narrower FFNs + softmax dispatch/combine). Each expert has
+    width `d_ff / 4 = 64` (was 256), so total FFN params stay at the
+    budget (E × 2·d_model·d_ff_e = 2·d_model·d_ff, matching the
+    baseline). The dispatch/combine are derived from a small per-token
+    linear projection (`W_d, W_c` of shape `[m·E, d_model]`); zero-init
+    ⇒ uniform softmaxes at step 0 ⇒ all experts see the same weighted
+    average of input tokens and the layer collapses to ~a single FFN
+    applied to `mean(X)`.
+
+    Fully differentiable: no top-k, no balancing loss, no straight-
+    through. The only MoE lever filed is 108-simbal-router (which is a
+    *router regularizer* on hard routing — a different mechanism
+    requiring hard routing infrastructure first). 117 is the cleanest
+    possible MoE extension: tests the **MoE capacity hypothesis** at
+    0.94M with the fewest confounders.
+
+    PASS ≤ ctrl − 0.005 (taste's small/null band — at 0.94M the per-
+    expert FFN is `d_ff / E = 64`, below the standard `d_ff ≥ 4·d_model`
+    rule of thumb, so the lever is at the small end of the paper's
+    reported effect). NULL band |Δ| < 0.005. DRIFT > +0.005. See
+    `autoresearch/ideas/117-soft-moe/idea.md`.
+    """
+    use_soft_moe: bool = True
+    soft_moe_n_experts: int = 4
+    soft_moe_n_slots: int = 4
+
+
+@dataclass
+class Tiny1M3MMixtureOfDepthsConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Mixture-of-Depths (Raposo et al. 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Each transformer block gets a small `MoDRouter` (2-layer MLP,
+    `d_model=64 → 64 → 1`) that scores every token, and the top-k
+    (`k = mod_capacity · T = 1024` at default) tokens get the block's
+    residual update. Skipped tokens are passed through unchanged. The
+    kept tokens' residual update is rescaled by `c = k/T = 0.5` so the
+    expected per-token contribution matches the dense baseline. W_1, W_2
+    are zero-init ⇒ σ(0) = 0.5 uniform scores ⇒ step-0 top-k is an
+    arbitrary subset (no signal yet). NOT byte-identical to baseline at
+    step 0 (expected residual magnitude per token = 0.5·E[block(x)],
+    not E[block(x)]) but the deviation is bounded and explicit; with
+    `use_mod=False` (default) the `MoDRouter` is never built and the
+    baseline path is bit-identical.
+
+    PASS ≤ ctrl − 0.005 (taste's small/null band — at 0.94M / 12L the
+    paper's effect is at the low end: the gains are largest at 24L+
+    where the router has more skip decisions to learn from). NULL band
+    |Δ| < 0.005. DRIFT > +0.005 (the routing overhead hurts more than
+    it helps at shallow depth). See
+    `autoresearch/ideas/118-mixture-of-depths/idea.md`.
+    """
+    use_mod: bool = True
+    mod_capacity: float = 0.5
+    mod_router_hidden: int = 64
+
+
+@dataclass
 class Tiny1M3MKDAChannelGateConfig(Tiny1M3MConfig):
     """Tiny1M3M with KDA per-channel diagonal V-gate (bounded).
 
@@ -1245,6 +2979,86 @@ class Tiny1M3MKDAChannelGateConfig(Tiny1M3MConfig):
     `autoresearch/ideas/109-kda-channel-gate/idea.md`.
     """
     use_kda_channel_gate: bool = True
+
+
+@dataclass
+class Tiny1M3MDAdaptConfig(Tiny1M3MConfig):
+    """Tiny1M3M with D-Adaptation: Automatic LR Discovery (Defazio 2023).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `DAdaptAdamW` (a thin subclass of `torch.optim.AdamW` that
+    maintains a per-group scalar `D` and derives the effective LR as
+    `lr_t = D / ‖g_t‖`). The 1st/2nd moments of AdamW are retained
+    intact — only the outer LR scaling is swapped. Muon 2-D path is
+    unchanged (D-Adapt is ortho to Muon, lives only on the AdamW
+    bucket). At step 0 `D = 1e-6` warm-start ⇒ `lr_0 ≈ 1e-6 / ‖g_0‖`
+    (essentially zero); after ~10–20 steps `D` reaches a typical
+    AdamW-equivalent value. The first ~10 steps see a *ramp-up* in
+    effective LR — this is the lever's signature, not a bug (the
+    design sketch explicitly accepts this). The lever is NOT bit-
+    identical to AdamW at step 0 (different LR), but the first-step
+    displacement is O(ε) and within run-to-run noise; with `D` frozen
+    at its initial value the lever collapses to AdamW.
+
+    `dadapt_d0_lr=1.0` and `dadapt_min_lr=0.0` are the paper's
+    defaults (Defazio 2023 §3). The lever's signature at 0.94M is
+    informative either way: a win would mean the config's
+    `adamw_lr=0.006` is suboptimal and the discovery loop finds a
+    better one; a null would mean the LR ramp-up cost (~10% of the
+    92-step trajectory) outweighs any LR-discovery win.
+
+    PASS ≤ ctrl − 0.005 (the win-bar from the design sketch — the
+    gain comes from removing a small LR misconfiguration, not from a
+    new direction of improvement). NULL band |Δ| < 0.005. DRIFT
+    > +0.005 (the ramp-up cost hurts more than the discovery helps
+    at this scale). See
+    `autoresearch/ideas/120-dadaptation/idea.md`.
+    """
+    use_dadapt: bool = True
+    dadapt_d0_lr: float = 1.0
+    dadapt_min_lr: float = 0.0
+    dadapt_d_max: float = 1.0    # paper §3.1 default; required for
+                                 # stability at tiny1m3m (prevents
+                                 # unbounded D-growth → val blowup)
+
+
+@dataclass
+class Tiny1M3MAdaShiftConfig(Tiny1M3MConfig):
+    """Tiny1M3M with AdaShift: Decorrelated Adam via Delayed Gradients.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with
+    `AdaShift` (Zhou et al. 2019, arXiv:1810.00143). The 2-D Muon
+    path is unchanged (AdaShift is an AdamW replacement, like
+    114-MARS, 119-SAM, 120-DAdapt, 121-Prodigy, 123-CAME, 124-RAdam).
+    The update uses a *delayed* gradient `g_{t-n}²` for the 2nd
+    moment, decorrelating `v_t` from `m_t`:
+        m_t = β1·m_{t-1} + (1-β1)·g_t
+        v_t = β2·v_{t-1} + (1-β2)·g_{t-n}²
+        update = m̂_t / (√v̂_t + ε)
+
+    Per-parameter state keeps a queue of past `n` gradients (fp32
+    clones, length bounded by n). The paper's warm-start
+    `v_0 = g_0²` makes `v_1 = β2·g_0²` — NOT bit-identical to
+    AdamW's first step (`v_1 = (1-β2)·g_0²`) but same magnitude
+    order (O(β2) different). The first-step displacement is the
+    lever, not a bug. With `n = 0` AdaShift collapses to AdamW;
+    `adashift_n = 3` is the paper's recommended delay.
+
+    PASS ≤ ctrl − 0.005 (mid-band for an AdamW-replacement lever at
+    12L depth; the bet is on `m_t`/`v_t` decorrelation that
+    AdamW's coupled second moment doesn't provide). NULL band
+    |Δ| < 0.005. DRIFT > +0.005 (the queue overhead + first-step
+    displacement cost outweigh any decorrelation benefit at this
+    scale). See `autoresearch/ideas/126-adashift/idea.md`.
+    """
+    use_adashift: bool = True
+    adashift_lr: float = 0.006
+    adashift_beta1: float = 0.9
+    adashift_beta2: float = 0.999
+    adashift_eps: float = 1e-8
+    adashift_n: int = 3
 
 
 @dataclass
@@ -2601,6 +4415,106 @@ class Screen10M20MVQGainSWAHighRoPECautiousMuonConfig(Screen10M20MVQGainSWAHighR
     """
     use_cautious_muon: bool = True
     muon_lr: float = 0.025
+
+
+@dataclass
+class Tiny1M3MAdamPConfig(Tiny1M3MConfig):
+    """Tiny1M3M with AdamP: Adam + projection-based update (He et al. 2020).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the AdamW 1-D / embedding / norm / head path with `AdamP`,
+    which projects the Adam update `Δ = m̂/√v̂` onto the orthogonal
+    complement of `w` (removing the component of Δ along w) so the
+    update rotates direction without changing magnitude. The L2 reg
+    is applied as the paper's `λ · ‖w‖ · ŵ` (pure magnitude
+    shrinkage, no rotation). The 2-D Muon path is unchanged.
+
+    Identity at step 0: for symmetric inits the projection removes
+    an `O(1/√d)` component of Δ_0, so the first AdamP step ≈ the
+    first AdamW step modulo that small correction. With
+    `adamp_lambda=0.0` the projection is fully inert and `AdamP`
+    collapses to plain AdamW. With `use_adamp=False` (default)
+    plain `torch.optim.AdamW` is used — baseline bit-identical.
+
+    PASS ≤ ctrl − 0.01 (Δ ≤ −0.01). NULL band |Δ| < 0.01.
+    DRIFT > +0.01. See `autoresearch/ideas/137-adamp/idea.md`.
+    """
+    use_adamp: bool = True
+
+
+@dataclass
+class Tiny1M3MLayerScaleConfig(Tiny1M3MConfig):
+    """Tiny1M3M with LayerScale (Touvron et al. 2021, arXiv:2103.17239).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Per-block per-channel learnable diagonal scale on the residual
+    branch, applied in the *direct* form `x = x + gamma * sub_block(x)`
+    (NOT the reparam `(1+γ)` form used by the closed-#21 `use_layerscale`
+    flag). Init `gamma = 1e-4 * ones(d_model)` (paper default) → at
+    step 0 the residual contribution is `1e-4 × sub_block(x)`, four
+    orders of magnitude smaller than the residual stream magnitude,
+    so the val loss at step 0 is within fp32 noise of baseline. The
+    per-channel selectivity is qualitatively different from the scalar
+    ReZero (130) and the whole-residual Sub-LN (017) — all four prior
+    depth-conditional levers null at 12L, but LayerScale's per-channel
+    diagonal is a structurally different mechanism that has not been
+    tested in this pipeline. Cost: 2 × d_model = 128 extra params at
+    tiny1m3m (negligible).
+
+    Transfer-risk: med — paper's headline wins are at depth ≥ 50, with
+    smaller gains at 12L. NULL band |Δ| < 0.01. DRIFT > +0.01.
+    PASS ≤ −0.01. See `autoresearch/ideas/142-layerscale/idea.md`.
+    """
+    use_layer_scale: bool = True
+    layer_scale_init: float = 1e-4
+
+
+@dataclass
+class Tiny1M3MMoSConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Mixture of Softmaxes output head
+    (Yang, Chen, et al. 2017, arXiv:1711.03953, "Breaking the Softmax
+    Bottleneck: A High-Rank RNN Language Model").
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces the single output softmax with `n_mos_components=4` parallel
+    vocab-sized heads mixed by per-token `π = softmax(W_π · h)`. The
+    mixture distribution is
+        `P(v) = Σ_k π_k · softmax(W_k · h)[v]`,
+    computed in log space as
+        `log P(v) = logsumexp_k (log π_k + log_softmax(W_k · h))`.
+
+    The structural lever is the *rank* of the output distribution: a
+    single `softmax(W·h)` has log-prob matrix rank ≤ d_model = 64, but a
+    K-mixture has effective rank ≤ K·d_model = 256 — exponentially more
+    expressive for high-rank next-token targets. The existing output
+    head (`d_model × vocab`) is replaced by K fresh vocab-sized heads
+    (no tying with token_embedding) plus a small `d_model → K` mix
+    projection.
+
+    Identity at step 0 (strict, fp32-exact):
+    - `W_π.weight = 0`, `W_π.bias = [+1e4, -1e4, -1e4, -1e4]` ⇒
+      `softmax(W_π·h) = [1, 0, 0, 0]` exactly (the `exp(-2e4)` terms
+      underflow to 0 in fp32). The `logsumexp` then reduces to
+      `log_softmax(W_0 · h)`, which equals the baseline tied head's
+      output logit. So the step-0 val loss is bit-identical to the
+      baseline. The K fresh heads `W_k` are init'd to `N(0, 0.02²)` like
+      the rest of the model; only head 0 contributes at step 0.
+
+    Cost: K × vocab × d_model = 4 × 49152 × 64 = 12,582,912 extra
+    params (the lever's headline param injection), plus K × d_model
+    = 256 for the mix projection. At tiny1m3m the baseline has 0.94M
+    params; MoS treatment has ~13.5M — a sizeable param confound that
+    the paper's win at billion-param scale does NOT control for. The
+    transfer note should flag this when judging the A/B.
+
+    Transfer-risk: med. Paper trains RNN-based 1B+ LMs with K=4
+    softmaxes; independent Transformer replications at 100M+ report
+    ~0.1-0.3 perplexity gains. tiny1m3m is well below the validated
+    range and the K× param cost is non-trivial. NULL band |Δ| < 0.01.
+    DRIFT > +0.01. PASS ≤ −0.01. See `autoresearch/ideas/144-mos/idea.md`.
+    """
+    use_mos: bool = True
+    n_mos_components: int = 4
 
 
 # =====================================================================

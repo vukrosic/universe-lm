@@ -92,7 +92,7 @@ On `reject`: also (a) move the folder to `autoresearch/ideas/_closed/`, and
 `autoresearch/closed.md`:
 `<NNN-slug or lever> — reject: <reason> — <YYYY-MM-DD>`.
 
-You close on your own `reject`s (so do the taste- and code-reviewers, on theirs).
+You close on your own `reject`s (so does the taste-reviewer, on theirs).
 Doers never close — the reviser and code-implementer bounce blocked ideas back to
 a `needs-*` queue, not to `rejected`. (Post-run null results are appended to
 `closed.md` by the evidence/run step, not by you.)

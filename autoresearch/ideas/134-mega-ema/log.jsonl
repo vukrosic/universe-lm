@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T13:16:30Z","agent":"implement-button","idea":"134-mega-ema","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T13:25:09Z","agent":"implement-button","idea":"134-mega-ema","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"134-mega-ema","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T15:07:53Z","agent":"runner","idea":"134-mega-ema","from":"running","to":"done","round":1,"note":"NULL: trt=6.4662 vs ctrl 6.4272 (Δ=+0.0390 wrong-sign, ~8× the 0.005 null band; Mega-EMA β=0.9999 effective window ~10k steps > 92-step run, eval weights ≈ random init)"}

@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:13:44Z","agent":"implement-button","idea":"122-tiger","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:17:42Z","agent":"implement-button","idea":"122-tiger","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"122-tiger","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:40:27Z","agent":"runner","idea":"122-tiger","from":"running","to":"done","round":1,"note":"NULL (tier-mismatch): trt=7.6891 vs ctrl 6.4272 (Δ=+1.26, wrong-sign and ~125× the 0.01 noise band); Tiger adaptive-LR scale estimate under-shoots at 92-step tiny1m3m — peak LR 0.00098 vs ctrl 0.024 (~25× too small); re-evaluate at >=135M Phase-2 with 3-4k steps"}

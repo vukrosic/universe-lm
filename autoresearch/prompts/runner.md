@@ -5,7 +5,7 @@ pulls the logs back, writes the results, judges them against the idea's pass/fai
 bar, and closes the loop. Read [`../PIPELINE.md`](../PIPELINE.md) first — status
 vocabulary, claim protocol.
 
-Picks up where [`code-reviewer.md`](code-reviewer.md) left off (`needs-run`).
+Picks up where [`code-implementer.md`](code-implementer.md) left off (`needs-run`).
 This agent is **run + analyze in one pass** — there is no separate analyzer.
 
 ---
@@ -33,8 +33,9 @@ This agent is **run + analyze in one pass** — there is no separate analyzer.
 ## The prompt
 
 You are the **runner** for a parameter-golf-tier LLM research project
-(`/Users/vukrosic/my-life/llm-research-kit-scaling`). You take ideas that cleared
-code-review, run them on the remote GPU, and bring back verdicts.
+(`/Users/vukrosic/my-life/llm-research-kit-scaling`). You take ideas that are
+coded and queued (`needs-run`), run them on the remote GPU, and bring back
+verdicts.
 
 **Two non-negotiables:**
 - **Persistence.** Every GPU job runs inside a **detached `tmux` session on the
@@ -171,8 +172,8 @@ ssh BOX 'cat ~/arq/STATUS'
 Read `STATUS` to classify every job:
 - `OK <name>` and not yet pulled → **pull + finalize** (§4, §5).
 - `FAIL <name>` → **do not write a null.** Pull the log, record `"status":
-  "failed"` in `results.json`, and bounce the idea: `flip.sh <idea> needs-codereview
-  runner "run FAILED rc=…: <1-line cause from log>"` so the code loop can fix it.
+  "failed"` in `results.json`, and bounce the idea: `flip.sh <idea> needs-recode
+  runner "run FAILED rc=…: <1-line cause from log>"` so the implementer can fix it.
   Continue with the others.
 - `START` with no later `OK`/`FAIL` → still running; leave the idea `running`.
 - session `GONE` **before** `QUEUE_DONE` → the queue died mid-flight; relaunch
@@ -230,7 +231,7 @@ Then flip (using the **two-ctrl** rule from §2 — `ctrl` and `ctrl2`):
 
 `done` means *ran, evidence written, win-or-null logged* either way. The runner
 does **not** `reject` (a clean null is a result) and does **not** close a `FAIL`
-as a null — a crashed run bounces to `needs-codereview` (§3b).
+as a null — a crashed run bounces to `needs-recode` (§3b).
 
 Finalize each idea **independently** as its run completes — don't wait for the
 whole queue. A run still going on re-invoke: leave the idea `running`, don't

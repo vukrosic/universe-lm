@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T19:34:24Z","agent":"implement-button","idea":"139-lion","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T19:47:47Z","agent":"implement-button","idea":"139-lion","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T19:50:34Z","agent":"runner","idea":"139-lion","from":"needs-run","to":"running","round":1,"note":"claimed: queued in arq tmux"}
+{"ts":"2026-06-13T19:58:28Z","agent":"runner","idea":"139-lion","from":"running","to":"done","round":1,"note":"NULL: trt=7.5134 vs ctrl 6.4509 (Δ +1.0625 wrong-sign, ~106× noise band) at tiny1m3m; lion_lr=3e-4 under-trains at 92-step horizon, train_loss 7.48 confirms under-training"}

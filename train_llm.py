@@ -249,6 +249,8 @@ def main():
     parser.add_argument("--use_multiscale_heads", type=str, help="Per-head graded sliding-window sizes, #97 (true/false)")
     parser.add_argument("--use_parallel_block", type=str, help="Parallel attention+FFN block (PaLM/GPT-J), #98 (true/false)")
     parser.add_argument("--use_attn_sink", type=str, help="Attention sink slot / softmax-off-by-one, #99 (true/false)")
+    parser.add_argument("--use_drop_key", type=str, help="DropKey (Xu 2022) per-head Bernoulli gate on K during training, #147 (true/false)")
+    parser.add_argument("--drop_key_rate", type=float, help="DropKey mask rate p (default 0.1)")
     parser.add_argument("--use_unet_skips", type=str, help="U-net cross-layer skip connections (true/false)")
     parser.add_argument("--unet_skip_count", type=int, help="Number of U-net skip pairs")
     parser.add_argument("--unet_gate_type", type=str, choices=["raw", "sigmoid"], help="U-net gate parameterization (raw or sigmoid)")
@@ -257,6 +259,8 @@ def main():
     parser.add_argument("--use_smear_gate", type=str, help="Token-smear gate (mix previous token) (true/false)")
     parser.add_argument("--use_attn_output_gate", type=str, help="Gated attention output (true/false)")
     parser.add_argument("--use_layerscale", type=str, help="Learnable per-channel residual gate (LayerScale), (true/false)")
+    parser.add_argument("--use_layer_scale", type=str, help="LayerScale (Touvron 2021) direct form gamma*sub_block, init eps (true/false), #142")
+    parser.add_argument("--layer_scale_init", type=float, help="LayerScale gamma init (paper default 1e-4), #142")
     parser.add_argument("--use_post_norm", type=str, help="Use post-norm transformer blocks (true/false)")
     parser.add_argument("--use_tied_qk", type=str, help="Use tied-QK attention projections (true/false)")
     parser.add_argument("--use_mla", type=str, help="Use MLA-style latent K/V projections (true/false)")
@@ -272,6 +276,46 @@ def main():
     parser.add_argument("--use_lookahead", type=str, help="Lookahead optimizer wrapper (k inner steps, 1 outer), #112 (true/false)")
     parser.add_argument("--lookahead_k", type=int, help="Lookahead inner cycle length, #112 (default 5)")
     parser.add_argument("--lookahead_alpha", type=float, help="Lookahead slow step size, #112 (default 0.5)")
+    parser.add_argument("--use_rdrop", type=str, help="R-Drop KL-regularized dropout, #115 (true/false)")
+    parser.add_argument("--rdrop_alpha", type=float, help="R-Drop target KL weight (paper: 1.0-5.0), #115 (default 1.0)")
+    parser.add_argument("--rdrop_warmup_steps", type=int, help="R-Drop linear warmup over N steps (alpha 0→target), #115 (default 1000)")
+    parser.add_argument("--use_ema_eval", type=str, help="Polyak-Ruppert weight EMA for val, #110 (true/false)")
+    parser.add_argument("--use_born_again", type=str, help="Born-Again self-distillation with EMA teacher, #132 (true/false)")
+    parser.add_argument("--born_again_beta", type=float, help="Born-Again EMA speed, #132 (default 0.999)")
+    parser.add_argument("--born_again_alpha", type=float, help="Born-Again KL weight on top of CE, #132 (default 1.0)")
+    parser.add_argument("--born_again_temp", type=float, help="Born-Again distillation temperature, #132 (default 2.0)")
+    parser.add_argument("--use_seqmix", type=str, help="SeqMix: token-level embedding mixup (Guo et al. 2019), #133 (true/false)")
+    parser.add_argument("--seqmix_alpha", type=float, help="SeqMix Beta(α, α) shape parameter, #133 (default 0.4)")
+    parser.add_argument("--ema_decay", type=float, help="EMA target decay (post-ramp), #110 (default 0.999)")
+    parser.add_argument("--ema_warmup_steps", type=int, help="EMA linear warmup over N steps (decay 0→target), #110 (default 100)")
+    parser.add_argument("--ema_eval_only", type=str, help="Only swap EMA in for eval (live θ stays saved), #110 (default true)")
+    parser.add_argument("--use_galore", type=str, help="GaLore: 2-D low-rank projected AdamW, #113 (true/false)")
+    parser.add_argument("--galore_rank", type=int, help="GaLore projection rank r, #113 (default 4)")
+    parser.add_argument("--galore_proj_every", type=int, help="GaLore SVD basis refresh cadence, #113 (default 200)")
+    parser.add_argument("--galore_lr", type=float, help="GaLore learning rate, #113 (default 0.006)")
+    parser.add_argument("--use_mars", type=str, help="MARS Variance-Reduced AdamW (lag-based gradient correction), #114 (true/false)")
+    parser.add_argument("--mars_lag", type=int, help="MARS lookback window (paper default 10), #114 (default 10)")
+    parser.add_argument("--mars_mix_coef", type=float, help="MARS mix coefficient on the correction (paper default 0.5), #114 (default 0.5)")
+    parser.add_argument("--mars_lr_scale", type=float, help="MARS LR multiplier (paper does not require re-tuning), #114 (default 1.0)")
+    parser.add_argument("--use_sam", type=str, help="SAM: Sharpness-Aware Minimization (Foret et al. 2020), #119 (true/false)")
+    parser.add_argument("--sam_rho", type=float, help="SAM perturbation radius (paper default 0.05), #119 (default 0.05)")
+    parser.add_argument("--use_looksam", type=str, help="LookSAM: Periodic SAM every K steps (Du et al. 2022), #138 (true/false)")
+    parser.add_argument("--looksam_k", type=int, help="LookSAM period between SAM steps (paper default 5), #138 (default 5)")
+    parser.add_argument("--looksam_rho", type=float, help="LookSAM perturbation radius (paper default 0.05), #138 (default 0.05)")
+    parser.add_argument("--use_dadapt", type=str, help="D-Adaptation: Automatic LR Discovery (Defazio 2023), #120 (true/false)")
+    parser.add_argument("--use_gc", type=str, help="Gradient Centralization (Yong et al. 2020) on AdamW path, #127 (true/false)")
+    parser.add_argument("--gc_axis", type=int, help="GC mean-subtract axis (0 or 1), #127 (default 1)")
+    parser.add_argument("--use_adashift", type=str, help="AdaShift: decorrelated Adam via delayed gradients, #126 (true/false)")
+    parser.add_argument("--adashift_lr", type=float, help="AdaShift learning rate, #126 (default 0.006)")
+    parser.add_argument("--adashift_n", type=int, help="AdaShift gradient delay n, #126 (paper default 3)")
+    parser.add_argument("--dadapt_d0_lr", type=float, help="D-Adapt log-LR update constant η (paper default 1.0), #120 (default 1.0)")
+    parser.add_argument("--dadapt_min_lr", type=float, help="D-Adapt lower clamp on D (paper default 0.0), #120 (default 0.0)")
+    parser.add_argument("--dadapt_d_max", type=float, help="D-Adapt upper clamp on D (paper §3.1 default 1.0); also caps derived lr_t, #120 (default 1.0)")
+    parser.add_argument("--use_soft_moe", type=str, help="Soft MoE FFN replacement (Puigcerver et al. 2024), #117 (true/false)")
+    parser.add_argument("--soft_moe_n_experts", type=int, help="Soft MoE number of experts E, #117 (default 4)")
+    parser.add_argument("--soft_moe_n_slots", type=int, help="Soft MoE slots per token m, #117 (default 4)")
+    parser.add_argument("--use_expert_choice_moe", type=str, help="Expert-Choice MoE FFN replacement (Zhou et al. 2022), #145 (true/false)")
+    parser.add_argument("--n_moe_experts", type=int, help="Expert-Choice MoE number of experts E, #145 (default 4)")
     parser.add_argument("--d_ff", type=int, help="Override FFN hidden dim (for param-matched comparisons)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Output directory")
     parser.add_argument(
@@ -408,6 +452,86 @@ def main():
         config.lookahead_k = args.lookahead_k
     if args.lookahead_alpha is not None:
         config.lookahead_alpha = args.lookahead_alpha
+    if args.use_rdrop is not None:
+        config.use_rdrop = (args.use_rdrop.lower() == "true")
+    if args.rdrop_alpha is not None:
+        config.rdrop_alpha = args.rdrop_alpha
+    if args.rdrop_warmup_steps is not None:
+        config.rdrop_warmup_steps = args.rdrop_warmup_steps
+    if args.use_ema_eval is not None:
+        config.use_ema_eval = (args.use_ema_eval.lower() == "true")
+    if args.use_born_again is not None:
+        config.use_born_again = (args.use_born_again.lower() == "true")
+    if args.use_seqmix is not None:
+        config.use_seqmix = (args.use_seqmix.lower() == "true")
+    if args.seqmix_alpha is not None:
+        config.seqmix_alpha = args.seqmix_alpha
+    if args.born_again_beta is not None:
+        config.born_again_beta = args.born_again_beta
+    if args.born_again_alpha is not None:
+        config.born_again_alpha = args.born_again_alpha
+    if args.born_again_temp is not None:
+        config.born_again_temp = args.born_again_temp
+    if args.ema_decay is not None:
+        config.ema_decay = args.ema_decay
+    if args.ema_warmup_steps is not None:
+        config.ema_warmup_steps = args.ema_warmup_steps
+    if args.ema_eval_only is not None:
+        config.ema_eval_only = (args.ema_eval_only.lower() == "true")
+    if args.use_galore is not None:
+        config.use_galore = (args.use_galore.lower() == "true")
+    if args.galore_rank is not None:
+        config.galore_rank = args.galore_rank
+    if args.galore_proj_every is not None:
+        config.galore_proj_every = args.galore_proj_every
+    if args.galore_lr is not None:
+        config.galore_lr = args.galore_lr
+    if args.use_mars is not None:
+        config.use_mars = (args.use_mars.lower() == "true")
+    if args.mars_lag is not None:
+        config.mars_lag = args.mars_lag
+    if args.mars_mix_coef is not None:
+        config.mars_mix_coef = args.mars_mix_coef
+    if args.mars_lr_scale is not None:
+        config.mars_lr_scale = args.mars_lr_scale
+    if args.use_sam is not None:
+        config.use_sam = (args.use_sam.lower() == "true")
+    if args.sam_rho is not None:
+        config.sam_rho = args.sam_rho
+    if args.use_looksam is not None:
+        config.use_looksam = (args.use_looksam.lower() == "true")
+    if args.looksam_k is not None:
+        config.looksam_k = args.looksam_k
+    if args.looksam_rho is not None:
+        config.looksam_rho = args.looksam_rho
+    if args.use_dadapt is not None:
+        config.use_dadapt = (args.use_dadapt.lower() == "true")
+    if args.dadapt_d0_lr is not None:
+        config.dadapt_d0_lr = args.dadapt_d0_lr
+    if args.dadapt_min_lr is not None:
+        config.dadapt_min_lr = args.dadapt_min_lr
+    if args.dadapt_d_max is not None:
+        config.dadapt_d_max = args.dadapt_d_max
+    if args.use_gc is not None:
+        config.use_gc = (args.use_gc.lower() == "true")
+    if args.gc_axis is not None:
+        config.gc_axis = args.gc_axis
+    if args.use_adashift is not None:
+        config.use_adashift = (args.use_adashift.lower() == "true")
+    if args.adashift_lr is not None:
+        config.adashift_lr = args.adashift_lr
+    if args.adashift_n is not None:
+        config.adashift_n = args.adashift_n
+    if args.use_soft_moe is not None:
+        config.use_soft_moe = (args.use_soft_moe.lower() == "true")
+    if args.soft_moe_n_experts is not None:
+        config.soft_moe_n_experts = args.soft_moe_n_experts
+    if args.soft_moe_n_slots is not None:
+        config.soft_moe_n_slots = args.soft_moe_n_slots
+    if args.use_expert_choice_moe is not None:
+        config.use_expert_choice_moe = (args.use_expert_choice_moe.lower() == "true")
+    if args.n_moe_experts is not None:
+        config.n_moe_experts = args.n_moe_experts
     if args.d_ff is not None:
         config.d_ff = args.d_ff
     if args.norm_type is not None:
@@ -422,6 +546,10 @@ def main():
         config.use_parallel_block = (args.use_parallel_block.lower() == "true")
     if args.use_attn_sink is not None:
         config.use_attn_sink = (args.use_attn_sink.lower() == "true")
+    if args.use_drop_key is not None:
+        config.use_drop_key = (args.use_drop_key.lower() == "true")
+    if args.drop_key_rate is not None:
+        config.drop_key_rate = args.drop_key_rate
     if args.use_unet_skips is not None:
         config.use_unet_skips = (args.use_unet_skips.lower() == "true")
     if args.unet_skip_count is not None:
@@ -438,6 +566,10 @@ def main():
         config.use_attn_output_gate = (args.use_attn_output_gate.lower() == "true")
     if args.use_layerscale is not None:
         config.use_layerscale = (args.use_layerscale.lower() == "true")
+    if args.use_layer_scale is not None:
+        config.use_layer_scale = (args.use_layer_scale.lower() == "true")
+    if args.layer_scale_init is not None:
+        config.layer_scale_init = args.layer_scale_init
     if args.compile is not None:
         config.compile_model = (args.compile.lower() == "true")
     config.device = args.device

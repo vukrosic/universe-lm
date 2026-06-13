@@ -1,0 +1,6 @@
+{"ts":"2026-06-13T19:53:33Z","agent":"implement-button","idea":"144-mos","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T19:59:50Z","agent":"implement-button","idea":"144-mos","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T20:09:14Z","agent":"runner","idea":"144-mos","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-13T20:09:55Z","agent":"reset-button","idea":"144-mos","from":"running","to":"needs-run","round":1,"note":"requeued stuck GPU run from UI"}
+{"ts":"2026-06-13T20:20:15Z","agent":"runner","idea":"144-mos","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=1: CUDA OOM at torch.logsumexp in MoS forward (K=4 log-softmax allocates [4,2,2048,49152] = 3.0 GiB on RTX 3060 12GB). Code path: models/llm.py:1121 log_p_mixed = torch.logsumexp(log_pi[...,None] + log_softmax(logits_k)). Try K=2 default, or chunk B*T*"}
+{"ts":"2026-06-13T20:50:36Z","agent":"implement-button","idea":"144-mos","from":"needs-recode","to":"needs-run","round":1,"note":"recode: chunked B*T forward (mos_chunk_size=256) avoids [K,B,T,V] OOM; log_p_mixed bit-identical to reference within fp32 noise; baseline path unchanged"}
