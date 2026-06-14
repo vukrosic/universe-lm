@@ -1,1 +1,2 @@
 {"ts":"2026-06-14T06:21:01Z","agent":"implement-button","idea":"165-k-only-norm","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T06:22:51Z","agent":"taste","idea":"165-k-only-norm","from":"implementing","to":"needs-review","round":1,"note":"accept: K-only RMSNorm completes the 3-way QK-norm-attribution axis (Q-only 162 / K-only 165 / QK 016); clean null-or-win bet, mechanism not HP, identity-init-able, transfer-low; taste artifact at taste.md r1"}
