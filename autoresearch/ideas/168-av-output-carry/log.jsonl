@@ -7,3 +7,4 @@
 {"ts":"2026-06-14T09:11:56Z","agent":"runner","idea":"168-av-output-carry","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (CACHED-path treatment, n=11 ctrl baseline)"}
 {"ts":"2026-06-14T09:34:05Z","agent":"orchestrator","idea":"168-av-output-carry","from":"running","to":"needs-run","round":1,"note":"reclaimed: running 22m but box arq queue dead (drainer wedged)"}
 {"ts":"2026-06-14T09:34:07Z","agent":"runner","idea":"168-av-output-carry","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-14T09:37:02Z","agent":"runner","idea":"168-av-output-carry","from":"running","to":"done","round":1,"note":"NULL (cache-authoritative): trt=6.4228 vs cached mean=6.4455±0.0524 (Δ=-0.0227 inside band); plan WIN bar Δ≤-0.01 met but cache required for WIN"}
