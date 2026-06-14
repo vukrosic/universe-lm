@@ -17,3 +17,4 @@
 {"ts":"2026-06-14T04:32:13Z","agent":"reviser","idea":"140-sophia","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
 {"ts":"2026-06-14T04:33:52Z","agent":"reviser","idea":"140-sophia","from":"revising","to":"needs-review","round":3,"note":"applied 2 findings"}
 {"ts":"2026-06-14T04:46:55Z","agent":"reviewer","idea":"140-sophia","from":"needs-review","to":"reviewing","round":3,"note":"claimed: r3 review of post-r2-recode spec"}
+{"ts":"2026-06-14T04:48:04Z","agent":"reviewer","idea":"140-sophia","from":"reviewing","to":"rejected","round":3,"note":"verdict: reject (r3 cap; adamw_params scope bug still in trainer.py:1746/1785/1796/1805 — provable plan/code drift)"}

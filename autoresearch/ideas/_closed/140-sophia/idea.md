@@ -1,8 +1,8 @@
 ---
 id: 140-sophia
-status: reviewing
+status: rejected
 round: 3
-updated: 2026-06-14T04:46:55Z
+updated: 2026-06-14T04:48:04Z
 transfer-risk: med
 plain: An optimizer that uses the second derivative (curvature) of the loss to take bigger steps in flat directions and smaller steps in steep ones.
 ---
