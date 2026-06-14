@@ -1,3 +1,4 @@
 {"ts":"2026-06-14T06:23:33Z","agent":"taste","idea":"169-qk-norm-depth","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-14T06:23:48Z","agent":"taste","idea":"169-qk-norm-depth","from":"tasting","to":"needs-review","round":1,"note":"accept: clean per-block-scale axis on top of 016-WIN; symmetric info value; distinct from 161 (scale-prior fight) and 152/155 (per-head logit scalars); NormFormer-validated primitive; definition gate should lock ctrl=016 not unmodded"}
 {"ts":"2026-06-14T06:25:57Z","agent":"reviewer","idea":"169-qk-norm-depth","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-14T08:56:26Z","agent":"reviser","idea":"169-qk-norm-depth","from":"needs-revision","to":"revising","round":1,"note":"claimed"}

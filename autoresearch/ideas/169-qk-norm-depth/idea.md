@@ -1,8 +1,8 @@
 ---
 id: 169-qk-norm-depth
-status: needs-revision
+status: revising
 round: 1
-updated: 2026-06-14T06:25:57Z
+updated: 2026-06-14T08:56:26Z
 transfer-risk: low
 plain: Keep the QK RMS-norm from 016 (which won) but give each block its own learnable scale on top, starting at one — tests whether different blocks want different normalization strengths.
 ---
