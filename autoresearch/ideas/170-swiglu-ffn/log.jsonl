@@ -10,3 +10,4 @@
 {"ts":"2026-06-14T10:05:10Z","agent":"runner","idea":"170-swiglu-ffn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (170 stub + SwiGLUZeroInitFeedForward + plumbing synced to box; smoke MinimalLLM(CtrlConfig) and MinimalLLM(Tiny1M3MSwigluFFNConfig) both OK)"}
 {"ts":"2026-06-14T10:10:49Z","agent":"reset-button","idea":"170-swiglu-ffn","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-14T10:13:22Z","agent":"runner","idea":"170-swiglu-ffn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-14T10:14:53Z","agent":"reset-button","idea":"170-swiglu-ffn","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
