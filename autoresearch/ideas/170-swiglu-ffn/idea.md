@@ -1,8 +1,8 @@
 ---
 id: 170-swiglu-ffn
-status: implementing
+status: needs-taste
 round: 1
-updated: 2026-06-14T09:20:11Z
+updated: 2026-06-14T09:22:58Z
 transfer-risk: low
 plain: Swap the FFN's plain GELU activation for SwiGLU — a gate × value product used by LLaMA, Mistral, and PaLM — and start the gate matrix at zero so the FFN is silent on the first step.
 ---
@@ -82,3 +82,51 @@ gating structure doesn't bind at 0.94M/3M tokens and the FFN-activation axis
 is fully closed (153 + 170 both null); a win would tell us gating is a real
 lever and the 0.94M tier is large enough for the gate to learn. The
 zero-init gate makes this a clean, safe test.
+
+## Plan
+
+**Files to change**
+1. `models/components.py` — add `SwiGLUZeroInitFeedForward` class
+   (mirrors existing `SwiGLUFeedForward` but with `gate_proj.weight = 0` init).
+   `d_ff_swiglu = (2 * d_ff) // 3` for param parity (Shazeer 2/3 trick;
+   `int(2*256/3) = 170`, matches idea.md math). New FFN param count:
+   3 × `d_model × d_ff_swiglu` = 3 × 64 × 170 = 32,640 vs baseline
+   2 × 64 × 256 = 32,768 (≈ 0.4% smaller, well within harness noise).
+2. `models/layers.py` — add `use_swiglu_ffn: bool = False` kwarg to
+   `TransformerBlock.__init__` and add a new branch in the FFN construction
+   cascade that runs **AHEAD** of the existing `ffn_variant == "swiglu"`
+   branch (so this lever wins when both flags are on). The branch builds
+   `SwiGLUZeroInitFeedForward(d_model, (2*d_ff)//3, dropout)` and stashes
+   `self.use_swiglu_ffn = True`.
+3. `configs/llm_config.py` — add `use_swiglu_ffn: bool = False` to `LLMConfig`
+   (default off, so baseline path is bit-identical when off) and add a new
+   `Tiny1M3MSwigluFFNConfig(Tiny1M3MConfig)` subclass that flips the flag on.
+   Also pass `use_swiglu_ffn` through to `TransformerBlock` in `MinimalLLM`.
+4. `_arq_170-swiglu-ffn.py` — the runner harness. Mirrors the
+   `_arq_153-relu2-ffn.py` pattern.
+
+**Config flag**: `use_swiglu_ffn: bool = False` (default off, baseline path
+untouched).
+
+**Step-0 zero-init**: `SwiGLUZeroInitFeedForward` zeros `gate_proj.weight`
+and `gate_proj.bias` at construction. Then `silu(W_gate · x + b_gate) =
+silu(0) = 0` for all x, so `silu(gate) ⊙ (W_up · x) = 0` exactly, so the FFN
+output is **exactly 0** at step 0 (better than baseline! the residual stream
+carries only the attention sub-block at step 0). This is approximate-identity
+to baseline (which has a non-zero GELU FFN at step 0), but the math is clean
+and the forward is stable — same tolerance class as 153 / 159. Baseline
+byte-identical when the flag is off: the new branch is never taken and
+`ffn_variant` keeps its default cascade.
+
+**Run command**
+```bash
+cd /Users/vukrosic/my-life/llm-research-kit-scaling
+/venv/main/bin/python _arq_170-swiglu-ffn.py
+```
+
+**Final val loss readout**
+- The runner prints `val_loss` to stdout at the eval milestones (every 25–100
+  steps via `eval_milestones` on `Tiny1M3MConfig`); the GPU queue copies the
+  final `val_loss` into `autoresearch/runs/170-swiglu-ffn/metrics.json` via
+  the existing harness. Compare to baseline cached at
+  `autoresearch/baseline-cache.json` (val ≈ 6.43 ± 0.04 on Vast V100).

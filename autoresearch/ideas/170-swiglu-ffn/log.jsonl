@@ -1,1 +1,2 @@
 {"ts":"2026-06-14T09:20:11Z","agent":"implement-button","idea":"170-swiglu-ffn","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T09:22:58Z","agent":"taste","idea":"170-swiglu-ffn","from":"implementing","to":"needs-taste","round":1,"note":"reset: prior implement claim left stale 'implementing' lock without saved artifact; running taste gate as instructed"}
