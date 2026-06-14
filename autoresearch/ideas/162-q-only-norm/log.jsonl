@@ -19,3 +19,5 @@
 {"ts":"2026-06-14T05:58:11Z","agent":"auto-implement","idea":"162-q-only-norm","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-14T06:00:12Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-14T06:00:51Z","agent":"reviewer","idea":"162-q-only-norm","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T06:04:17Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-plan","to":"planning","round":1,"note":"claimed (r3 fresh pass after r2 reviewer re-approval)"}
+{"ts":"2026-06-14T06:04:43Z","agent":"code-impl","idea":"162-q-only-norm","from":"planning","to":"needs-run","round":1,"note":"plan+code done (r3 fresh pass; plan refreshed with self-check §5; lever unchanged from commit 41ca33e; CPU build-smoke +192 params verified in r2; outstanding precondition: human-only git push)"}

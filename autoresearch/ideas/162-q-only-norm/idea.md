@@ -1,8 +1,8 @@
 ---
 id: 162-q-only-norm
-status: needs-plan
+status: needs-run
 round: 1
-updated: 2026-06-14T06:00:51Z
+updated: 2026-06-14T06:04:43Z
 transfer-risk: low
 plain: Apply RMS normalization to the query vectors only (not the keys) before the attention score is computed — start with the standard scale so step-0 is byte-identical to the baseline.
 ---

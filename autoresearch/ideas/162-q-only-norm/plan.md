@@ -111,6 +111,47 @@ layernorm precedent).
 - Reference: 016-qk-norm (the closed symmetric WIN at tiny1m3m,
   Δ ≈ -0.014 vs both ctrls, pass-bar -0.005 cleared ~3×).
 
+## r3 — 2026-06-14 — fresh code-impl pass after r2 reviewer re-approval
+- **Verdict**: review.md r2 verdict was `approve → needs-plan`. The reviewer
+  reset `round` to 1 for this code gate (the bounce from
+  `needs-recode → needs-review → needs-plan` is operational, not content —
+  the lever itself is sound; the blocker is the human-only `git push`).
+- **Plan + code already in place from r2.** No new hunks landed in this
+  pass:
+  - Commit `41ca33e` (`162-q-only-norm: Q-only RMSNorm (asymmetric QK
+    pre-softmax) — gate`) is in HEAD — contains the `use_q_only_norm`
+    field, the `Tiny1M3MQOnlyNormConfig` subclass, the MHA +
+    `TransformerBlock` wiring, the `MinimalLLM` read/thread, and the
+    `_arq_162-q-only-norm.py` treatment stub.
+  - `run.json` is at `autoresearch/ideas/162-q-only-norm/run.json`
+    (`{"name":"162-q-only-norm","arq_file":"_arq_162-q-only-norm.py",
+    "job_timeout":"12m"}`).
+  - Local CPU build-smoke verified previously (per r2 log entry):
+    `MinimalLLM(Tiny1M3MQOnlyNormConfig())` constructs; +192 params
+    vs baseline.
+- **Self-check (§5) on this pass**:
+  - Flag OFF path = the existing 016 baseline with the unused knob set
+    `False` → bit-identical at step 0 (verified locally, max-abs-diff
+    0.0 on a 16-token forward at seed 42).
+  - Flag ON path: `nn.RMSNorm(d_k=16, eps=1e-6)` (weight=1, bias=0)
+    registered per block × 12 blocks; Q is rescaled to unit RMS per
+    head-dim per token; K untouched. The spec-allowed fp32 max-abs-
+    diff < 1e-3 rescaling trade-off (159-emb-layernorm precedent) is
+    acknowledged and unchanged.
+  - `plan.md`'s pass/fail bar matches `idea.md`'s PASS/NULL/DRIFT
+    framing (tightened per r1 finding).
+  - Run artifact present and self-consistent: `run.json` + the stub
+    that defines `Tiny1M3MQOnlyNormConfig` as `C` are both on disk;
+    the daemon's `MinimalLLM(C())` build-smoke target is exactly the
+    class imported at `_arq_162-q-only-norm.py:28`.
+- **Outstanding precondition before the next daemon tick** (unchanged
+  from r2): `git push origin orchestrate-codex-fallback` (human-only
+  per repo convention). Without it the box's `git pull --ff-only`
+  stays stale and the smoke bounces. The code-impl agent commits but
+  does not push.
+- **Routing**: `planning → needs-run` (this file). No new code or
+  config changes.
+
 ## Recode round 1 → 2 (2026-06-14)
 - **Failure mode (from daemon pre-queue bounce)**: build-smoke on the box
   failed — `Tiny1M3MQOnlyNormConfig not present in
