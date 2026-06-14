@@ -14,3 +14,4 @@
 {"ts":"2026-06-14T05:44:19Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button (re-code fix)"}
 {"ts":"2026-06-14T05:44:56Z","agent":"done-button","idea":"162-q-only-norm","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
 {"ts":"2026-06-14T05:46:08Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-run","to":"recoding","round":1,"note":"claimed (r1 → r2 recode: box build-smoke bounced; local commit needed before next pull)"}
+{"ts":"2026-06-14T05:53:27Z","agent":"code-impl","idea":"162-q-only-norm","from":"recoding","to":"needs-run","round":2,"note":"recode r1→r2: local commit 41ca33e lands the lever; awaiting 'git push' so the box's git pull can pick it up (daemon's --ff-only + stale configs bounced the prior smoke)"}
