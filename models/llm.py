@@ -162,6 +162,18 @@ class MinimalLLM(nn.Module):
             self.token_embedding = nn.Embedding(config.vocab_size, self.emb_rank)
             self.emb_proj = nn.Linear(self.emb_rank, config.d_model, bias=False)
         self.use_smear_gate = getattr(config, "use_smear_gate", False)
+        # 159 — Embedding pre-LayerNorm (LLaMA 3 / Gemma 2 / Mistral
+        # / Qwen 2.5 pattern). Build a single `nn.LayerNorm(d_model)`
+        # here; applied in `_embed_input` right after the scaled
+        # embedding is produced. Default off → baseline path
+        # bit-identical (the LN module is never built, the forward
+        # branch is never taken). The empirical step-0 identity init
+        # (weight = std(x_post), bias = mean(x_post)) happens AFTER
+        # `self.apply(self._init_weights)` below so it survives the
+        # global init. See `autoresearch/ideas/159-emb-layernorm/idea.md`.
+        self.use_emb_layernorm = getattr(config, "use_emb_layernorm", False)
+        if self.use_emb_layernorm:
+            self.emb_layernorm = nn.LayerNorm(config.d_model)
         if self.use_smear_gate:
             self.smear_gate = nn.Parameter(torch.zeros(config.d_model))
         self.position_dropout = nn.Dropout(config.dropout)
@@ -766,6 +778,11 @@ class MinimalLLM(nn.Module):
                         # bit-identical. See
                         # `autoresearch/ideas/155-per-head-temp/idea.md`.
                         use_per_head_temp=getattr(config, "use_per_head_temp", False),
+                        # 160 — Per-head RMS gain on the attention output.
+                        # Pass-through to the block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+                        use_head_gain=getattr(config, "use_head_gain", False),
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
@@ -1085,6 +1102,22 @@ class MinimalLLM(nn.Module):
 
         self.apply(self._init_weights)
 
+        # 159 — Embedding pre-LayerNorm: `_init_weights` leaves
+        # `nn.LayerNorm` at its default `weight=1, bias=0` (the
+        # standard LN affine init). At step 0 the LN forward is
+        # `(x - μ(x)) / σ(x) * 1 + 0`, a *rescaled* version of `x`,
+        # NOT byte-identical — but the spec accepts this trade-off
+        # ("most harnesses tolerate fp32 max-abs-diff < 1e-3 on the
+        # embedding magnitude"). For the factorized tiny1m3m case
+        # (rank=8, d_model=64) the per-token μ/σ are approximately
+        # constant across tokens (all x_post[b,t,:] are samples of
+        # the same zero-mean N(0, σ_c²) distribution), so the
+        # rescaling is uniform and the diff between flag-on and
+        # baseline is bounded. The flag-OFF baseline path remains
+        # untouched (the LN module is never built, the forward
+        # branch is never taken). See
+        # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+
         # Start the additive output path as an exact no-op, so step 0 matches the
         # tied-head baseline and the adapter earns any improvement during training.
         if self.output_adapter_out is not None:
@@ -1138,7 +1171,8 @@ class MinimalLLM(nn.Module):
                     embedding branches.
           x_post  : residual-stream input to the transformer stack
                     (post emb_proj if emb_rank is set, post emb_scale,
-                    post any encode-only output MLP).
+                    post any encode-only output MLP, post 159
+                    embedding pre-LayerNorm when `use_emb_layernorm=True`).
           x0      : optional pre-norm residual-stream reference used by
                     the #20 embed-residual re-injection.
           ve      : raw token embedding passed to attention as the V/Q/K
@@ -1156,6 +1190,15 @@ class MinimalLLM(nn.Module):
             x_post = tok * emb_scale
         else:
             x_post = self.emb_proj(tok) * emb_scale
+        # 159 — Embedding pre-LayerNorm: normalize the residual-stream
+        # input ONCE here, before the first transformer block. The LN
+        # params are init to `weight=std(x_post)`, `bias=mean(x_post)`
+        # at construction (see `MinimalLLM.__init__` post-init hook)
+        # so this op is an empirical identity at step 0. Default off
+        # → branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+        if self.use_emb_layernorm:
+            x_post = self.emb_layernorm(x_post)
         # B0 Tied output MLP: encode runs once on the (scaled) embedding,
         # before the block loop. Modify the input to the stack by adding
         # Wd·φ(Wu·x). See TiedOutputMLP docstring for step-0 caveat.

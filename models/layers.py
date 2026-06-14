@@ -636,6 +636,22 @@ class MultiHeadAttention(nn.Module):
         # bit-identical (no Parameter is registered, no branch is
         # taken). See `autoresearch/ideas/155-per-head-temp/idea.md`.
         use_per_head_temp: bool = False,
+        # 161 — Per-layer learnable attention temperature. The actual
+        # parameter `layer_temperature ∈ R^{n_layers}` lives on the
+        # MODEL (`MinimalLLM`); each MHA reads `layer_temperature
+        # [layer_index]` at forward (passed via `layer_index` kwarg).
+        # The flag here only controls whether the MHA applies the
+        # scaling in forward. The parameter creation is on the model
+        # so the optimizer sees ONE `nn.Parameter` (not n_layers of
+        # them), keeping the parameter layout flat. Default off →
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/161-dyt-temp/idea.md`.
+        use_per_layer_temp: bool = False,
+        # 160 — Per-head RMS gain on the attention output. See
+        # `MultiHeadAttention.use_head_gain` for the mechanism.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        use_head_gain: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -1081,6 +1097,38 @@ class MultiHeadAttention(nn.Module):
             self.attn_temperature = nn.Parameter(
                 torch.full((self.n_heads,), float(self.d_k) ** -0.5)
             )
+        # 161 — Per-layer learnable attention temperature `τ_l ∈ R^1`.
+        # Stored on the MODEL (`MinimalLLM.layer_temperature`) — each
+        # MHA reads its own slice `layer_temperature[layer_index]` at
+        # forward. Init `1/sqrt(d_k)` (the standard inverse-temperature)
+        # so `Q_h K_h^T * τ_l` matches baseline `Q_h K_h^T / sqrt(d_k)`
+        # at step 0. Distinct from per-head (155): per-head varies
+        # WITHIN a layer (one scalar per head), per-layer varies
+        # ACROSS layers (one scalar per layer, shared across heads).
+        # The per-layer parameter lives on the model, not on each
+        # MHA, so this is just a flag and the model is responsible
+        # for the parameter. Forces the manual attention path so
+        # SDPA's flash/efficient backends don't perturb step-0
+        # numerics. Default off → no branch taken, baseline path
+        # bit-identical. See `autoresearch/ideas/161-dyt-temp/idea.md`.
+        self.use_per_layer_temp = use_per_layer_temp
+        # 160 — Per-head RMS gain on the attention output. After the
+        # AV product and softmax aggregation, multiply each head's
+        # output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable scalar
+        # `g_h ∈ R^H` so the per-head contribution to the residual
+        # stream has controlled magnitude. Init `g_h = 1.0` exactly
+        # ⇒ `o_h *= 1 = o_h` byte-identical to baseline at step 0.
+        # Cost: H scalars/layer (4 at tiny1m3m, total 48 — negligible).
+        # Different from `use_attn_output_gate` (reparam `(1+g_h)` with
+        # g_h=0 init): that one starts at 1.0 but its magnitude
+        # reparam has the gradient concentrated in `g_h`; this one is
+        # a direct `g_h` multiplier so the magnitude *and* gradient
+        # are both `g_h`. Default off → no Parameter registered, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        self.use_head_gain = use_head_gain
+        if self.use_head_gain:
+            self.head_gain = nn.Parameter(torch.ones(self.n_heads))
         # #107 Exclusive self-attn: subtract the projection of the head
         # output onto its current-token value vector. Per-head scalar gate
         # is zero-init so step 0 is the baseline graph.
@@ -2154,7 +2202,7 @@ class MultiHeadAttention(nn.Module):
             keep_prob = 1.0 - p
             # Per-(batch, head, token) coin; broadcast across d_k.
             key_mask = torch.empty(
-                batch_size, self.n_heads, seq_len, 1,
+                batch_size, self.n_heads, K.size(2), 1,
                 device=K.device, dtype=K.dtype,
             ).bernoulli_(keep_prob)
             K = K * key_mask / keep_prob
@@ -2662,6 +2710,19 @@ class MultiHeadAttention(nn.Module):
             attn_output = F.scaled_dot_product_attention(
                 Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
             )
+        # 160 — Per-head RMS gain on the attention output. Multiply each
+        # head's AV-aggregated output `o_h = (A·V)_h ∈ R^{T×d_k}` by a
+        # learnable scalar `g_h ∈ R^H` so each head controls its
+        # contribution magnitude to the residual stream. Init
+        # `g_h = 1.0` ⇒ `o_h *= 1 = o_h` byte-identical to baseline at
+        # step 0. Applied BEFORE the existing per-head gates
+        # (`use_attn_output_gate`, `use_attn_output_channel_gate`,
+        # `use_gated_attn`, `_apply_output_op`) so it composes cleanly
+        # with all of them — they multiply through. Default off →
+        # branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        if self.use_head_gain:
+            attn_output = attn_output * self.head_gain.view(1, self.n_heads, 1, 1)
         # #107 Exclusive self-attn: remove the component of each head's
         # output that lies along the current token's value vector.
         # V is already in [B, H, T, D] after the GQA repeat_interleave
@@ -2739,6 +2800,11 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `MultiHeadAttention.use_per_head_temp`
         # for the mechanism. Default off → baseline path bit-identical.
         use_per_head_temp: bool = False,
+        # 160 — Per-head RMS gain on the attention output. Pass-through
+        # to the inner MHA. See `MultiHeadAttention.use_head_gain` for
+        # the mechanism. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        use_head_gain: bool = False,
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K during training. Pass-through
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
@@ -3125,6 +3191,11 @@ class TransformerBlock(nn.Module):
             # path bit-identical. See
             # `autoresearch/ideas/155-per-head-temp/idea.md`.
             use_per_head_temp=use_per_head_temp,
+            # 160 — Per-head RMS gain on the attention output.
+            # Pass-through to the inner MHA. Default off → baseline
+            # path bit-identical. See
+            # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+            use_head_gain=use_head_gain,
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,

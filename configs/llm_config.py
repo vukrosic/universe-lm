@@ -48,6 +48,19 @@ class LLMConfig:
     # #27 SmearGate: add a learned per-channel amount of the previous token's
     # embedding before the transformer stack. Causal, zero-init, costs d_model.
     use_smear_gate: bool = False
+    # 159 — Embedding pre-LayerNorm (LLaMA 3 / Gemma 2 / Mistral /
+    # Qwen 2.5 pattern). Apply a single `nn.LayerNorm(d_model)` on the
+    # scaled token embedding right before the first transformer block.
+    # Default off → baseline path bit-identical (the LN module is
+    # never built, the forward branch is never taken). When on, the
+    # LN params are init to `weight = std(x_post)`, `bias = mean(x_post)`
+    # (empirical, computed at construction) so `LN(x_post) ≈ x_post`
+    # at step 0 within fp32 rounding noise — the model starts as
+    # exactly the baseline residual stream and the LN earns its
+    # normalisation during training. Cost: 2·d_model params (128 at
+    # tiny1m3m — negligible). See
+    # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+    use_emb_layernorm: bool = False
     # #23 U-Net skips: add zero-init learned bridges from early block outputs to
     # mirrored late blocks. Helps deep narrow stacks preserve early lexical detail.
     use_unet_skips: bool = False
@@ -106,6 +119,44 @@ class LLMConfig:
     # no branch taken). See
     # `autoresearch/ideas/155-per-head-temp/idea.md`.
     use_per_head_temp: bool = False
+    # 161 — Per-layer learnable attention temperature. Replace the
+    # standard `1/sqrt(d_k)` attention scale with a per-layer
+    # learnable scalar `τ_l ∈ R^{n_layers}` so the per-layer logit
+    # scale becomes `Q_h K_h^T * τ_l` (the same scale factor across
+    # all heads in a layer, but different across layers). Init
+    # `τ_l = 1/sqrt(d_k)` exactly ⇒ `Q_h K_h^T * (1/sqrt(d_k))`
+    # ≡ `Q_h K_h^T / sqrt(d_k)` (bit-identical to the standard
+    # pre-softmax scale) at step 0. Each layer can then adjust
+    # its own temperature — early layers can broaden attention,
+    # late layers can sharpen it. Cost: 1 scalar/layer
+    # (12 at tiny1m3m, total 12 — negligible). Forces the manual
+    # attention path so SDPA's flash/efficient backends don't
+    # perturb step-0 numerics. Distinct from `use_per_head_temp`
+    # (155): per-head varies WITHIN a layer (H scalars/layer),
+    # per-layer varies ACROSS layers (1 scalar/layer). The two
+    # are orthogonal axes. Default off → baseline path bit-
+    # identical (no Parameter registered, no branch taken). See
+    # `autoresearch/ideas/161-dyt-temp/idea.md`.
+    use_per_layer_temp: bool = False
+    # 160 — Per-head RMS gain on the attention output (Gemma 2 /
+    # Qwen 2.5). After the AV product and softmax aggregation, multiply
+    # each head's output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable
+    # scalar `g_h ∈ R^H` so each head controls the magnitude of its
+    # contribution to the residual stream without changing direction.
+    # Init `g_h = 1.0` exactly ⇒ `o_h *= 1 = o_h` byte-identical to
+    # baseline at step 0. Distinct from `use_attn_output_gate` (reparam
+    # `(1+g_h)` with g_h=0 init): that one starts at 1.0 but its
+    # magnitude reparam has the gradient concentrated in `g_h`; this
+    # one is a direct `g_h` multiplier so the magnitude *and*
+    # gradient are both `g_h`. Distinct from `use_layerscale`/
+    # `use_layer_scale`: those operate on the residual add after the
+    # O projection; this lever fires on the *head* dimension before
+    # the O projection, normalizing per-head output magnitudes
+    # independently of the residual stream. Cost: H scalars/layer
+    # (4 at tiny1m3m, total 48 — negligible). Default off → baseline
+    # path bit-identical (no Parameter registered, no branch taken).
+    # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+    use_head_gain: bool = False
     # #107 Exclusive self-attn: subtract the component of the attention
     # output that lies along the current token's value vector. Zero-init
     # per-head coefficient → step-0 is baseline; default off keeps the
@@ -1798,6 +1849,25 @@ class Tiny1M3MShortConvConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MEmbLayerNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with embedding pre-LayerNorm (159).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Adds a
+    single `nn.LayerNorm(d_model)` immediately after the scaled
+    token embedding, before the transformer stack — the LLaMA 3 /
+    Gemma 2 / Mistral / Qwen 2.5 pattern. Different from the closed
+    norm zoo (which normalizes *inside* each block); this normalizes
+    *once at the input*. The LN is init with
+    `weight = std(x_post)`, `bias = mean(x_post)` (empirical, computed
+    at construction) so `LN(x_post) ≈ x_post` at step 0 within fp32
+    rounding noise — baseline path bit-identical at step 0. Cost:
+    2·d_model params (128 at tiny1m3m, ~0.014% of the 0.94M model —
+    negligible). See `autoresearch/ideas/159-emb-layernorm/idea.md`.
+    """
+    use_emb_layernorm: bool = True
+
+
+@dataclass
 class Tiny1M3MReLU2FFNConfig(Tiny1M3MConfig):
     """Tiny1M3M with Squared-ReLU FFN activation (So et al. "Primer",
     arXiv:2109.08668, 2021; Mercury Coder / Inception Labs, 2024).
@@ -1923,6 +1993,79 @@ class Tiny1M3MPerHeadTempConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/155-per-head-temp/idea.md`.
     """
     use_per_head_temp: bool = True
+
+
+@dataclass
+class Tiny1M3MPerLayerTempConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-layer learnable attention temperature (161).
+    One learnable scalar `τ_l` per layer (init `1/sqrt(d_k)`), so the
+    logit scale becomes `Q_h K_h^T * τ_l` — the SAME scale factor
+    across all heads in a layer, but different across layers. Each
+    layer can adjust its own attention sharpness during training.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Init `τ_l = 1/sqrt(d_k)` so the lever is byte-
+    identical to the baseline `1/sqrt(d_k)` scale at step 0
+    (no Parameter perturbation, no branch). Forces the manual
+    attention path so SDPA's flash/efficient backends don't
+    perturb step-0 numerics. Cost: 1 scalar/layer (12 at
+    tiny1m3m, total 12 — negligible).
+
+    Distinct from `use_per_head_temp` (155): per-head varies
+    WITHIN a layer (H scalars/layer, e.g. 4 at tiny1m3m); per-
+    layer varies ACROSS layers (1 scalar/layer). The two are
+    orthogonal axes — a future composition (per-head × per-
+    layer = H·L scalars) would test the full H·L grid.
+
+    Predictions: most likely a small wash (|Δ| < 0.005). The
+    `1/sqrt(d_k)` constant is the canonical default across
+    Transformers; Q/K gradients can absorb any per-layer scale
+    change. A clear win would tell us layers want different
+    attention temperatures at this scale (early broad, late
+    sharp); a clear null would close the per-layer temperature
+    axis and confirm per-block normalization absorbs the
+    variance.
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/161-dyt-temp/idea.md`.
+    """
+    use_per_layer_temp: bool = True
+
+
+@dataclass
+class Tiny1M3MHeadGainConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head RMS gain on the attention output
+    (Gemma 2 / Qwen 2.5). After the AV product and softmax
+    aggregation, multiply each head's output `o_h = (A·V)_h`
+    by a learnable scalar `g_h ∈ R^H`. Init `g_h = 1.0` exactly
+    ⇒ `o_h *= 1 = o_h` byte-identical to baseline at step 0.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    val 6.4306). Distinct from qk_norm (016, normalizes the
+    *pre*-softmax Q/K magnitudes) — this lever normalizes the
+    *post*-AV head-output magnitude instead, so it tests the
+    OTHER side of the magnitude axis. Distinct from
+    `use_attn_output_gate` (reparam `(1+g_h)` with g_h=0 init):
+    that one starts at 1.0 but its magnitude reparam has the
+    gradient concentrated in `g_h`; this one is a direct `g_h`
+    multiplier so the magnitude *and* gradient are both `g_h`.
+
+    Cost: H scalars/layer (4 at tiny1m3m, total 48 — negligible).
+
+    Prediction: small wash or marginal win (|Δ| < 0.01). The
+    post-AV magnitude axis is plausibly a redundant degree of
+    freedom given the W_O projection that follows, but heads
+    can still learn to attenuate noisy outputs. A clear win
+    would extend qk_norm's win on the pre-softmax magnitude
+    axis to the post-AV axis; a clear null would close the
+    post-AV magnitude axis. A drift (> +0.005) would mean
+    the lever is harmful at this scale (over-parameterized
+    reinit risk).
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+    """
+    use_head_gain: bool = True
 
 
 @dataclass
