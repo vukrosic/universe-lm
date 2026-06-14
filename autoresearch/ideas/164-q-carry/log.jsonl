@@ -7,3 +7,4 @@
 {"ts":"2026-06-14T05:58:12Z","agent":"runner","idea":"164-q-carry","from":"needs-run","to":"needs-recode","round":1,"note":"stale-box: Tiny1M3MQCarryConfig not present in /root/universe-lm/configs/llm_config.py (commit not pushed to origin; box on main@42ed363, working-tree has 161 only)"}
 {"ts":"2026-06-14T06:04:55Z","agent":"code-impl","idea":"164-q-carry","from":"needs-recode","to":"needs-run","round":2,"note":"wired MHA init (use_q_carry+alpha_q+_q_carry stash) + TransformerBlock forward kwarg + MinimalLLM stash/loop; build-smoke OK, step-0 bit-identical (diff=0.00), +12 params as expected"}
 {"ts":"2026-06-14T06:15:53Z","agent":"runner","idea":"164-q-carry","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux (MEASURE: 3 ctrls + 4 trt)"}
+{"ts":"2026-06-14T06:20:21Z","agent":"reset-button","idea":"164-q-carry","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}
