@@ -575,6 +575,16 @@ class LLMConfig:
     # module built, baseline path bit-identical. See
     # autoresearch/ideas/162-q-only-norm/idea.md.
     use_q_only_norm: bool = False
+    # 165 — K-Only RMSNorm (asymmetric QK pre-softmax normalization,
+    # K-side). Apply RMSNorm to K only, leave Q raw. nn.RMSNorm
+    # weight=1, bias=0 init ⇒ step-0 ≡ RMSNorm-rescaled K (spec-allowed
+    # fp32 max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-
+    # layernorm, 162-q-only-norm). Default off ⇒ no module built,
+    # baseline path bit-identical. The K-mirror of 162 — together with
+    # 016 (symmetric) and 162 (Q-only), the three levers form a clean
+    # 3-way orthogonal attribution test for the 016 WIN. See
+    # autoresearch/ideas/165-k-only-norm/idea.md.
+    use_k_only_norm: bool = False
     # #99 Attention sink slot (softmax-off-by-one): append a zero K/V the query
     # can attend to, so it isn't forced to dump probability on a real token.
     use_attn_sink: bool = False
@@ -5307,6 +5317,40 @@ class Tiny1M3MQOnlyNormConfig(Tiny1M3MConfig):
     `_arq_161-dyt-temp.py`).
     """
     use_q_only_norm: bool = True
+
+
+@dataclass
+class Tiny1M3MKOnlyNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with K-only RMSNorm (165 — asymmetric QK pre-softmax,
+    K-side).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Apply
+    `nn.RMSNorm(d_head, eps=1e-6)` to K only, leave Q untouched, before
+    the QK matmul. nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the
+    lever rescales K to unit RMS per head-dim (spec-allowed fp32
+    max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-layernorm
+    and 162-q-only-norm). Default off ⇒ baseline path bit-identical
+    (no `k_only_norm` module is registered, no forward branch taken).
+
+    The K-mirror of 162. Together with 162 (Q-only) and 016 (symmetric
+    QK-norm), the three levers form a clean 3-way orthogonal
+    attribution test for the 016 WIN at tiny1m3m:
+      - 016 (QK both)         ⇒ K-norm family helps, but binding axis unclear
+      - 162 (Q only)          ⇒ Q-side is the binding axis
+      - 165 (K only, this)    ⇒ K-side is the binding axis
+    WIN ⇒ K-side normalization is the binding axis; NULL ⇒ Q-side or
+    symmetry was carrying 016's gain. Either outcome closes the
+    QK-norm-attribution axis at 0.94M.
+
+    Transfer-risk: low (RMSNorm family production-validated at LLaMA 3
+    / Qwen 2.5 / Mistral 1B+; Cohere Command-R validates asymmetric QK
+    at 35B+). See `autoresearch/ideas/165-k-only-norm/idea.md`.
+
+    @dataclass-decorated so `use_k_only_norm` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_k_only_norm: bool = True
 
 
 @dataclass

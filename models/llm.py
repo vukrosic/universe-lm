@@ -316,6 +316,14 @@ class MinimalLLM(nn.Module):
         # on each MHA; step-0 ≡ baseline. Default off → baseline path
         # bit-identical. See `autoresearch/ideas/021-value-residual/plan.md`.
         self.use_value_residual = getattr(config, "use_value_residual", False)
+        # 164 — Q-Carry (cross-block Q residual). Layer 0 stashes
+        # its MHA sublayer input on `block.attention._q_carry`; the
+        # forward loop below reads it after the layer-0 call and
+        # passes it as `q_carry=...` to every layer l ≥ 1. Per-block
+        # scalar `alpha_q` (init 0) lives on each MHA; step-0 ≡
+        # baseline. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/164-q-carry/plan.md`.
+        self.use_q_carry = getattr(config, "use_q_carry", False)
         # 163 — Post-Attention V-Mix Depthwise Conv (Hyena-style
         # residual conv on V before the O projection). Default off
         # → baseline path bit-identical. See
@@ -619,6 +627,10 @@ class MinimalLLM(nn.Module):
                         use_short_conv=self.use_short_conv,
                         short_conv_kernel=self.short_conv_kernel,
                         use_value_residual=self.use_value_residual,
+                        # 164 — Q-Carry pass-through. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/164-q-carry/plan.md`.
+                        use_q_carry=self.use_q_carry,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -861,6 +873,10 @@ class MinimalLLM(nn.Module):
                         use_short_conv=self.use_short_conv,
                         short_conv_kernel=self.short_conv_kernel,
                         use_value_residual=self.use_value_residual,
+                        # 164 — Q-Carry pass-through. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/164-q-carry/plan.md`.
+                        use_q_carry=self.use_q_carry,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -1278,6 +1294,12 @@ class MinimalLLM(nn.Module):
         # or the lever is off altogether (`if self.use_value_residual:`
         # guard in MHA).
         v_residual = None
+        # 164 — Q-Carry: stash the layer-0 MHA sublayer input on
+        # `block.attention._q_carry`; read it back after the layer-0
+        # block and pass as `q_carry=...` to every layer l ≥ 1. None
+        # ⇒ MHA's `use_q_carry` branch is the stash branch (layer 0)
+        # or the lever is off altogether.
+        q_carry = None
         # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
         # across all upper-half blocks. Computed ONCE on the lower
         # half's final residual stream after the last lower-half
@@ -1349,6 +1371,13 @@ class MinimalLLM(nn.Module):
                     v_residual=v_residual,
                     layer_index=i,
                     shared_kv=block_shared_kv,
+                    # 164 — Q-Carry: forward-pass-local stash from
+                    # the previous block's MHA sublayer input. `None`
+                    # when the lever is off → the block's
+                    # `q_carry=` kwarg is a no-op and the baseline
+                    # path is bit-identical. Mirrors 021's
+                    # `v_residual=...` plumbing on the same call.
+                    q_carry=q_carry,
                     # 150 — Cross-Layer Feedback: forward-pass-local
                     # list of pre-FFN x from the previous K blocks.
                     # The block reads from it and appends its own
@@ -1371,6 +1400,19 @@ class MinimalLLM(nn.Module):
                 # compose with the fused gating).
                 if not self.use_gau:
                     v_residual = block.attention._v_residual
+            if self.use_q_carry and i == 0:
+                # After layer-0 MHA forward, the MHA sublayer input
+                # (LN(x_0) under pre-norm, x under post-norm/parallel)
+                # is stashed at `block.attention._q_carry`
+                # (`.detach()`-ed inside MHA.forward). Capture for
+                # layers 1..N-1. Same `not self.use_gau` guard as
+                # v_residual — GAUBlock has no `.attention` attribute
+                # and a fused MHA+FFN operator doesn't compose with
+                # the carry mechanism (the carry reads the previous
+                # block's MHA sublayer input, which doesn't exist in
+                # the fused operator).
+                if not self.use_gau:
+                    q_carry = block.attention._q_carry
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary

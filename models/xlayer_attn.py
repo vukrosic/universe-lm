@@ -17,9 +17,23 @@ of the 0.94M model. The small head keeps the attention map compact
 (K·T ≤ 4096 for K=2, T=2048) and avoids the cost of multi-head cross-
 attn over a 2x-4x longer sequence.
 
-Identity at step 0: the block's `xlayer_gate` is 0, so the cross-attn
+Identity at step 0: the block's `xlayer_gate` is 0, and the call site
+in `TransformerBlock.forward` wraps the gate as `torch.tanh(...)`, so
+at step 0 the effective gate is `tanh(0) = 0` exactly. The cross-attn
 output is multiplied by 0 regardless of the Q/K/V projection values.
-This guarantees step-0 ≡ baseline.
+This guarantees step-0 ≡ baseline (verified at the model level: max
+abs diff between `use_xlayer_feedback=True` and the no-feedback path
+is 0.0 in fp32 at step 0).
+
+Stability: the `tanh`-bounding of the gate (added in the round-3
+recoded fix) prevents the runaway positive-feedback loop the
+unbounded raw gate had in the round-2 GPU run. With an unbounded
+gate, the loop was: gate opens → cross-attn Q/K/V learn → output
+grows → gradient on gate grows → gate opens more → loop until
+explosion (val loss diverging 7.36 → 9.77 after step ~100). With
+`tanh`, the effective gate is in `[-1, 1]` and the gradient on the
+pre-activation `xlayer_gate` saturates smoothly (still allows the
+gate to open to its full effective range, just can't run away).
 
 Causality: the K, V tensor comes from previous blocks' pre-FFN states
 at the SAME token positions, so cross-attn does NOT need a causal
@@ -49,8 +63,9 @@ class XLayerCrossAttn(nn.Module):
 
     Single-head cross-attention with a small head_dim to keep params
     small. The block-level gate (set in `TransformerBlock`) is the
-    identity lever: at step 0 the gate is 0 so the cross-attn
-    contribution vanishes exactly.
+    identity lever: at step 0 the gate is 0 (and the call site wraps
+    it as `tanh(...)`, so the effective gate is also 0) so the
+    cross-attn contribution vanishes exactly.
 
     Args:
         d_model: channel dim of the residual stream (B, T, d_model).
@@ -95,13 +110,17 @@ class XLayerCrossAttn(nn.Module):
         # Out: qk_dim → d_model. With n_heads=1, head_dim=16 at
         # d_model=64, this is a small 16→64 projection.
         self.out_proj = nn.Linear(qk_dim, self.d_model, bias=False)
-        # Standard init: normal std=0.02 (matches the rest of the
-        # codebase's `_init_weights`). The block-level gate is 0, so
-        # the random init doesn't matter for step 0.
-        nn.init.normal_(self.q_proj.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.k_proj.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.out_proj.weight, mean=0.0, std=0.02)
+        # NOTE: do NOT call `nn.init.normal_(...)` here. The codebase's
+        # global `_init_weights` (invoked via `self.apply(...)` at the
+        # end of `MinimalLLM.__init__`) re-inits every `nn.Linear` to
+        # `normal_(0, 0.02)`. Calling `nn.init.normal_(...)` here would
+        # consume extra RNG during the block-construction loop, shifting
+        # the RNG state used to init the *rest* of the model (token
+        # embedding, attention, FFN, etc.) relative to the OFF path
+        # (`use_xlayer_feedback=False`). Per-block gate `xlayer_gate=0`
+        # already zeroes the contribution at step 0, so explicit init
+        # is redundant and only adds RNG noise to the baseline path's
+        # step-0 reproducibility.
 
     def forward(self, x: torch.Tensor,
                 mem: list | None) -> torch.Tensor:

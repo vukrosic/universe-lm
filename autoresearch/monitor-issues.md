@@ -1,0 +1,9 @@
+- GPU IDLE WITH WORK QUEUED: GPU utilization < 5% (from /api/gpu-usage) for what looks like > 30s while needs-run > 0. The box is paid-for and idle while runs wait — flag loudly with what the drainer is doing instead.
+- DRAINER DOWN: needs-run > 0 but the lab-autorun session is missing, or autorun is off.
+- STUCK RUNNING: an idea has status `running` but no live training on the box (arqAlive false / GPU idle) — likely a lost or SSH-throttled run that never flipped to needs-recode.
+- WORKER STUCK: any gate worker (w_<n>) has held its lock > 7 minutes.
+- LOOP STALLED: no status flip in > 15 minutes while autopilot/autoresearch is ON.
+- DEAD PANES: any w_<n> tmux session exists with no live worker lock (zombie pane).
+- MINIMAX EXHAUSTED: MiniMax interval quota at/near 0% — agents are falling back to Codex.
+- IDEA POOL LOW: inFlight < floor (5) but the miner (lab-generate-ideas) is not running.
+- ERRORS: any error, exception, traceback, or "Connection closed"/SSH-throttle message in a pane tail or recent log — quote it.

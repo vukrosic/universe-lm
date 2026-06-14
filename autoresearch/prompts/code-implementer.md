@@ -90,12 +90,44 @@ copied from idea.md>
   unless the idea names one.
 - Keep it under the idea's LoC budget (< 200 LoC for mined ideas).
 
+### 4b. Emit the run artifact — the deterministic GPU handoff (REQUIRED)
+
+The GPU last mile is drained by a **plain script** ([`../bin/queue-daemon.sh`](../bin/queue-daemon.sh)),
+**not** an AI runner. It will only run your idea if you hand it the fixed shape
+in [`../RUN-CONTRACT.md`](../RUN-CONTRACT.md). Read that file once; produce both:
+
+1. **`_arq_<idea>.py`** (repo root) — the self-contained treatment entry: seed 42,
+   flag(s) ON, `--warmup false`, dataset `processed_data/pretrain_1B`. It **must
+   define a top-level config class named `C`** (a tier-config subclass with the
+   idea's flag(s) on) — the daemon's CPU build-smoke imports `C` and constructs
+   `MinimalLLM(C())` before spending any GPU time. Use the established stub shape
+   (idea flags are NOT CLI args — `train_llm.py` argparse silently ignores them,
+   so the `C`-subclass + `--config_class __main__.C` is the only reliable toggle).
+
+2. **`autoresearch/ideas/<idea>/run.json`** — the descriptor the daemon reads:
+
+   ```json
+   { "name": "<idea-slug>", "arq_file": "_arq_<idea>.py", "job_timeout": "12m" }
+   ```
+
+   `name` = idea slug, `arq_file` = path (relative to repo root) to the entry
+   above, `job_timeout` optional (default `12m`; bump only for a genuinely heavy
+   idea). **Never ship a ctrl** — the daemon owns the baseline.
+
+An idea released to `needs-run` **without** a valid `run.json` + an existing
+`arq_file` defining `C` is silently skipped by the daemon — it never reaches the
+box. The artifact is part of "done," not an afterthought.
+
 ### 5. Self-check before release
 
 - Flag OFF reproduces the control (no numeric drift) — reason through or run the
   cheapest harness to confirm.
 - The treatment path actually exercises the new code.
 - `plan.md`'s pass/fail bar matches `idea.md`.
+- **The run artifact exists and builds:** `run.json` + `_arq_<idea>.py` are
+  written, the stub defines top-level `C`, and `MinimalLLM(C())` constructs on
+  CPU without error (the same build-smoke the daemon runs). If it can't build,
+  the idea isn't done — fix it or bounce it, don't release.
 
 ### 6. Output (a log, not a conversation — no questions)
 
@@ -126,9 +158,19 @@ For each hit, in order:
    `idea.md`, and your diff (`git diff`). Note the `round`.
 2. **Claim it**: `autoresearch/bin/flip.sh <idea> recoding code-impl "claimed"`.
 3. Fix the cause, re-run the self-check (§5), and update `plan.md` if the change
-   moved a cost or control.
+   moved a cost or control. If the fix changed the flag or config, **update
+   `_arq_<idea>.py` / `run.json` to match and re-confirm the build-smoke** (§4b) —
+   a stale artifact bounces straight back here. A common `needs-recode` cause *is*
+   a build-smoke fail the daemon caught, so this is often the whole fix.
 4. **Release back to the GPU queue** with the bumped round as the 5th arg:
    `autoresearch/bin/flip.sh <idea> needs-run code-impl "<fix summary>" <round+1>`.
 5. Next hit. Then claim new `needs-plan` work.
 
 One pass per claim — fix, bump, release.
+
+**Recode budget (`MAX_RECODE_ROUNDS`, default 3).** An axis that won't stabilize
+can't recode forever. When a run diverges/crashes and `flip.sh` would bounce it
+to `needs-recode` but its `round` has already hit the cap, `flip.sh` auto-closes
+it to `rejected` (with an "exhausted N recode rounds, axis abandoned" line in
+`closed.md`) instead. So a `needs-recode` claim is always within budget by
+construction — if you're seeing one, the idea still has room; fix it.

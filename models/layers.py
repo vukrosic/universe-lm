@@ -758,6 +758,23 @@ class MultiHeadAttention(nn.Module):
         # stash, no blend). See
         # `autoresearch/ideas/021-value-residual/plan.md`.
         use_value_residual: bool = False,
+        # 164 — Cross-Block Q Residual ("Q-Carry"). Per-block scalar
+        # `α_q = nn.Parameter(torch.zeros(()))` is added to the Q
+        # projection at every layer l ≥ 1: `Q_l = W_Q(x_l) +
+        # α_q · W_Q(prev_x)`, where `prev_x = LN(x_{l-1})` is the
+        # previous block's MHA sublayer input (passed via `q_carry`
+        # kwarg, `.detach()`-ed by the model loop). α=0 init ⇒
+        # `α · W_Q(prev_x) = 0` exactly in fp32 ⇒ step-0 forward is
+        # bit-identical to the no-carry baseline (within fp32
+        # rounding noise of one extra multiply-add). Layer 0 has no
+        # previous block ⇒ `q_carry is None` ⇒ the MHA only stashes
+        # `self._q_carry = x.detach()` for the model loop to read
+        # back. The carry is added BEFORE q_norm / RoPE so the
+        # existing 016/162 norms still rescale `Q + α·Q_carry`
+        # consistently. Default off → baseline path bit-identical
+        # (no Parameter registered, no stash, no carry branch).
+        # See `autoresearch/ideas/164-q-carry/plan.md`.
+        use_q_carry: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution. When on,
         # `forward()` applies `F.conv1d(attn_output.transpose(1,2),
         # self.v_mix_conv_weight, padding=k//2, groups=d_model)` AFTER
@@ -834,6 +851,16 @@ class MultiHeadAttention(nn.Module):
         # norms BOTH Q and K). See
         # autoresearch/ideas/162-q-only-norm/idea.md.
         use_q_only_norm: bool = False,
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Apply `nn.RMSNorm(d_head, eps=1e-6)` to K only, leave Q
+        # untouched. nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the
+        # lever rescales K to unit RMS per head-dim (spec-allowed fp32
+        # max-abs-diff < 1e-3 tolerance, same trade-off as 162). Default
+        # off ⇒ no module is built, baseline path bit-identical. The
+        # K-mirror of 162 (Q-only); together with 016 (symmetric QK)
+        # forms a clean 3-way attribution test. See
+        # `autoresearch/ideas/165-k-only-norm/idea.md`.
+        use_k_only_norm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -1022,6 +1049,28 @@ class MultiHeadAttention(nn.Module):
         self.use_q_only_norm = use_q_only_norm
         if use_q_only_norm:
             self.q_only_norm = nn.RMSNorm(self.d_k, eps=1e-6)
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Separate `nn.RMSNorm(d_head, eps=1e-6)` on K only; Q stays raw.
+        # nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the lever
+        # rescales K to unit RMS per head-dim (not byte-identical to
+        # no-norm; spec-allowed fp32 max-abs-diff < 1e-3 tolerance,
+        # same trade-off as 159-emb-layernorm, 162-q-only-norm). Default
+        # off ⇒ no module is registered, no branch is taken, baseline
+        # path bit-identical. See
+        # autoresearch/ideas/165-k-only-norm/idea.md.
+        self.use_k_only_norm = use_k_only_norm
+        if use_k_only_norm:
+            self.k_only_norm = nn.RMSNorm(self.d_k, eps=1e-6)
+        # Mutual exclusion: 162 (Q-only) and 165 (K-only) cannot both
+        # be on at once — together they would re-derive the symmetric
+        # 016 path via two separate modules, double-counting the
+        # weight tensor and producing a meaningless operator. We
+        # assert loudly at construction so misconfigurations fail
+        # fast (the build-smoke catches this before GPU time).
+        assert not (use_q_only_norm and use_k_only_norm), (
+            "use_q_only_norm and use_k_only_norm are mutually exclusive "
+            "(162 + 165 re-derives the symmetric 016 path); pick one."
+        )
         # #92 Robust V-norm: optionally normalize V (per head) before the
         # softmax-weighted sum, so outlier value channels don't dominate the
         # aggregated output. Off by default ("" / "none").
@@ -1087,6 +1136,22 @@ class MultiHeadAttention(nn.Module):
         if self.use_value_residual:
             self.lambda_v = nn.Parameter(torch.zeros(()))
             self._v_residual = None
+        # 164 — Q-Carry. Per-block scalar `α_q` (init 0 → identity at
+        # step 0) plus the forward-pass-local stash `self._q_carry`
+        # (read back by the model loop after the layer-0 block).
+        # `self._q_carry` is always initialized to `None` so the
+        # `block.attention._q_carry` readout in `MinimalLLM.forward`
+        # is safe even before the first forward pass.
+        self.use_q_carry = use_q_carry
+        if self.use_q_carry:
+            self.alpha_q = nn.Parameter(torch.zeros(()))
+            self._q_carry = None
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_q_carry` so these are never consumed.
+            self.alpha_q = None
+            self._q_carry = None
         # 163 — Post-Attention V-Mix Depthwise Convolution. Stored
         # on self; the conv is applied in `forward()` AFTER the
         # `[B, H, T, D] → [B, T, d_model]` reshape and BEFORE the W_O
@@ -1875,7 +1940,7 @@ class MultiHeadAttention(nn.Module):
         Kr = K * cos + rotate_half(K) * sin
         return Qr, Kr
 
-    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None):
+    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None, q_carry=None):
         batch_size, seq_len = x.size(0), x.size(1)
         # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
         # to post-norm. Reject the misconfiguration loudly so the
@@ -1892,6 +1957,18 @@ class MultiHeadAttention(nn.Module):
                 "use_shared_kv=True requires shared_kv=(K_g, V_g) kwarg "
                 "passed by YOCOLlamaBlock.forward"
             )
+
+        # 164 — Q-Carry: stash the MHA sublayer input on layer 0 (no
+        # previous block exists ⇒ `q_carry is None` ⇒ stash branch).
+        # The model loop reads `self._q_carry` after the layer-0
+        # forward and passes it as `q_carry=...` to every layer l ≥ 1.
+        # `.detach()` mirrors the 021 V-residual contract — the
+        # cross-block gradient is structurally bounded to `α_q`'s
+        # 0-dim scalar (layer-l's W_Q gets the carry's matmul output,
+        # but its parameter gradient doesn't propagate back into
+        # layer-l-1's residual stream).
+        if self.use_q_carry and q_carry is None:
+            self._q_carry = x.detach()
 
         # ============ MERGED QKV PROJECTION ============
         # Single matmul instead of 3 separate projections
@@ -3138,6 +3215,10 @@ class TransformerBlock(nn.Module):
         # MultiHeadAttention (see the MHA `use_value_residual` kwarg
         # for the mechanism). Default off → baseline path bit-identical.
         use_value_residual: bool = False,
+        # 164 — Q-Carry. Passed through to MultiHeadAttention
+        # (see MHA.use_q_carry for the mechanism). Default off →
+        # baseline path bit-identical.
+        use_q_carry: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution (Poli et
         # al. "Hyena", 2023, arXiv:2302.10866). After the attention
         # output is computed (post-SDPA, post-reshape, pre-W_O
@@ -3400,6 +3481,11 @@ class TransformerBlock(nn.Module):
             use_softpick=use_softpick,
             use_ssmax=use_ssmax,
             use_value_residual=use_value_residual,
+            # 164 — Q-Carry pass-through to MultiHeadAttention
+            # (see MHA.use_q_carry for the mechanism). Default off →
+            # baseline path bit-identical. See
+            # `autoresearch/ideas/164-q-carry/plan.md`.
+            use_q_carry=use_q_carry,
             # 163 — Pass-through to MultiHeadAttention.
             use_v_mix_conv=use_v_mix_conv,
             v_mix_conv_kernel=v_mix_conv_kernel,
@@ -3842,7 +3928,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -3946,7 +4032,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(n)
             else:
-                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -3981,7 +4067,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(x)
             else:
-                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -4019,7 +4105,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(self.norm1(x))
             else:
-                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:

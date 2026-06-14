@@ -1,0 +1,26 @@
+{
+  "tier": "tiny1m3m",
+  "seed": 42,
+  "note": "Box-keyed baseline cache. See BASELINE-CACHE-DESIGN.md. Written only via bin/baseline.sh \u2014 never hand-edit. WIN iff treatment_val < val_mean - noise_band AND clears the idea's plan bar; NULL if inside val_mean +/- noise_band.",
+  "boxes": {
+    "5b8a7fea8963": {
+      "box_key": "5b8a7fea8963",
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "compute_cap": "8.6",
+      "driver": "580.159.03",
+      "commit": "d161390",
+      "n_measurements": 3,
+      "val_runs": [
+        6.4169,
+        6.4331,
+        6.4459
+      ],
+      "val_mean": 6.432,
+      "val_std": 0.0119,
+      "noise_band": 0.04,
+      "measured_at": "2026-06-14T06:12:27Z",
+      "runs_since_measure": 1,
+      "source_results": "autoresearch/remote-results/2026-06-14-vast-tiny1m3m-4/results.json"
+    }
+  }
+}

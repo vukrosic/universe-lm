@@ -18,8 +18,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IDEAS="$ROOT/autoresearch/ideas"
 FLIP="$ROOT/autoresearch/bin/flip.sh"
 PROMPTS="$ROOT/autoresearch/prompts"
+BOX_JSON="$ROOT/autoresearch/remote-box.json"
 PDIR="/tmp/orch-prompts"; mkdir -p "$PDIR"
-STALE_MIN="${STALE_MIN:-7}"        # an -ing lock older than this (min) is dead
+STALE_MIN="${STALE_MIN:-7}"          # an -ing lock older than this (min) is dead
+RUN_STALE_MIN="${RUN_STALE_MIN:-20}" # a `running` idea older than this with a DEAD box queue is wedged
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 now=$(date -u +%s)
@@ -63,6 +65,43 @@ is_busy () {
 
 iso_to_epoch () { date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || echo 0; }
 
+# ── live GPU-queue probe (one multiplexed ssh per tick, lazily) ──────────────
+# orchestrate normally treats `running` as GPU-owned and leaves it alone. But if
+# the drainer wedges (e.g. Vast.ai SSH auth throttling — "too many ssh
+# connections in quick succession"), the idea sticks in `running` forever and
+# the GPU sits idle with a non-empty queue. So when a `running` idea goes stale
+# we ask the box ONCE whether the `arq` tmux queue is actually alive; if it's
+# dead the run is wedged and we reclaim the idea to needs-run. The ssh reuses the
+# drainer's persistent control socket (queue-daemon.sh CTL_PATH), so this probe
+# adds ~no extra handshake. Cached for the whole tick: at most one ssh.
+ARQ_STATE=""   # "" until first probe; then alive|dead|unknown
+box_arq_state () {
+  [ -n "$ARQ_STATE" ] && { echo "$ARQ_STATE"; return; }
+  ARQ_STATE="unknown"
+  if [ -f "$BOX_JSON" ]; then
+    local host port user ctl out
+    read -r host port user < <(python3 - "$BOX_JSON" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+print(b.get("host",""), b.get("port",""), b.get("user","root"))
+PY
+)
+    if [ -n "$host" ] && [ -n "$port" ]; then
+      ctl="/tmp/lab-arq-ctl-${user}-${host}-${port}"
+      out="$(ssh -o ControlMaster=auto -o "ControlPath=$ctl" -o ControlPersist=120 \
+                 -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 \
+                 -p "$port" "$user@$host" \
+                 'tmux has-session -t arq 2>/dev/null && echo alive || echo dead' 2>/dev/null)"
+      case "$out" in
+        *alive*) ARQ_STATE="alive";;
+        *dead*)  ARQ_STATE="dead";;
+        *)       ARQ_STATE="unknown";;   # unreachable/ssh blip -> stay safe, do NOT reclaim
+      esac
+    fi
+  fi
+  echo "$ARQ_STATE"
+}
+
 launched=0; reclaimed=0; busy=0; skipped=0
 
 echo "=== orchestrate tick $(date -u +%FT%TZ) (stale=${STALE_MIN}m dry=$DRY) ==="
@@ -74,7 +113,22 @@ for f in "$IDEAS"/*/idea.md; do
   sess="w_${slug%%-*}"   # e.g. w_016  (short, unique per idea number)
 
   case "$status" in
-    done|rejected|needs-run|running) continue;;  # terminal or GPU-owned
+    done|rejected|needs-run) continue;;  # terminal / already in the GPU queue
+    running)
+      # GPU-owned — leave it while a run is plausibly in flight. But reclaim a
+      # WEDGED running idea (drainer died on SSH throttling etc.) so the GPU
+      # doesn't sit idle with a non-empty queue. Only act once it's stale AND the
+      # box's `arq` queue is confirmed dead (alive/unknown -> leave, never fight
+      # a live run or reclaim on a transient ssh blip).
+      age=$(( (now - $(iso_to_epoch "$updated")) / 60 ))
+      [ "$age" -lt "$RUN_STALE_MIN" ] && continue
+      st="$(box_arq_state)"
+      if [ "$st" != "dead" ]; then
+        echo "  $slug: running ${age}m (box arq=$st) — leave (GPU busy or box unreachable)"; continue
+      fi
+      echo "  $slug: running stale ${age}m, box arq=dead -> reclaim to needs-run"
+      [ "$DRY" = 0 ] && "$FLIP" "$slug" needs-run orchestrator "reclaimed: running ${age}m but box arq queue dead (drainer wedged)" >/dev/null
+      reclaimed=$((reclaimed+1)); continue;;
   esac
 
   # --- 1. RECLAIM stale -ing locks ---
