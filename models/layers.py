@@ -604,6 +604,24 @@ class MultiHeadAttention(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 166 — T5-style bucketed relative position bias
+        # (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in
+        # BigBird, REALM, LongT5). Add a learned additive per-head
+        # logit bias indexed by relative distance `|i − j|` via a
+        # logarithmic bucket function `b = floor(log2(|i-j|+1))`,
+        # clipped to `t5_rpe_buckets-1`. Bias is registered as
+        # `self.rpe_bias = nn.Parameter(zeros(H, B))`, init 0 ⇒
+        # `scores + 0` is bit-identical to the no-RPE baseline at
+        # step 0. The lever composes additively with whatever
+        # positional scheme is active (RoPE / FIRE / CoPE — these
+        # all live on the score side and the RPE just adds another
+        # additive term). Forces the manual attention path so the
+        # bucket-indexed bias cannot go through SDPA's flash
+        # kernel. Default off → no Parameter registered, no branch
+        # taken, baseline path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        use_t5_rpe: bool = False,
+        t5_rpe_buckets: int = 32,
         # 152 — Per-head attention logit bias (PaLM 2 §arch,
         # OLMo 2). Add a learnable per-head additive bias `b_h ∈ R^H`
         # to the attention logits pre-softmax: `logits_h ← logits_h
@@ -775,6 +793,20 @@ class MultiHeadAttention(nn.Module):
         # (no Parameter registered, no stash, no carry branch).
         # See `autoresearch/ideas/164-q-carry/plan.md`.
         use_q_carry: bool = False,
+        # 168 — AV-Output Carry (post-AV cross-block residual). For
+        # each block l ≥ 1, augment the attention output
+        # (post-SDPA, post-reshape, pre-W_O) with a learnable α_l-
+        # scaled carry from the previous block's same-stage tensor:
+        # `out_l = W_O @ (av_l + α_l · av_{l-1})`. `α_l` is a per-
+        # block 0-dim scalar (init 0 ⇒ identity blend at step 0).
+        # The stash `_av_carry` is `.detach()`-ed (mirroring 021's
+        # V-residual contract) so the cross-block gradient is
+        # structurally bounded to α_l. Site is post-merge-reshape
+        # (shape `[B, T, d_model]`), pre-W_O — sits BEFORE the W_O
+        # projection so it composes with 160/024/107/045 output-side
+        # gates. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+        use_av_output_carry: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution. When on,
         # `forward()` applies `F.conv1d(attn_output.transpose(1,2),
         # self.v_mix_conv_weight, padding=k//2, groups=d_model)` AFTER
@@ -1152,6 +1184,24 @@ class MultiHeadAttention(nn.Module):
             # `self.use_q_carry` so these are never consumed.
             self.alpha_q = None
             self._q_carry = None
+        # 168 — AV-Output Carry. Per-block scalar `α_av` (init 0 →
+        # identity at step 0) plus the forward-pass-local stash
+        # `self._av_carry` (read back by the model loop after the
+        # layer-0 block). `self._av_carry` is always initialized to
+        # `None` so the `block.attention._av_carry` readout in
+        # `MinimalLLM.forward` is safe even before the first forward
+        # pass. Stash shape is `[B, T, d_model]` (post-merge-reshape,
+        # pre-W_O), `.detach()`-ed.
+        self.use_av_output_carry = use_av_output_carry
+        if self.use_av_output_carry:
+            self.alpha_av = nn.Parameter(torch.zeros(()))
+            self._av_carry = None
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_av_output_carry` so these are never consumed.
+            self.alpha_av = None
+            self._av_carry = None
         # 163 — Post-Attention V-Mix Depthwise Convolution. Stored
         # on self; the conv is applied in `forward()` AFTER the
         # `[B, H, T, D] → [B, T, d_model]` reshape and BEFORE the W_O
@@ -1202,6 +1252,48 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_logit_bias = use_attn_logit_bias
         if self.use_attn_logit_bias:
             self.attn_logit_bias = nn.Parameter(torch.zeros(n_heads))
+        # 166 — T5-style bucketed relative position bias. Per-head
+        # bias tensor `self.rpe_bias ∈ R^{H × B}` (init zeros) added
+        # to the attention logits pre-softmax in the manual path,
+        # indexed by `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max
+        # (B-1)`. The bucket index matrix is a registered
+        # non-persistent buffer (size `[max_seq_len, max_seq_len]`,
+        # int64) so it's pinned to CPU/GPU with the model but never
+        # serialized. At T ≤ 2048 with B=32, the actually-used
+        # bucket range is 0..11 (since `floor(log2(2047+1))=11`),
+        # so buckets 12..31 stay zero-init forever — a no-op for
+        # tiny1m3m, but the spec default keeps T5's parameter
+        # count unchanged for re-use at 512-token seq_lens where
+        # the full range is exercised. Default off → no
+        # Parameter is registered, the forward branch is gated
+        # on `self.use_t5_rpe` and never taken, baseline path
+        # bit-identical. See `autoresearch/ideas/166-t5-rpe/idea.md`.
+        self.use_t5_rpe = use_t5_rpe
+        # Clamp B to a small positive integer so a stray config
+        # can't drive the param tensor to 0 / negative. The spec
+        # default is 32 (matches T5-XXL).
+        self.t5_rpe_buckets = max(1, int(t5_rpe_buckets))
+        if self.use_t5_rpe:
+            self.rpe_bias = nn.Parameter(
+                torch.zeros(self.n_heads, self.t5_rpe_buckets)
+            )
+            # Precomputed bucket index matrix, shape [T_max, T_max],
+            # int64. `bucket[i, j] = floor(log2(|i-j|+1)).clamp_max
+            # (B-1)`. Built once at construction (no RNG).
+            with torch.no_grad():
+                idx = torch.arange(max_seq_len)
+                diff = (idx[:, None] - idx[None, :]).abs()
+                buckets = torch.floor(torch.log2(diff.float() + 1.0))
+                buckets = buckets.clamp_max(self.t5_rpe_buckets - 1).long()
+            self.register_buffer(
+                "_t5_rpe_bucket_idx", buckets, persistent=False,
+            )
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_t5_rpe` so these are never consumed.
+            self.rpe_bias = None
+            self._t5_rpe_bucket_idx = None
         # 155 — Per-head learnable attention temperature `τ_h ∈ R^H`.
         # Init `1/sqrt(d_k)` (the standard inverse-temperature) so the
         # per-head `Q_h K_h^T * τ_h` score scale matches baseline
@@ -1940,7 +2032,7 @@ class MultiHeadAttention(nn.Module):
         Kr = K * cos + rotate_half(K) * sin
         return Qr, Kr
 
-    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None, q_carry=None):
+    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None, q_carry=None, av_carry=None):
         batch_size, seq_len = x.size(0), x.size(1)
         # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
         # to post-norm. Reject the misconfiguration loudly so the
@@ -1969,6 +2061,13 @@ class MultiHeadAttention(nn.Module):
         # layer-l-1's residual stream).
         if self.use_q_carry and q_carry is None:
             self._q_carry = x.detach()
+        # 168 — AV-Output Carry: the stash + blend both happen at
+        # the post-merge-reshape, pre-W_O site (below). Layer 0's
+        # stash is performed there when `av_carry is None`; layer
+        # l ≥ 1's blend is performed there when `av_carry is not
+        # None`. We do NOT stash at this early site because the
+        # per-head AV has not been computed or reshaped yet. See
+        # the `_av_carry` block below the W_O projection site.
 
         # ============ MERGED QKV PROJECTION ============
         # Single matmul instead of 3 separate projections
@@ -2155,8 +2254,14 @@ class MultiHeadAttention(nn.Module):
             # untouched (no `k_norm` call). Overrides the symmetric
             # QK-norm path above; the standard `q_norm`/`k_norm`
             # modules are NOT used here (the lever has its own module).
+            # 165 — K-only norm branch: symmetric mirror; apply RMSNorm
+            # to K only via the dedicated `k_only_norm` module and leave
+            # Q untouched. Mutually exclusive with 162 (asserted at
+            # construction in __init__).
             if self.use_q_only_norm:
                 Q = self.q_only_norm(Q)
+            elif self.use_k_only_norm:
+                K = self.k_only_norm(K)
             else:
                 Q = self.q_norm(Q)
                 K = self.k_norm(K)
@@ -2164,6 +2269,9 @@ class MultiHeadAttention(nn.Module):
             if self.use_q_only_norm:
                 Q = self.q_only_norm(self.rotary(Q))
                 K = self.rotary(K)
+            elif self.use_k_only_norm:
+                Q = self.rotary(Q)
+                K = self.k_only_norm(self.rotary(K))
             else:
                 Q = self.q_norm(self.rotary(Q))
                 K = self.k_norm(self.rotary(K))
@@ -2171,6 +2279,9 @@ class MultiHeadAttention(nn.Module):
             if self.use_q_only_norm:
                 Q = self.rotary(self.q_only_norm(Q))
                 K = self.rotary(K)
+            elif self.use_k_only_norm:
+                Q = self.rotary(Q)
+                K = self.rotary(self.k_only_norm(K))
             else:
                 Q = self.rotary(self.q_norm(Q))
                 K = self.rotary(self.k_norm(K))
@@ -2468,16 +2579,26 @@ class MultiHeadAttention(nn.Module):
             )
             if self.use_nope or self.use_cope:
                 # 162 — Q-only norm: skip k_norm on extra K too (K stays raw).
-                if not self.use_q_only_norm:
+                # 165 — K-only norm: apply k_only_norm to extra K (K gets
+                # the dedicated lever module instead of the symmetric k_norm).
+                if self.use_q_only_norm:
+                    pass
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.k_only_norm(extra_K_4d)
+                else:
                     extra_K_4d = self.k_norm(extra_K_4d)
             elif self.use_qk_norm_post_rope:
                 if self.use_q_only_norm:
                     extra_K_4d = self.rotary(extra_K_4d)
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.k_only_norm(self.rotary(extra_K_4d))
                 else:
                     extra_K_4d = self.k_norm(self.rotary(extra_K_4d))
             else:
                 if self.use_q_only_norm:
                     extra_K_4d = self.rotary(extra_K_4d)
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.rotary(self.k_only_norm(extra_K_4d))
                 else:
                     extra_K_4d = self.rotary(self.k_norm(extra_K_4d))
             extra_K_pre = extra_K_4d.reshape(
@@ -2587,6 +2708,21 @@ class MultiHeadAttention(nn.Module):
             scores = scores.masked_fill(
                 ~window.view(1, 1, seq_len, seq_len), -1e9
             )
+            # 166 — T5-style bucketed relative position bias.
+            # Add `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
+            # causal mask (masked positions get -1e9 so the bias
+            # has no effect on them) and BEFORE softmax. With init
+            # `rpe_bias = 0` this is a no-op at step 0. The
+            # bucket index buffer is `[max_seq_len, max_seq_len]`
+            # int64; the [T, T] submatrix is moved to the scores
+            # device + dtype once per forward call. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            if self.use_t5_rpe:
+                bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
+                    device=scores.device
+                )
+                bias = self.rpe_bias[:, bidx]  # [H, T, T]
+                scores = scores + bias.unsqueeze(0)
             # 022 — Softpick: drop-in for `torch.softmax` in the FIRE
             # branch only. The same `window` tensor is reused as the
             # mask argument so masked positions contribute zero to
@@ -2609,6 +2745,7 @@ class MultiHeadAttention(nn.Module):
             or self.use_ssmax  # 025 — SSMax: score-side multiply, can't go through SDPA's flash kernel.
             or self.use_attn_logit_bias  # 152 — Per-head logit bias (manual path; force SDPA off so step-0 is bit-identical).
             or self.use_per_head_temp  # 155 — Per-head temperature (manual path; force SDPA off so the score-side multiply is exact).
+            or self.use_t5_rpe  # 166 — T5-RPE bucket bias (manual path; force SDPA off so the score-side additive bias is exact).
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -2725,6 +2862,21 @@ class MultiHeadAttention(nn.Module):
                 scores = scores + self.fox(x).to(scores.dtype)
             # ---- Mask (causal / SWA) ----
             scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
+            # 166 — T5-style bucketed relative position bias. Add
+            # `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
+            # causal mask (masked positions get -1e9 so the bias
+            # has no effect on them) and BEFORE softmax. With init
+            # `rpe_bias = 0` this is a no-op at step 0. Bucket
+            # index buffer is `[max_seq_len, max_seq_len]` int64;
+            # the [T, T] submatrix is moved to the scores device
+            # once per forward call. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            if self.use_t5_rpe:
+                bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
+                    device=scores.device
+                )
+                bias = self.rpe_bias[:, bidx]  # [H, T, T]
+                scores = scores + bias.unsqueeze(0)
             # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
             if self.use_talking_heads_q:
                 # scores: [B, H, T, T]. M: [H, H]. Mix over H only.
@@ -2971,6 +3123,24 @@ class MultiHeadAttention(nn.Module):
             )  # [B, d_model, T]
             attn_output = h.transpose(1, 2)  # [B, T, d_model]
 
+        # 168 — AV-Output Carry: stash on layer 0 (`av_carry is None`
+        # ⇒ no previous block exists), blend on layer l ≥ 1
+        # (`av_carry is not None` ⇒ previous block's post-AV pre-W_O
+        # tensor). Site is post-merge-reshape (`[B, T, d_model]`),
+        # pre-W_O — sits BEFORE the W_O projection so it composes
+        # with 160/024/107/045 output-side gates (those run on
+        # per-head `[B, H, T, d_k]` above the reshape). With α=0 init,
+        # `α · av_{l-1} = 0` exactly in fp32 ⇒ the carry term is a
+        # numerical no-op at step 0 and the W_O projection sees the
+        # same input as the baseline path. `.detach()` mirrors 021's
+        # V-residual contract so the cross-block gradient is
+        # structurally bounded to α_av's 0-dim scalar.
+        if self.use_av_output_carry:
+            if av_carry is None:
+                self._av_carry = attn_output.detach()
+            else:
+                attn_output = attn_output + self.alpha_av * av_carry
+
         # ============ MERGED O PROJECTION ============
         # Use the last part of qkvo_proj for output projection
         output = F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
@@ -3002,6 +3172,13 @@ class TransformerBlock(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 166 — T5-style bucketed relative position bias. Pass-
+        # through to the inner MHA (see
+        # `MultiHeadAttention.use_t5_rpe` for the mechanism).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        use_t5_rpe: bool = False,
+        t5_rpe_buckets: int = 32,
         # 152 — Per-head attention logit bias. Pass-through to the
         # inner MHA (see `MultiHeadAttention.use_attn_logit_bias` for
         # the mechanism and the math-identity caveat). Default off →
@@ -3110,6 +3287,15 @@ class TransformerBlock(nn.Module):
         # the mechanism. Default off → baseline path bit-identical.
         # See autoresearch/ideas/162-q-only-norm/idea.md.
         use_q_only_norm: bool = False,
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_k_only_norm` for the mechanism.
+        # Default off → baseline path bit-identical. The K-mirror of
+        # 162; together with 016 (symmetric QK) forms a clean 3-way
+        # orthogonal attribution test. Mutually exclusive with
+        # use_q_only_norm (asserted at MHA construction). See
+        # autoresearch/ideas/165-k-only-norm/idea.md.
+        use_k_only_norm: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -3219,6 +3405,10 @@ class TransformerBlock(nn.Module):
         # (see MHA.use_q_carry for the mechanism). Default off →
         # baseline path bit-identical.
         use_q_carry: bool = False,
+        # 168 — AV-Output Carry pass-through to MultiHeadAttention
+        # (see MHA.use_av_output_carry for the mechanism). Default
+        # off → baseline path bit-identical.
+        use_av_output_carry: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution (Poli et
         # al. "Hyena", 2023, arXiv:2302.10866). After the attention
         # output is computed (post-SDPA, post-reshape, pre-W_O
@@ -3427,6 +3617,11 @@ class TransformerBlock(nn.Module):
             use_attn_output_channel_gate=use_attn_output_channel_gate,
             use_exclusive_self_attn=use_exclusive_self_attn,
             use_kda_channel_gate=use_kda_channel_gate,
+            # 166 — T5-RPE pass-through to the inner MHA. Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            use_t5_rpe=use_t5_rpe,
+            t5_rpe_buckets=t5_rpe_buckets,
             # 152 — Per-head logit bias pass-through to the inner MHA.
             # See `MultiHeadAttention.use_attn_logit_bias` for the
             # mechanism. Default off → baseline path bit-identical.
@@ -3486,6 +3681,11 @@ class TransformerBlock(nn.Module):
             # baseline path bit-identical. See
             # `autoresearch/ideas/164-q-carry/plan.md`.
             use_q_carry=use_q_carry,
+            # 168 — AV-Output Carry pass-through to MultiHeadAttention
+            # (see MHA.use_av_output_carry for the mechanism). Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/168-av-output-carry/plan.md`.
+            use_av_output_carry=use_av_output_carry,
             # 163 — Pass-through to MultiHeadAttention.
             use_v_mix_conv=use_v_mix_conv,
             v_mix_conv_kernel=v_mix_conv_kernel,
@@ -3520,6 +3720,9 @@ class TransformerBlock(nn.Module):
             # 162 — Q-Only RMSNorm pass-through: when set, MHA builds a
             # per-head `nn.RMSNorm(d_k)` on Q only — see MultiHeadAttention.use_q_only_norm.
             use_q_only_norm=use_q_only_norm,
+            # 165 — K-Only RMSNorm pass-through: when set, MHA builds a
+            # per-head `nn.RMSNorm(d_k)` on K only — see MultiHeadAttention.use_k_only_norm.
+            use_k_only_norm=use_k_only_norm,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,
@@ -3928,7 +4131,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -4032,7 +4235,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(n)
             else:
-                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
+                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -4067,7 +4270,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(x)
             else:
-                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
+                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -4105,7 +4308,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(self.norm1(x))
             else:
-                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry)
+                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:

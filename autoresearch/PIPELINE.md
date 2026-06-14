@@ -113,10 +113,16 @@ miner ─► needs-taste                                    ┌─ GATE 1: TASTE
       running ─► done   (evidence.md written)
          │
          └─ run crashed → needs-recode → code-implementer fixes → needs-run (round++)
+            │
+            └─ round >= MAX_RECODE_ROUNDS (default 3) → flip.sh auto-closes to `rejected`
+               (line in closed.md) — no infinite recode → run → diverge → recode loop
 ```
 
 Each gate runs its **own** 3-round budget: on `accept` into the next gate, the
-critic resets `round` to 1.
+critic resets `round` to 1. The **recode** loop has its own budget
+(`MAX_RECODE_ROUNDS`, default 3) — a divergent axis that won't stabilize is
+auto-closed to `rejected` by `bin/flip.sh` rather than retrying forever (see
+Hard rules).
 
 ## Run + evidence (the last mile, single-pass)
 
@@ -151,6 +157,10 @@ which rewrites the frontmatter *and* appends the event log in one call:
 ```
 autoresearch/bin/flip.sh <idea-slug> <new-status> <agent> "<note>" [round]
 ```
+
+`flip.sh` also enforces the **recode cap**: a `needs-recode` flip on an idea
+whose `round` already hit `MAX_RECODE_ROUNDS` (default 3) is auto-closed to
+`rejected` + logged in `closed.md` instead — see Hard rules below.
 
 1. `grep -l "status: <my-queue-state>" autoresearch/ideas/*/idea.md` — find my work.
 2. For each hit, **claim it**: `flip.sh <idea> <-ing-lock> <agent> "claimed"`.
@@ -216,6 +226,15 @@ Verdict is exactly one of `accept` (definition gate calls it `approve`) /
   `round: 3` the critic may only `accept` or `reject` — `revise` is forbidden,
   forcing the call. No idea cycles more than 3 times *within a gate*; on `accept`
   into the next gate the critic resets `round` to 1.
+- **Recode cap — `MAX_RECODE_ROUNDS` (default 3).** The post-run `needs-recode`
+  loop has its own budget so a divergent axis can't burn GPU + agent time
+  forever. When `bin/flip.sh` would bounce an idea to `needs-recode` but its
+  `round` has already hit the cap, it auto-closes to `rejected` and appends an
+  "exhausted N recode rounds, axis abandoned" line to `closed.md`. Override
+  per-run with `MAX_RECODE_ROUNDS=N` in the env. Every `needs-recode` write
+  (runner, run-button, orchestrate stale-lock reclaim) routes through
+  `flip.sh`, so this single check covers them all. Idempotent — a re-run on an
+  already-closed idea is a no-op (slug-guarded in `closed.md`).
 - **🔴 ONE TIER ONLY — `tiny1m3m`.** Every experiment runs at tiny1m3m (0.94M
   params · 3M tokens, seed 42) and nothing else. No `screen20m`, no full ladder,
   no multi-tier promotion — that scope is out. An idea whose payoff only appears

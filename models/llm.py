@@ -324,6 +324,16 @@ class MinimalLLM(nn.Module):
         # baseline. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/164-q-carry/plan.md`.
         self.use_q_carry = getattr(config, "use_q_carry", False)
+        # 168 — AV-Output Carry (post-AV cross-block residual).
+        # Layer 0 stashes its post-SDPA/post-merge-reshape/pre-W_O
+        # attention output on `block.attention._av_carry`; the
+        # forward loop below reads it after the layer-0 call and
+        # passes it as `av_carry=...` to every layer l ≥ 1. Per-
+        # block scalar `alpha_av` (init 0) lives on each MHA;
+        # step-0 ≡ baseline. Default off → baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+        self.use_av_output_carry = getattr(config, "use_av_output_carry", False)
         # 163 — Post-Attention V-Mix Depthwise Conv (Hyena-style
         # residual conv on V before the O projection). Default off
         # → baseline path bit-identical. See
@@ -438,6 +448,11 @@ class MinimalLLM(nn.Module):
         # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). See
         # autoresearch/ideas/162-q-only-norm/idea.md.
         self.use_q_only_norm = getattr(config, "use_q_only_norm", False)
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # The K-mirror of 162; together with 016 (symmetric QK) forms a
+        # clean 3-way orthogonal attribution test for the 016 WIN.
+        # See autoresearch/ideas/165-k-only-norm/idea.md.
+        self.use_k_only_norm = getattr(config, "use_k_only_norm", False)
         # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442):
         # when True, override the Q/K norm from RMSNorm to LayerNorm,
         # bounding the per-head logit. Default off → bit-identical
@@ -631,6 +646,10 @@ class MinimalLLM(nn.Module):
                         # baseline path bit-identical. See
                         # `autoresearch/ideas/164-q-carry/plan.md`.
                         use_q_carry=self.use_q_carry,
+                        # 168 — AV-Output Carry pass-through. Default
+                        # off → baseline path bit-identical. See
+                        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+                        use_av_output_carry=self.use_av_output_carry,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -683,6 +702,7 @@ class MinimalLLM(nn.Module):
                         use_qk_layernorm=self.use_qk_layernorm,
                         use_v_layernorm=self.use_v_layernorm,
                         use_q_only_norm=self.use_q_only_norm,
+                        use_k_only_norm=self.use_k_only_norm,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -877,6 +897,10 @@ class MinimalLLM(nn.Module):
                         # baseline path bit-identical. See
                         # `autoresearch/ideas/164-q-carry/plan.md`.
                         use_q_carry=self.use_q_carry,
+                        # 168 — AV-Output Carry pass-through. Default
+                        # off → baseline path bit-identical. See
+                        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+                        use_av_output_carry=self.use_av_output_carry,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -939,6 +963,7 @@ class MinimalLLM(nn.Module):
                         use_v_layernorm=self.use_v_layernorm,
                         # 162 — Q-Only RMSNorm pass-through to the block.
                         use_q_only_norm=self.use_q_only_norm,
+                        use_k_only_norm=self.use_k_only_norm,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -1300,6 +1325,14 @@ class MinimalLLM(nn.Module):
         # ⇒ MHA's `use_q_carry` branch is the stash branch (layer 0)
         # or the lever is off altogether.
         q_carry = None
+        # 168 — AV-Output Carry: stash the layer-0 post-SDPA / post-
+        # merge-reshape / pre-W_O attention output on
+        # `block.attention._av_carry`; read it back after the layer-0
+        # block and pass as `av_carry=...` to every layer l ≥ 1. None
+        # ⇒ MHA's `use_av_output_carry` branch is the stash branch
+        # (layer 0) or the lever is off altogether. Mirrors 021's
+        # `v_residual=...` and 164's `q_carry=...` plumbing.
+        av_carry = None
         # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
         # across all upper-half blocks. Computed ONCE on the lower
         # half's final residual stream after the last lower-half

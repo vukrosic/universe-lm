@@ -413,6 +413,19 @@ class LLMConfig:
     # (no `nn.Parameter` created, no stash, no blend). See
     # `autoresearch/ideas/021-value-residual/plan.md`.
     use_value_residual: bool = False
+    # 168 — AV-Output Carry (post-AV cross-block residual). For
+    # each block l ≥ 1, augment the post-SDPA/post-reshape/pre-W_O
+    # attention output with a learnable α_l-scaled carry from the
+    # previous block's same-stage tensor:
+    # `out_l = W_O @ (av_l + α_l · av_{l-1})`. `α_l` is a per-block
+    # 0-dim scalar (init 0 ⇒ identity blend at step 0). The carry
+    # is `.detach()`-ed (mirroring 021's V-residual contract). Site
+    # is post-merge-reshape (`[B, T, d_model]`), pre-W_O. Default
+    # off → baseline path bit-identical (no Parameter created, no
+    # stash, no blend). The third axis of the cross-block carry
+    # family (021 = V-side pre-AV, 164 = Q-side pre-AV, 168 = post-
+    # AV). See `autoresearch/ideas/168-av-output-carry/plan.md`.
+    use_av_output_carry: bool = False
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
@@ -5385,3 +5398,48 @@ class Tiny1M3MQCarryConfig(Tiny1M3MConfig):
     `_arq_161-dyt-temp.py`).
     """
     use_q_carry: bool = True
+
+
+@dataclass
+class Tiny1M3MAVOutputCarryConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Cross-Block AV-Output Carry (168).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    ~6.43). For each block l >= 1, augment the post-SDPA / post-
+    merge-reshape / pre-W_O attention output with a learnable
+    α_l-scaled carry from the previous block's same-stage tensor:
+        `out_l = W_O @ (av_l + α_l · av_{l-1})`,
+    where `α_l = nn.Parameter(torch.zeros(()))` is a per-block
+    0-dim scalar (init 0 ⇒ step-0 forward is bit-identical to no-
+    carry baseline within fp32 rounding noise of one extra
+    multiply-add). The stash is set on layer 0 (no previous block
+    exists) and read back by the model loop for layers 1..N-1;
+    the stash is `.detach()`-ed so the cross-block gradient is
+    structurally bounded to α_av's 0-dim scalar.
+
+    Third axis of the cross-block carry family (021 = V-side
+    pre-AV; 164 = Q-side pre-AV; 168 = AV-output-side, the only
+    axis that operates AFTER the AV product). Distinct from 021
+    and 164 in that the carry mixes on the attention output (post-
+    AV, pre-W_O) rather than the V/Q inputs. Distinct from
+    116-hyper-connections (residual stream mix, post-block) and
+    150-xlayer-feedback (full cross-block attention, rejected).
+    Site is BEFORE the W_O projection so 160/024/107/045 output-
+    side gates all run BEFORE the carry is added — those gates
+    multiply through the per-head `[B, H, T, d_k]` tensor above
+    the reshape; the carry sits on the post-reshape `[B, T,
+    d_model]` tensor. K, V projections unchanged.
+
+    Cost: 12 scalars total (one per block, +0.001% of 0.94M).
+    FLOPs: ~+1 elementwise add per block (negligible at tiny1m3m).
+
+    Transfer-risk: med — the lever is a structural cross-block
+    additive mix (residual-family, validated at 100M+ by ResNet
+    / Highway / mHC), but the AV-output-specific axis is not a
+    published production result at scale.
+
+    @dataclass-decorated so `use_av_output_carry` default is
+    properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_av_output_carry: bool = True
