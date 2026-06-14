@@ -2,3 +2,4 @@
 {"ts":"2026-06-14T06:23:26Z","agent":"taste","idea":"167-logit-zloss","from":"tasting","to":"needs-review","round":1,"note":"accept: lever targets open logit-magnitude axis (orthogonal to closed 066-070 prediction-side loss-shapers); null is informative (closes axis at tier); bit-identity at zloss_weight=0 is verifiable; sharp bet honestly framed as likely-null but worth testing"}
 {"ts":"2026-06-14T08:56:12Z","agent":"reviewer","idea":"167-logit-zloss","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T08:57:17Z","agent":"reviewer","idea":"167-logit-zloss","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T09:01:21Z","agent":"code-impl","idea":"167-logit-zloss","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
