@@ -1,8 +1,8 @@
 ---
 id: 143-shortconv
-status: running
+status: done
 round: 1
-updated: 2026-06-13T20:57:53Z
+updated: 2026-06-13T21:35:05Z
 transfer-risk: med
 plain: A small depthwise 1D convolution applied to the input before attention, giving the model a cheap local-context pass before the global attention pass.
 ---

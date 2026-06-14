@@ -1,0 +1,4 @@
+{"ts":"2026-06-14T00:13:04Z","agent":"implement-button","idea":"156-moa","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T00:23:51Z","agent":"implement-button","idea":"156-moa","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T00:39:15Z","agent":"runner","idea":"156-moa","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (CACHED path, box 5b8a7fea8963 baseline 6.4394±0.04); 156 code is on box, _arq_156-moa.py synced, smoke MinimalLLM(Tiny1M3MMoAConfig) OK"}
+{"ts":"2026-06-14T00:44:23Z","agent":"runner","idea":"156-moa","from":"running","to":"done","round":1,"note":"NULL: trt=6.4516 vs cached 6.4394±0.04 (Δ=+0.0122 inside band; MoA parallel-attention axis closes at 0.94M alongside 117-soft-moe/118-MoD/146-sparse-ffn MoE/FFN-side nulls)"}

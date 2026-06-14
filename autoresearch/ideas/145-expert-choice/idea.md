@@ -1,8 +1,8 @@
 ---
 id: 145-expert-choice
-status: needs-run
+status: needs-plan
 round: 1
-updated: 2026-06-13T20:47:15Z
+updated: 2026-06-14T02:20:28Z
 transfer-risk: med
 plain: A different MoE routing scheme where each expert picks its top tokens (rather than each token picking its top expert), so the load is perfectly balanced by construction.
 ---
@@ -79,3 +79,23 @@ Final val loss is read from the JSONL/CSV line emitted at the end of
 ### Cost when on
 `n_moe_experts * d_ff` extra params (4× the FFN param cost at default
 4 experts — same budget impact as 117-soft-moe and 146-switch-ffn).
+
+### Re-code round 1 → 2 (2026-06-13)
+The original pass shipped the model code (`models/expert_choice_moe.py`),
+the layer wiring (`models/layers.py`, `models/llm.py`), and the CLI flag
+(`train_llm.py`), but **never added `Tiny1M3MExpertChoiceConfig` to
+`configs/llm_config.py` and never wrote `_arq_145-expert-choice.py`**.
+The runner's preflight caught both. Round 2 adds:
+- `Tiny1M3MExpertChoiceConfig(Tiny1M3MConfig)` in `configs/llm_config.py`
+  with `use_expert_choice_moe=True`, `n_moe_experts=4`.
+- `_arq_145-expert-choice.py` at repo root, same shape as
+  `_arq_146-sparse-ffn.py` / `_arq_140-sophia.py`: imports the new
+  config, defines `class C(...)`, runs `train_llm.main()` with
+  `--config_class __main__.C --seed 42 --dataset_path
+  processed_data/pretrain_1B --warmup false`.
+
+Verified locally: `Tiny1M3MExpertChoiceConfig` imports, `MinimalLLM`
+built from it has `ExpertChoiceMoE` on all 12 transformer blocks
+(0/12 for the plain `Tiny1M3MConfig`), and the param delta is
++1,182,720 (~4× the FFN params, matching the design sketch). The
+launcher imports cleanly and exposes `C` as the config-class entry.

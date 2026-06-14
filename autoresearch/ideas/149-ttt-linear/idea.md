@@ -1,8 +1,8 @@
 ---
 id: 149-ttt-linear
-status: implementing
+status: done
 round: 1
-updated: 2026-06-13T21:09:49Z
+updated: 2026-06-13T21:59:30Z
 transfer-risk: med
 plain: Replace the FFN with a fast-weight linear that updates its own weights from the input on the fly, like a tiny per-sequence fine-tune during the forward pass.
 ---

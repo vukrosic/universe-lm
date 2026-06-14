@@ -1,8 +1,8 @@
 ---
 id: 142-layerscale
-status: needs-run
+status: done
 round: 1
-updated: 2026-06-13T20:58:16Z
+updated: 2026-06-13T21:15:36Z
 transfer-risk: med
 plain: A learnable per-channel knob on each residual connection, starting near zero, so each layer can slowly turn itself on as training progresses.
 ---

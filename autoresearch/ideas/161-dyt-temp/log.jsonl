@@ -1,0 +1,4 @@
+{"ts":"2026-06-14T00:51:41Z","agent":"implement-button","idea":"161-dyt-temp","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T00:55:32Z","agent":"done-button","idea":"161-dyt-temp","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
+{"ts":"2026-06-14T01:31:10Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-14T01:33:16Z","agent":"reset-button","idea":"161-dyt-temp","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}

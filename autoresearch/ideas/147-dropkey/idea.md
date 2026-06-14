@@ -1,8 +1,8 @@
 ---
 id: 147-dropkey
-status: implementing
+status: needs-run
 round: 1
-updated: 2026-06-13T20:58:55Z
+updated: 2026-06-14T02:50:10Z
 transfer-risk: med
 plain: Drop random keys during attention (instead of dropping values or attention scores) to regularize the attention pattern.
 ---
@@ -59,3 +59,8 @@ python train_llm.py --config_class tiny1m3m --seed 42
 ```
 
 **Final val loss:** read from the trainer's final `val_loss=<float>` line printed to stdout at the end of training (the trainer prints the eval loss after the last eval pass, matching the runner convention).
+
+## Pass bar
+
+- Cached tiny1m3m baseline: box `5b8a7fea8963`, `val_mean=6.4394`, `noise_band=0.04` from `autoresearch/baseline-cache.json`.
+- WIN iff `trt < 6.3994`; NULL iff `|trt - 6.4394| <= 0.04`; DRIFT iff `trt > 6.4794` or step-0 `max_abs_diff > 1e-3` versus the ctrl.
