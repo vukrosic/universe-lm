@@ -1,8 +1,8 @@
 ---
 id: 167-logit-zloss
-status: reviewing
+status: needs-plan
 round: 1
-updated: 2026-06-14T08:56:12Z
+updated: 2026-06-14T08:57:17Z
 transfer-risk: med
 plain: Add a small auxiliary penalty that prevents the output logits from growing too large — start the penalty weight at zero so the baseline is unchanged.
 ---
