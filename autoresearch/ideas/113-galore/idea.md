@@ -1,8 +1,8 @@
 ---
 id: 113-galore
-status: planning
+status: needs-run
 round: 1
-updated: 2026-06-14T04:31:48Z
+updated: 2026-06-14T04:33:16Z
 transfer-risk: med
 plain: It tries to project the gradient into a low-rank subspace before running AdamW, so the optimizer sees a compressed view of the update direction without losing the most important axes.
 ---
