@@ -893,6 +893,23 @@ class MultiHeadAttention(nn.Module):
         # forms a clean 3-way attribution test. See
         # `autoresearch/ideas/165-k-only-norm/idea.md`.
         use_k_only_norm: bool = False,
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+        # top of 016's WIN). Keep the per-head RMSNorm/LayerNorm from
+        # 016 intact and add one scalar `qk_norm_scale` per MHA, init
+        # 1.0, applied AFTER the per-head norm and BEFORE the QK
+        # matmul: `Q ← Q · qk_norm_scale; K ← K · qk_norm_scale` (the
+        # MoA `extra_K` branch mirrors the same multiply on the extra
+        # K). α_l = 1.0 init ⇒ step-0 multiplicative gain is exactly
+        # the identity ⇒ forward is byte-identical to 016's step-0
+        # (max-abs-diff = 0.0 — no tolerance needed). The optimizer
+        # can then learn per-block normalization strength. Mirrors
+        # NormFormer's per-layer attention-output gains (Shleifer et
+        # al. 2021) applied to the QK-norm output. Mutually exclusive
+        # with use_q_only_norm / use_k_only_norm / use_qk_norm_post_rope
+        # (asserted in `forward`). Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        use_qk_norm_depth: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -1202,6 +1219,27 @@ class MultiHeadAttention(nn.Module):
             # `self.use_av_output_carry` so these are never consumed.
             self.alpha_av = None
             self._av_carry = None
+        # 169 — Depth-Conditional QK-Norm. Per-block scalar `α_l =
+        # nn.Parameter(torch.ones(()))` (init 1.0 ⇒ `Q ← Q · 1 = Q`
+        # and `K ← K · 1 = K` exactly in fp32 ⇒ step-0 forward is
+        # byte-identical to 016's step-0 with max-abs-diff = 0.0).
+        # One scalar per MHA (12 blocks × 1 = 12 scalars total).
+        # Applied AFTER the per-head RMSNorm / LayerNorm and BEFORE
+        # the QK matmul (post-RoPE in either path so the multiply
+        # commutes with the post-norm tweaks at α=1.0). Mutually
+        # exclusive with use_q_only_norm / use_k_only_norm /
+        # use_qk_norm_post_rope (asserted in `forward`). Default off
+        # ⇒ no Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        self.use_qk_norm_depth = use_qk_norm_depth
+        if self.use_qk_norm_depth:
+            self.qk_norm_scale = nn.Parameter(torch.ones(()))
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_qk_norm_depth` so this is never consumed.
+            self.qk_norm_scale = None
         # 163 — Post-Attention V-Mix Depthwise Convolution. Stored
         # on self; the conv is applied in `forward()` AFTER the
         # `[B, H, T, D] → [B, T, d_model]` reshape and BEFORE the W_O
@@ -2041,6 +2079,27 @@ class MultiHeadAttention(nn.Module):
             "use_cope=True is mutually exclusive with use_qk_norm_post_rope=True "
             "(CoPE replaces RoPE; the post-RoPE norm has nothing to act on)."
         )
+        # 169 — Depth-Conditional QK-Norm: combining per-block scaling
+        # with any of the orthogonal QK-side levers (Q-only / K-only /
+        # post-RoPE norm) restructures the lever's mechanism and must
+        # fail loud at the build-smoke. The chosen 016-WIN control uses
+        # neither of these; the 169 treatment inherits the same 016
+        # shape (symmetric pre-RoPE) plus per-block scaling.
+        assert not (self.use_qk_norm_depth and self.use_q_only_norm), (
+            "use_qk_norm_depth=True is mutually exclusive with use_q_only_norm=True "
+            "(169 sits on top of the symmetric 016 path; combining with 162's "
+            "Q-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_depth and self.use_k_only_norm), (
+            "use_qk_norm_depth=True is mutually exclusive with use_k_only_norm=True "
+            "(169 sits on top of the symmetric 016 path; combining with 165's "
+            "K-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_depth and self.use_qk_norm_post_rope), (
+            "use_qk_norm_depth=True is mutually exclusive with use_qk_norm_post_rope=True "
+            "(169 sits on top of 016's pre-RoPE symmetric norm; combining with "
+            "the post-RoPE variant restructures the lever)."
+        )
         # 129 — YOCO: when the flag is on, the MHA must be given a
         # shared_kv tuple. Reject the misconfiguration loudly so the
         # runner doesn't accidentally launch it without plumbing.
@@ -2285,6 +2344,23 @@ class MultiHeadAttention(nn.Module):
             else:
                 Q = self.rotary(self.q_norm(Q))
                 K = self.rotary(self.k_norm(K))
+        # 169 — Depth-Conditional QK-Norm: per-block learnable scalar
+        # `qk_norm_scale` applied to both Q and K AFTER the per-head
+        # norm+RoPE and BEFORE the QK matmul (the standard pre-RoPE
+        # path is the 016-WIN path — the chosen control uses this
+        # same branch). At α_l = 1.0 init, the multiply is exactly
+        # the identity in fp32 (`1.0 * x = x`), so step-0 forward is
+        # byte-identical to 016's step-0 (max-abs-diff = 0.0 vs the
+        # 016 control). Placed AFTER all three norm+RoPE branches
+        # (nope/cope, post-RoPE, default pre-RoPE) so it composes
+        # uniformly — at α=1.0 the multiply commutes with every
+        # downstream tweak (q_gain, GQA repeat, q_temp_token) in
+        # fp32. Placed BEFORE the QK matmul so the lever sits at the
+        # QK-norm output, matching the NormFormer analog (Shleifer
+        # et al. 2021). See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        if self.use_qk_norm_depth:
+            Q = Q * self.qk_norm_scale
+            K = K * self.qk_norm_scale
         # #37 per-head Q-gain: multiply Q by (1 + q_gain) per head after
         # RoPE. Zero-init, so step 0 == baseline.
         if self.use_q_gain:
@@ -2601,6 +2677,17 @@ class MultiHeadAttention(nn.Module):
                     extra_K_4d = self.rotary(self.k_only_norm(extra_K_4d))
                 else:
                     extra_K_4d = self.rotary(self.k_norm(extra_K_4d))
+            # 169 — Depth-Conditional QK-Norm: mirror the per-block
+            # `qk_norm_scale` multiply on the MoA extra K so all K
+            # tokens entering the QK matmul see the same per-block
+            # normalization strength. Site is after the MoA per-K
+            # norm+RoPE and before the GQA repeat / cat with K_0.
+            # At α_l = 1.0 init the multiply is exactly the identity
+            # in fp32 so step-0 is bit-identical to the no-MoA, no-
+            # 169 path. See
+            # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+            if self.use_qk_norm_depth:
+                extra_K_4d = extra_K_4d * self.qk_norm_scale
             extra_K_pre = extra_K_4d.reshape(
                 B, T, E - 1, self.n_kv_heads, self.d_k,
             )
@@ -3296,6 +3383,15 @@ class TransformerBlock(nn.Module):
         # use_q_only_norm (asserted at MHA construction). See
         # autoresearch/ideas/165-k-only-norm/idea.md.
         use_k_only_norm: bool = False,
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale
+        # on top of 016's WIN). Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_qk_norm_depth` for the mechanism.
+        # Default off → baseline path bit-identical. Sits on top of
+        # 016's pre-RoPE symmetric norm; mutually exclusive with
+        # 162 (Q-only) / 165 (K-only) / 049 (post-RoPE) at MHA
+        # construction. See
+        # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        use_qk_norm_depth: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -3723,6 +3819,10 @@ class TransformerBlock(nn.Module):
             # 165 — K-Only RMSNorm pass-through: when set, MHA builds a
             # per-head `nn.RMSNorm(d_k)` on K only — see MultiHeadAttention.use_k_only_norm.
             use_k_only_norm=use_k_only_norm,
+            # 169 — Depth-Conditional QK-Norm pass-through: when set,
+            # MHA registers `qk_norm_scale = nn.Parameter(torch.ones(()))`
+            # per block — see MultiHeadAttention.use_qk_norm_depth.
+            use_qk_norm_depth=use_qk_norm_depth,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,

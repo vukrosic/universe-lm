@@ -104,6 +104,23 @@ class LLMConfig:
     # Default off → baseline path bit-identical. See
     # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
     use_attn_logit_bias: bool = False
+    # 166 — T5-style bucketed relative position bias
+    # (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in
+    # BigBird, REALM, LongT5). Per-head learnable logit bias
+    # `rpe_bias ∈ R^{H × B}` added pre-softmax, indexed by
+    # `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max(B-1)`.
+    # B=32 (T5-XXL's spec default; clamped to ≥1 at construction).
+    # `rpe_bias = 0` init ⇒ `scores + 0` is bit-identical to the
+    # no-RPE baseline at step 0. Composes additively with RoPE /
+    # FIRE / CoPE / per-head-temp / per-head-logit-bias (all live
+    # on the score side). Forces the manual attention path so the
+    # bucket-indexed bias can't go through SDPA's flash kernel.
+    # Cost: H × B = 4 × 32 = 128 params/block at tiny1m3m
+    # (~+0.014% — negligible). Default off → baseline path bit-
+    # identical (no Parameter registered, no branch taken). See
+    # `autoresearch/ideas/166-t5-rpe/idea.md`.
+    use_t5_rpe: bool = False
+    t5_rpe_buckets: int = 32
     # 155 — Per-head learnable attention temperature
     # (PaLM 2 §arch, OLMo 2, Gemma 2). Replace the standard
     # `1/sqrt(d_k)` attention scale with a per-head learnable
@@ -413,6 +430,26 @@ class LLMConfig:
     # (no `nn.Parameter` created, no stash, no blend). See
     # `autoresearch/ideas/021-value-residual/plan.md`.
     use_value_residual: bool = False
+    # 167 — Output logit z-loss (PaLM-style `log(Z)²` penalty,
+    # Chowdhery et al. 2022, arXiv:2204.02311, §3.3). Auxiliary
+    # training loss term `λ · mean(log(Z)²)` where `Z =
+    # sum_v exp(logits_v)`, computed via
+    # `logits.logsumexp(dim=-1).pow(2).mean()`. Penalises logit
+    # *magnitude* so the largest logit cannot grow without bound
+    # and the softmax cannot collapse to a near-delta. Used in
+    # PaLM 540B / LLaMA 2 / OLMo 2 / Gemma with λ=1e-4. Train-only;
+    # eval stays plain CE (the term is added inside the train
+    # branch in `training/trainer.py:1599, 1702`). `use_z_loss=False`
+    # OR `z_loss_lambda=0.0` ⇒ term is exactly 0 ⇒ baseline forward
+    # + backward is bit-identical to no-z-loss. The trainer reads
+    # these via `getattr(config, "use_z_loss", False)` /
+    # `getattr(config, "z_loss_lambda", 0.0)` so adding them as
+    # proper LLMConfig fields with defaults `False` / `0.0` is
+    # drop-in compatible with existing configs that don't set
+    # them. The `Tiny1M3MZLossConfig` subclass sets them to
+    # `True` / `1e-4`. See `autoresearch/ideas/167-logit-zloss/`.
+    use_z_loss: bool = False
+    z_loss_lambda: float = 0.0
     # 168 — AV-Output Carry (post-AV cross-block residual). For
     # each block l ≥ 1, augment the post-SDPA/post-reshape/pre-W_O
     # attention output with a learnable α_l-scaled carry from the
@@ -1676,6 +1713,22 @@ class LLMConfig:
     # and the baseline path stays bit-identical. See
     # autoresearch/ideas/029-v-norm/plan.md.
     use_v_layernorm: bool = False
+    # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+    # top of 016's WIN). Keep 016's per-head `q_norm`/`k_norm` and
+    # add a single scalar `qk_norm_scale = nn.Parameter(torch.ones(()))`
+    # per MHA, init 1.0, applied AFTER the per-head norm and BEFORE
+    # the QK matmul: `Q ← Q · qk_norm_scale; K ← K · qk_norm_scale`
+    # (the MoA `extra_K` branch mirrors the same multiply). α_l = 1.0
+    # init ⇒ step-0 multiplicative gain is exactly the identity ⇒
+    # forward is byte-identical to 016's step-0 (max-abs-diff = 0.0).
+    # Mutually exclusive with use_q_only_norm / use_k_only_norm /
+    # use_qk_norm_post_rope (asserted at MHA forward). Default off →
+    # no `qk_norm_scale` Parameter is registered, no branch is taken,
+    # baseline path bit-identical. Mirrors NormFormer's per-layer
+    # attention-output gains (Shleifer et al. 2021) applied to the
+    # QK-norm output. See
+    # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+    use_qk_norm_depth: bool = False
 
     # 132 — Born-Again Networks: Self-Distillation with EMA Teacher
     # (Furlanello, Lipton, Tschiatschek, Prabhudesai, Urbach 2018,
@@ -2053,6 +2106,44 @@ class Tiny1M3MAttnLogitBiasConfig(Tiny1M3MConfig):
     NULL band |Δ| < 0.005 expected (predicted mathematical null).
     """
     use_attn_logit_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MT5RPEConfig(Tiny1M3MConfig):
+    """Tiny1M3M with T5-style bucketed relative position bias
+    (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in BigBird,
+    REALM, LongT5). Add a per-head learnable logit bias
+    `rpe_bias ∈ R^{H × B}` (B=32 by default — T5-XXL's value,
+    clamped to ≥1 at construction) indexed by relative distance
+    `|i-j|` via the logarithmic bucket function
+    `b = floor(log2(|i-j|+1)).clamp_max(B-1)`. The bias is
+    initialized to zero so step-0 is bit-identical to the no-RPE
+    baseline.
+
+    Composes additively with RoPE / FIRE / CoPE / per-head-temp /
+    per-head-logit-bias (all live on the score side). Forces the
+    manual attention path so the bucket-indexed bias can't go
+    through SDPA's flash kernel. Cost: H × B = 4 × 32 = 128
+    params/block × 12 blocks = 1,536 params (+0.16% — negligible).
+
+    Bucket utilization at T ≤ 2048: only buckets 0..11 are ever
+    indexed (`floor(log2(2047+1))=11`); buckets 12..31 stay
+    zero-init forever — a no-op for tiny1m3m, but the spec default
+    keeps T5's parameter count unchanged for re-use at 512-token
+    seq_lens where the full range is exercised.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    cached mean 6.4346 ± 0.0458 after the 162 fresh re-cache).
+    NULL band |Δ| < 0.02 expected at tiny1m3m (box noise ≈ ±0.01
+    val loss at this tier; an effect < 0.02 is sub-noise and
+    inconclusive). PASS ≤ ctrl − 0.02.
+
+    See `autoresearch/ideas/166-t5-rpe/idea.md` and
+    `autoresearch/ideas/166-t5-rpe/plan.md` for the full
+    mechanism, lever-mode pin, and zero-init rationale.
+    """
+    use_t5_rpe: bool = True
+    t5_rpe_buckets: int = 32
 
 
 @dataclass
@@ -5401,6 +5492,67 @@ class Tiny1M3MQCarryConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MZLossConfig(Tiny1M3MConfig):
+    """Tiny1M3M with PaLM-style output logit z-loss (167).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    ~6.43). Add the auxiliary penalty
+        L_z = λ · mean(log(Z)²),  Z = sum_v exp(logits_v)
+    to the training loss, where the `log(Z)` term is computed via
+    `logits.logsumexp(dim=-1)` (the partition function) and the
+    mean is over the `[B, T]` axis. Penalises logit *magnitude*
+    so the largest logit cannot grow without bound and the
+    softmax cannot collapse to a near-delta — the failure mode
+    PaLM 540B / LLaMA 2 / OLMo 2 / Gemma all guard against with
+    λ=1e-4 (Chowdhery et al. 2022, arXiv:2204.02311, §3.3).
+
+    Wiring is already present in `training/trainer.py:1464-1465,
+    1548-1552, 1654-1658, 1599, 1702, 1706` — the trainer reads
+    `getattr(config, "use_z_loss", False)` and
+    `getattr(config, "z_loss_lambda", 0.0)`, and adds
+    `z_loss_lambda * (logits.logsumexp(dim=-1) ** 2).mean()` to
+    the total train loss when both are positive. Default
+    `z_loss_lambda=0.0` ⇒ the term is exactly 0 ⇒ baseline
+    forward + backward is bit-identical to no-z-loss.
+
+    Step-0 identity (flag ON at λ=1e-4): the `logits.logsumexp`
+    reads `logits` produced by the standard head; at init with
+    ~N(0, σ²) logits, `log(Z) ≈ 0.5·log(V) + O(σ²)` where V is
+    vocab_size=49152 ⇒ `log(Z) ≈ 5.25`, `log(Z)² ≈ 27.5`,
+    `λ·log(Z)² ≈ 2.75e-3` per token per step — a small but
+    non-zero auxiliary loss. Train-only; eval stays plain CE
+    (the term is added inside the train branch and not in the
+    eval path). Logged per-step via `z_loss.detach().item()`
+    (`trainer.py:1706`) — `z_loss_val` is already in the
+    per-step log payload.
+
+    Distinct from the closed loss-shape axes 066-070 (label
+    smoothing, confidence penalty, unlikelihood, focal loss,
+    MTP head) which target *target/prediction* softening; this
+    one targets *logit magnitude*. Both branches of the
+    `if use_z_loss / else logits.new_zeros(())` ternary produce
+    a 0-dim scalar, so the `loss = ce_loss + ... + z_loss + ...`
+    accumulation at line 1599/1702 is unchanged in shape
+    whether the flag is off or on.
+
+    Transfer-risk: med — PaLM 540B / LLaMA 2 / OLMo 2 / Gemma
+    all use z-loss with λ=1e-4 (well-validated at scale), but
+    the failure mode (late-training logit explosion driving the
+    softmax toward a near-delta) is unlikely to fire at 0.94M —
+    model capacity caps logit growth. A win would suggest logit
+    magnitude *is* the binding constraint at 0.94M and z-loss
+    is a cheap regularizer; a null closes the z-loss axis at
+    this tier.
+
+    @dataclass-decorated so `z_loss_lambda` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_z_loss: bool = True
+    z_loss_lambda: float = 1e-4
+
+
+@dataclass
 class Tiny1M3MAVOutputCarryConfig(Tiny1M3MConfig):
     """Tiny1M3M with Cross-Block AV-Output Carry (168).
 
@@ -5443,3 +5595,58 @@ class Tiny1M3MAVOutputCarryConfig(Tiny1M3MConfig):
     documented in `_arq_161-dyt-temp.py`).
     """
     use_av_output_carry: bool = True
+
+
+@dataclass
+class Tiny1M3MQKNormDepthConfig(Tiny1M3MQKNormConfig):
+    """Tiny1M3M with Depth-Conditional QK-Norm (169 — per-block learnable
+    scale on top of the 016 WIN).
+
+    A/B vs the 016 WIN control (`Tiny1M3MQKNormConfig`, val 6.3906,
+    `closed.md:60`). Keeps 016's per-head `q_norm`/`k_norm` shape
+    intact and adds a single scalar `qk_norm_scale =
+    nn.Parameter(torch.ones(()))` per MHA (12 scalars total, one per
+    block × 12 blocks, +0.001% of 0.94M). The scalar is applied
+    AFTER the per-head norm and BEFORE the QK matmul:
+        `Q_l ← Q_l · qk_norm_scale; K_l ← K_l · qk_norm_scale`,
+    and on the MoA `extra_K` so all K tokens entering the QK matmul
+    see the same per-block normalization strength.
+
+    Step-0 identity: `qk_norm_scale = 1.0` init ⇒ `Q · 1 = Q` and
+    `K · 1 = K` exactly in fp32 ⇒ the multiplicative gain is exactly
+    the identity ⇒ forward is **byte-identical to 016's step-0**
+    (max-abs-diff = 0.0 vs the 016 control — no tolerance needed).
+    The optimizer can then learn per-block normalization strength.
+    The hypothesis: 016's WIN uses a *single shared* per-head scale;
+    different blocks may want different normalization strengths
+    (e.g. shallow blocks with broader attention vs deep blocks with
+    sharper attention). If 169-WIN > 016-WIN, the depth-conditional
+    axis is binding; if 169 ≈ 016, the per-head-shared scale is
+    sufficient at 0.94M.
+
+    Mutually exclusive with use_q_only_norm / use_k_only_norm /
+    use_qk_norm_post_rope (asserted at MHA forward) — combining any
+    of those with per-block scaling restructures the lever and
+    fails loud. Mirrors NormFormer's per-layer attention-output
+    gains (Shleifer et al. 2021, arXiv:2110.09456) applied to the
+    QK-norm output. Distinct from 016 (per-head-shared scale),
+    from 152/155 (per-head logit-side scalars — closed null), from
+    160 (post-AV per-head gain — closed null), and from 161 (per-
+    layer temperature — closed null because scale-prior fight).
+
+    Cost: +12 scalars total (+0.001% of 0.94M). FLOPs: ~+2
+    elementwise multiplies per block per forward (negligible at
+    tiny1m3m).
+
+    Transfer-risk: low — RMSNorm family production-validated at
+    LLaMA 3 / Qwen 2.5 / Mistral 1B+; NormFormer's per-layer gains
+    validated at 100M+ on long-document tasks (Shleifer et al.
+    2021). Per-block QK-norm gain is a narrow extension of a well-
+    tested primitive.
+
+    @dataclass-decorated so `use_qk_norm_depth` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`). Inherits `use_qk_layernorm=True` from
+    `Tiny1M3MQKNormConfig` (the 016 WIN shape).
+    """
+    use_qk_norm_depth: bool = True

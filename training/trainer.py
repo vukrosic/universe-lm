@@ -1441,7 +1441,16 @@ def train_model(
             # this stays 0 and CE behavior is unchanged.
             def _collect_entropy_reg(m):
                 total = next(m.parameters()).new_zeros(())
-                for block in m.transformer_blocks:
+                # 158 — GAU: when `use_gau=True`, `m.transformer_blocks`
+                # is None (the GAU block replaces the standard stack
+                # entirely; see `models/llm.py:752`). Skip the iteration
+                # rather than letting `for ... in None` raise
+                # TypeError. GAU does not stash `_entropy_reg_loss` on
+                # a sub-module (no MHA sub-block), so the empty result
+                # is correct. Baseline path (`use_gau=False`) is
+                # untouched: `transformer_blocks` is still an
+                # `nn.ModuleList` and the loop runs as before.
+                for block in (m.transformer_blocks or ()):
                     term = getattr(block.attention, "_entropy_reg_loss", None)
                     if term is not None:
                         total = total + term

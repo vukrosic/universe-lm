@@ -287,6 +287,15 @@ class MinimalLLM(nn.Module):
         # See `autoresearch/ideas/156-moa/idea.md`.
         self.use_moa = getattr(config, "use_moa", False)
         self.moa_num_experts = max(2, int(getattr(config, "moa_num_experts", 2))) if self.use_moa else 1
+        # 166 — T5-style bucketed relative position bias. When on,
+        # each block's MHA adds a per-head learnable logit bias
+        # `rpe_bias ∈ R^{H × B}` indexed by
+        # `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max(B-1)`.
+        # Init zero ⇒ step-0 ≡ baseline. Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        self.use_t5_rpe = getattr(config, "use_t5_rpe", False)
+        self.t5_rpe_buckets = max(1, int(getattr(config, "t5_rpe_buckets", 32)))
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -458,6 +467,17 @@ class MinimalLLM(nn.Module):
         # bounding the per-head logit. Default off → bit-identical
         # baseline. See autoresearch/ideas/016-qk-norm/plan.md.
         self.use_qk_layernorm = getattr(config, "use_qk_layernorm", False)
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+        # top of 016's WIN). When True, each MHA registers a single
+        # scalar `qk_norm_scale = nn.Parameter(torch.ones(()))` and
+        # multiplies Q, K (and MoA extra_K) by it AFTER the per-head
+        # norm and BEFORE the QK matmul. Init 1.0 ⇒ step-0 forward is
+        # byte-identical to 016's step-0 (max-abs-diff = 0.0). Mutually
+        # exclusive with use_q_only_norm / use_k_only_norm /
+        # use_qk_norm_post_rope (asserted at MHA forward). Default off
+        # ⇒ no `qk_norm_scale` registered, baseline path bit-identical.
+        # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        self.use_qk_norm_depth = getattr(config, "use_qk_norm_depth", False)
         # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
         # when True, add a per-head `nn.LayerNorm(d_head)` on V before
         # the AV product, the symmetric partner of 016's QK-Norm. Default
@@ -602,6 +622,12 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 166 — T5-RPE pass-through to the YOCO upper-
+                        # half block. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+                        use_t5_rpe=self.use_t5_rpe,
+                        t5_rpe_buckets=self.t5_rpe_buckets,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -703,6 +729,9 @@ class MinimalLLM(nn.Module):
                         use_v_layernorm=self.use_v_layernorm,
                         use_q_only_norm=self.use_q_only_norm,
                         use_k_only_norm=self.use_k_only_norm,
+                        # 169 — Depth-Conditional QK-Norm pass-through
+                        # to the block. See MHA use_qk_norm_depth.
+                        use_qk_norm_depth=self.use_qk_norm_depth,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -821,6 +850,12 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
                         use_attn_logit_bias=getattr(config, "use_attn_logit_bias", False),
+                        # 166 — T5-RPE pass-through to the standard
+                        # transformer block. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+                        use_t5_rpe=self.use_t5_rpe,
+                        t5_rpe_buckets=self.t5_rpe_buckets,
                         # 155 — Per-head learnable attention temperature
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -964,6 +999,9 @@ class MinimalLLM(nn.Module):
                         # 162 — Q-Only RMSNorm pass-through to the block.
                         use_q_only_norm=self.use_q_only_norm,
                         use_k_only_norm=self.use_k_only_norm,
+                        # 169 — Depth-Conditional QK-Norm pass-through
+                        # to the block. See MHA use_qk_norm_depth.
+                        use_qk_norm_depth=self.use_qk_norm_depth,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -1411,6 +1449,14 @@ class MinimalLLM(nn.Module):
                     # path is bit-identical. Mirrors 021's
                     # `v_residual=...` plumbing on the same call.
                     q_carry=q_carry,
+                    # 168 — AV-Output Carry: forward-pass-local stash
+                    # from the previous block's post-SDPA/post-merge-
+                    # reshape/pre-W_O attention output. `None` when
+                    # the lever is off → the block's `av_carry=`
+                    # kwarg is a no-op and the baseline path is bit-
+                    # identical. Mirrors 021's `v_residual=...` and
+                    # 164's `q_carry=...` plumbing on the same call.
+                    av_carry=av_carry,
                     # 150 — Cross-Layer Feedback: forward-pass-local
                     # list of pre-FFN x from the previous K blocks.
                     # The block reads from it and appends its own
@@ -1446,6 +1492,19 @@ class MinimalLLM(nn.Module):
                 # the fused operator).
                 if not self.use_gau:
                     q_carry = block.attention._q_carry
+            if self.use_av_output_carry and i == 0:
+                # After layer-0 MHA forward, the post-SDPA / post-
+                # merge-reshape / pre-W_O attention output is stashed
+                # at `block.attention._av_carry` (`.detach()`-ed
+                # inside MHA.forward, shape `[B, T, d_model]`).
+                # Capture for layers 1..N-1. Same `not self.use_gau`
+                # guard as v_residual/q_carry — GAUBlock has no
+                # `.attention` attribute and a fused MHA+FFN operator
+                # doesn't compose with the carry mechanism (the carry
+                # reads the previous block's post-AV tensor, which
+                # doesn't exist in the fused operator).
+                if not self.use_gau:
+                    av_carry = block.attention._av_carry
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary
