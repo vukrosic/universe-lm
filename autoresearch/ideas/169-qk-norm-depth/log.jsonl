@@ -7,3 +7,4 @@
 {"ts":"2026-06-14T08:59:36Z","agent":"reviewer","idea":"169-qk-norm-depth","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T09:00:33Z","agent":"code-impl","idea":"169-qk-norm-depth","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-14T09:12:19Z","agent":"code-impl","idea":"169-qk-norm-depth","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-14T09:40:03Z","agent":"runner","idea":"169-qk-norm-depth","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (170/171 deferred: 170 missing Tiny1M3MSwigluFFNConfig on box, 171 no plan/code)"}
