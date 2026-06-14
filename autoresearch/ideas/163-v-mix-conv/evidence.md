@@ -1,6 +1,6 @@
-# Evidence — 163-v-mix-conv (recode r1)
+# Evidence — 163-v-mix-conv
 
-## Verdict: needs-recode root-cause fixed locally; box-side gate blocked on commit+push
+## Verdict: code+artifact correct locally; box-side gate still blocked on user-side commit+push
 - tier: tiny1m3m, seed 42, box: 1.208.108.242:52674 (vast, RTX 3060 sm_86)
 - pre-queue bounce (log r1): "build-smoke FAIL on box — Tiny1M3MVMixConvConfig not present in /root/universe-lm/configs/llm_config.py (box has stale configs). Implementer must commit + push local config additions before next attempt."
 
