@@ -5,3 +5,4 @@
 {"ts":"2026-06-14T04:36:16Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=1: module 'configs.llm_config' has no attribute 'Tiny1M3MPerLayerTempConfig'"}
 {"ts":"2026-06-14T05:01:11Z","agent":"code-impl","idea":"161-dyt-temp","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
 {"ts":"2026-06-14T05:01:25Z","agent":"code-impl","idea":"161-dyt-temp","from":"recoding","to":"needs-run","round":2,"note":"added use_per_layer_temp flag + Tiny1M3MPerLayerTempConfig subclass; implemented per-layer temperature in MultiHeadAttention (manual-path forced); wired layer_index+layer_temperature through TransformerBlock; added nn.Parameter on model; build-smoke OK"}
+{"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"161-dyt-temp","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}

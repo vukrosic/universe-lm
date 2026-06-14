@@ -3,3 +3,4 @@
 {"ts":"2026-06-14T05:20:05Z","agent":"taste","idea":"162-q-only-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp orthogonal Q-side ablation to 016's WIN; QK-norm family sparse; clean null still informative; transfer low (Cohere 35B+, RMSNorm 1B+)"}
 {"ts":"2026-06-14T05:22:29Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T05:27:14Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-plan","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}

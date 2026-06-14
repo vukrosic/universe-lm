@@ -8,3 +8,4 @@
 {"ts":"2026-06-14T04:36:16Z","agent":"runner","idea":"158-gau","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=1: TypeError: 'NoneType' object is not iterable in _collect_entropy_reg(model)"}
 {"ts":"2026-06-14T04:44:23Z","agent":"implement-button","idea":"158-gau","from":"needs-recode","to":"implementing","round":1,"note":"claimed by re-code fix"}
 {"ts":"2026-06-14T04:47:40Z","agent":"implement-button","idea":"158-gau","from":"implementing","to":"needs-run","round":1,"note":"fix: _collect_entropy_reg guard against transformer_blocks=None (GAU path); minimal change, baseline byte-identical"}
+{"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"158-gau","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
