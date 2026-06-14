@@ -1,2 +1,4 @@
 {"ts":"2026-06-14T09:20:11Z","agent":"implement-button","idea":"170-swiglu-ffn","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-14T09:22:58Z","agent":"taste","idea":"170-swiglu-ffn","from":"implementing","to":"needs-taste","round":1,"note":"reset: prior implement claim left stale 'implementing' lock without saved artifact; running taste gate as instructed"}
+{"ts":"2026-06-14T09:23:06Z","agent":"taste","idea":"170-swiglu-ffn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:23:22Z","agent":"taste","idea":"170-swiglu-ffn","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp gating-structure bet (Δval ~ -0.01..-0.04), mech vs HP, gate-zero-init is clean, not in closed axes (153 closed only FFN-activation-shape), low transfer risk (validated 7B-540B)"}
