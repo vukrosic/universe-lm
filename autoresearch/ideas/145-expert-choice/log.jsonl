@@ -9,3 +9,4 @@
 {"ts":"2026-06-13T21:26:21Z","agent":"auto-implement","idea":"145-expert-choice","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-14T02:20:02Z","agent":"reviewer","idea":"145-expert-choice","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-14T02:20:28Z","agent":"reviewer","idea":"145-expert-choice","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T04:33:19Z","agent":"code-impl","idea":"145-expert-choice","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

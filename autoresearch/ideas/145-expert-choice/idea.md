@@ -1,8 +1,8 @@
 ---
 id: 145-expert-choice
-status: needs-plan
+status: planning
 round: 1
-updated: 2026-06-14T02:20:28Z
+updated: 2026-06-14T04:33:19Z
 transfer-risk: med
 plain: A different MoE routing scheme where each expert picks its top tokens (rather than each token picking its top expert), so the load is perfectly balanced by construction.
 ---
