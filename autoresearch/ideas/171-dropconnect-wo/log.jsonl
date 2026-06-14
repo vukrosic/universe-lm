@@ -7,3 +7,4 @@
 {"ts":"2026-06-14T10:05:01Z","agent":"runner","idea":"171-dropconnect-wo","from":"needs-run","to":"needs-recode","round":2,"note":"run FAILED rc=1: no _arq_171-dropconnect-wo.py stub, no Tiny1M3MDropConnectWOConfig subclass in configs/llm_config.py, no plan.md — idea routed needs-run by implement-button without code-implementer pass"}
 {"ts":"2026-06-14T10:11:36Z","agent":"implement-button","idea":"171-dropconnect-wo","from":"needs-recode","to":"implementing","round":2,"note":"claimed by implement button"}
 {"ts":"2026-06-14T10:13:17Z","agent":"implement-button","idea":"171-dropconnect-wo","from":"implementing","to":"needs-run","round":2,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T10:17:56Z","agent":"code-impl","idea":"171-dropconnect-wo","from":"needs-run","to":"recoding","round":2,"note":"claimed: r3 recode — wire warmup ramp + emit run artifact"}
