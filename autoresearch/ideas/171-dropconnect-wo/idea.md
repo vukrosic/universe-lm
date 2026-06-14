@@ -1,8 +1,8 @@
 ---
 id: 171-dropconnect-wo
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-14T09:24:40Z
+updated: 2026-06-14T09:25:43Z
 transfer-risk: med
 plain: During training, randomly zero out individual weights of the attention output matrix (DropConnect) as a regularizer, with the rate starting at zero so the first step is identical to the baseline.
 ---
