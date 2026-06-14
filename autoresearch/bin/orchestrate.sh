@@ -24,11 +24,14 @@ DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 now=$(date -u +%s)
 
-# status (-ing lock) -> needs-* to recover to
+# status (-ing lock) -> needs-* to recover to. $2 = slug (for implementing,
+# which the code-implementer reuses for BOTH a fresh build and a post-failure
+# retry: route by whether a failed run's evidence.md exists).
 recover_to () { case "$1" in
   tasting) echo needs-taste;; repitching) echo needs-repitch;;
   reviewing) echo needs-review;; revising) echo needs-revision;;
   planning) echo needs-plan;; recoding) echo needs-recode;;
+  implementing) [ -f "$IDEAS/$2/evidence.md" ] && echo needs-recode || echo needs-plan;;
   *) echo "";; esac; }
 
 # needs-* -> canonical prompt file (the worker reads & follows it EXACTLY)
@@ -45,10 +48,17 @@ role () { case "$1" in
   needs-plan) echo plan;; needs-recode) echo recode;;
   *) echo "";; esac; }
 
-# is a tmux session busy (mid-generation)?  busy=0 means busy, 1 means idle/dead
+# Is a worker live?  return 0 (busy) means a running worker holds the lock;
+# return 1 means idle/dead. Lockfile-based, not TUI-grep — worker_run.sh runs
+# the agent HEADLESS (no spinner words to capture-pane for), so liveness is
+# tracked by the worker's own PID via a lockfile it holds for its lifetime.
+# A lock whose PID is gone (worker was kill -9'd) is stale -> clean it, idle.
 is_busy () {
-  tmux capture-pane -t "$1" -p 2>/dev/null | grep -v '^[[:space:]]*$' | tail -4 \
-    | grep -qE "Puzzling|Thinking|Considering|Calculat|Crunch|Cook|esticulat|searched|Did [0-9]|Shenanigan|Hatching|Working|Forging|tokens · "
+  local lock="${ORCH_LOCKDIR:-/tmp/orch-locks}/$1.lock" pid
+  [ -f "$lock" ] || return 1
+  pid="$(awk '{print $1}' "$lock" 2>/dev/null)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  rm -f "$lock"; return 1
 }
 
 iso_to_epoch () { date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || echo 0; }
@@ -68,7 +78,7 @@ for f in "$IDEAS"/*/idea.md; do
   esac
 
   # --- 1. RECLAIM stale -ing locks ---
-  rec="$(recover_to "$status")"
+  rec="$(recover_to "$status" "$slug")"
   if [ -n "$rec" ]; then
     age=$(( (now - $(iso_to_epoch "$updated")) / 60 ))
     if tmux has-session -t "$sess" 2>/dev/null && is_busy "$sess"; then
@@ -104,9 +114,13 @@ EOF
 
   echo "  $slug: $status -> launch worker $sess ($rl)"
   if [ "$DRY" = 0 ]; then
+    # Run the worker headless via worker_run.sh: holds a liveness lock (for
+    # is_busy) and runs the prompt through the MiniMax->Codex rate-limit
+    # fallback, so a MiniMax outage no longer stalls this gate. tmux is kept
+    # only so the UI log viewer can tail the pane.
     tmux new-session -d -s "$sess" -x 200 -y 50
     sleep 0.3
-    tmux send-keys -t "$sess" -l "cmf \"\$(cat $PDIR/$sess.txt)\""
+    tmux send-keys -t "$sess" -l "$ROOT/autoresearch/bin/worker_run.sh $sess $PDIR/$sess.txt"
     tmux send-keys -t "$sess" Enter
   fi
   launched=$((launched+1))
@@ -117,3 +131,12 @@ grep -l "status: \(needs-run\|running\)" "$IDEAS"/*/idea.md 2>/dev/null \
   | sed "s#$IDEAS/##;s#/idea.md##" | sed 's/^/  /' || echo "  (none)"
 
 echo "--- summary: launched=$launched reclaimed=$reclaimed busy=$busy skipped=$skipped ---"
+
+# Snapshot ideas so a worker that rm's an idea.md can't cause real loss (115
+# was nearly lost this way; only git history saved it). Best-effort, never
+# blocks the tick. Commit ONLY the ideas dir, never push.
+if [ "$DRY" = 0 ]; then
+  git -C "$ROOT" add -A autoresearch/ideas >/dev/null 2>&1 \
+    && git -C "$ROOT" diff --cached --quiet autoresearch/ideas 2>/dev/null \
+    || git -C "$ROOT" commit -q -m "orchestrate: idea snapshot $(date -u +%FT%TZ)" -- autoresearch/ideas >/dev/null 2>&1 || true
+fi
