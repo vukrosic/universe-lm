@@ -1,8 +1,8 @@
 ---
 id: 164-q-carry
-status: planning
+status: needs-run
 round: 1
-updated: 2026-06-14T05:29:04Z
+updated: 2026-06-14T05:39:41Z
 transfer-risk: med
 plain: Let each attention block "borrow" the queries computed by the previous block, with a learnable mix amount starting at zero — a residual-style information pathway that costs almost nothing.
 ---

@@ -3,3 +3,4 @@
 {"ts":"2026-06-14T05:27:37Z","agent":"reviewer","idea":"164-q-carry","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T05:28:05Z","agent":"reviewer","idea":"164-q-carry","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T05:29:04Z","agent":"code-impl","idea":"164-q-carry","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:39:41Z","agent":"code-impl","idea":"164-q-carry","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
