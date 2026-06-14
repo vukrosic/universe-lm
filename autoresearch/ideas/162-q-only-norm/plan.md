@@ -110,3 +110,29 @@ layernorm precedent).
   - Crash / NaN / OOM → `needs-recode` (round 1, inside budget).
 - Reference: 016-qk-norm (the closed symmetric WIN at tiny1m3m,
   Δ ≈ -0.014 vs both ctrls, pass-bar -0.005 cleared ~3×).
+
+## Recode round 1 → 2 (2026-06-14)
+- **Failure mode (from daemon pre-queue bounce)**: build-smoke on the box
+  failed — `Tiny1M3MQOnlyNormConfig not present in
+  /root/universe-lm/configs/llm_config.py (box has stale configs)`. The
+  lever code existed in the local working tree but was not committed; the
+  daemon's `git pull --ff-only` against origin returned the pre-lever
+  configs and the `MinimalLLM(C())` smoke check raised an ImportError on
+  the box.
+- **Fix**: commit `41ca33e` (`162-q-only-norm: Q-only RMSNorm (asymmetric
+  QK pre-softmax) — gate`) lands the 162-only hunks from
+  `configs/llm_config.py`, `models/layers.py`, `models/llm.py` plus the
+  `_arq_162-q-only-norm.py` treatment stub. Local build-smoke
+  (`MinimalLLM(Tiny1M3MQOnlyNormConfig())`) re-verified → `SMOKE_OK`;
+  +192 params vs baseline (one `nn.RMSNorm(d_k=16)` weight × 12 blocks,
+  no bias).
+- **Outstanding precondition before the next daemon tick**:
+  `git push origin orchestrate-codex-fallback` (or whichever tracking
+  branch this commit lives on) — the daemon's pull is `--ff-only` against
+  the remote, so without the push the box stays stale and the smoke will
+  bounce again. Per repo convention the push is human-reviewed; this
+  recode agent commits but does not push.
+- **No code change beyond the local commit** — the lever itself is
+  unchanged from the round-1 plan; only the artifact's reachability to
+  the box is the fix. Pass/fail bar, control, cost, run command all
+  unchanged.
