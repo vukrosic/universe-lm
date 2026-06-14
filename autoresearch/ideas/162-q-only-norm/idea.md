@@ -1,8 +1,8 @@
 ---
 id: 162-q-only-norm
-status: running
+status: needs-recode
 round: 1
-updated: 2026-06-14T05:42:17Z
+updated: 2026-06-14T05:44:03Z
 transfer-risk: low
 plain: Apply RMS normalization to the query vectors only (not the keys) before the attention score is computed — start with the standard scale so step-0 is byte-identical to the baseline.
 ---
