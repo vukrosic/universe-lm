@@ -8,19 +8,19 @@
       "gpu": "NVIDIA GeForce RTX 3060",
       "compute_cap": "8.6",
       "driver": "580.159.03",
-      "commit": "d161390",
+      "commit": "42ed363",
       "n_measurements": 3,
       "val_runs": [
-        6.4169,
-        6.4331,
-        6.4459
+        6.4247,
+        6.4128,
+        6.4662
       ],
-      "val_mean": 6.432,
-      "val_std": 0.0119,
-      "noise_band": 0.04,
-      "measured_at": "2026-06-14T06:12:27Z",
-      "runs_since_measure": 1,
-      "source_results": "autoresearch/remote-results/2026-06-14-vast-tiny1m3m-4/results.json"
+      "val_mean": 6.4346,
+      "val_std": 0.0229,
+      "noise_band": 0.0458,
+      "measured_at": "2026-06-14T06:58:42Z",
+      "runs_since_measure": 0,
+      "source_results": "remote-results/2026-06-14-vast-tiny1m3m/run_06-54.json"
     }
   }
 }

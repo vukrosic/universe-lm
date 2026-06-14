@@ -26,6 +26,7 @@ The code-implementer never closes — if blocked it bounces the idea back to
 - Multiscale heads / parallel block / attn sink (2026-06-04 batch)
 
 ## Closed by the loop (append below, newest first)
+- 162-q-only-norm — null: trt=6.4303 vs fresh baseline 6.4346±0.0458 (Δ=-0.0043, inside band; pass bar -0.005 missed by 0.0007) at tiny1m3m; train_loss 6.4129 (between ctrls 6.3893/6.3782/6.4391), val_acc 0.1456 (between ctrls 0.1441/0.1448/0.1425); +192 params (+0.020%, 12 RMSNorm(d_k=16) weights × 12 blocks, no bias), Q-only RMSNorm pre-softmax leaves K raw; attribution insight: 016-qk-norm WIN was carried by K-side or symmetry, NOT Q-side (with 165-k-only-norm as orthogonal K-side ablation); closes the Q-side of the QK-norm-attribution axis at 0.94M — 2026-06-14
 
 <!-- reviewer/evidence step appends one line per close here -->
 - 161-dyt-temp — null: trt=6.5150 vs fresh ctrl mean=6.4320±0.04 (Δ=+0.0830, DRIFT, ~2× noise band on wrong side) at tiny1m3m; train=6.4741 vs ctrl 6.4006 mean (Δ+0.07), val_acc=0.1349 vs ctrl 0.1443 mean; per-layer learnable τ_l (one shared `[n_layers]` parameter, init `1/sqrt(d_k)`) gradient fights the canonical attention-scale prior; at 0.94M/12L the model has no scale-depth for the lever to find a useful different-per-layer schedule; closes per-layer-temp axis at 0.94M alongside 155-per-head-temp (NULL inside band) — 2026-06-14
