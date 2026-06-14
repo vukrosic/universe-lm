@@ -14,3 +14,4 @@
 {"ts":"2026-06-14T02:50:10Z","agent":"implement-button","idea":"147-dropkey","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
 {"ts":"2026-06-14T04:47:07Z","agent":"runner","idea":"147-dropkey","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T04:48:37Z","agent":"reset-button","idea":"147-dropkey","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T05:12:39Z","agent":"runner","idea":"147-dropkey","from":"needs-run","to":"done","round":1,"note":"NULL (DRIFT, marginal): trt=6.4612 vs cached baseline 6.4376±0.04 (Δ=+0.0236 inside ±0.04 band but outside |Δ|<0.01 null band; train 6.4301 ≈ ctrl, val_acc 0.1388<0.1443)"}

@@ -13,3 +13,4 @@
 {"ts":"2026-06-14T04:33:47Z","agent":"code-impl","idea":"145-expert-choice","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-14T04:47:07Z","agent":"runner","idea":"145-expert-choice","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T04:48:37Z","agent":"reset-button","idea":"145-expert-choice","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T05:12:38Z","agent":"runner","idea":"145-expert-choice","from":"needs-run","to":"done","round":1,"note":"NULL (DRIFT): trt=6.5547 vs cached baseline 6.4376±0.04 (Δ=+0.1171, ~3× noise band on wrong side; train 6.5265<ctrl 6.4242 over-fit signature, val_acc 0.1297<0.1443 ctrl)"}
