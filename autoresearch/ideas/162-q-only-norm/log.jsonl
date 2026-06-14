@@ -6,3 +6,5 @@
 {"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-14T05:30:51Z","agent":"reset-button","idea":"162-q-only-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-14T05:32:36Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"needs-run","round":1,"note":"reclaimed: daemon smoke batch dropped (only 158-gau survived; ssh connection throttling)"}
+{"ts":"2026-06-14T05:34:22Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-run","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:34:22Z","agent":"code-impl","idea":"162-q-only-norm","from":"planning","to":"needs-run","round":1,"note":"plan+code done (Tiny1M3MQOnlyNormConfig, +192 params, CPU build-smoke 949,248 params)"}
