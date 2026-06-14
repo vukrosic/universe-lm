@@ -1,8 +1,8 @@
 ---
 id: 171-dropconnect-wo
-status: needs-taste
+status: needs-run
 round: 2
-updated: 2026-06-14T09:27:29Z
+updated: 2026-06-14T09:29:16Z
 transfer-risk: med
 plain: During training, randomly zero out individual weights of the attention output matrix (DropConnect) as a regularizer; rate ramps 0.0 -> 0.05 over the first 100 steps so step 0 is byte-identical to baseline and the lever fires after warmup.
 ---

@@ -48,19 +48,35 @@ no-flag tiny1m3m baseline.
   on Vast V100 (`baseline.sh verdict` returns `CACHED` for the ctrl)
 
 ## Cost
-- **Params Δ**: 3 × 64 × 170 = 32,640 vs baseline 2 × 64 × 256 = 32,768
-  per FFN × 4 blocks = (32,640 − 32,768) × 4 = **−512 params (−0.052% of
-  total ~0.94M)**, well within harness noise. Shazeer 2/3 trick keeps
-  param count within ~0.4% of baseline per FFN.
+- **Params Δ**: at tiny1m3m (d_model=192, d_ff_baseline=256,
+  n_blocks=4): 3 × 192 × 170 = 97,920 per FFN vs baseline
+  2 × 192 × 256 = 98,304 ⇒ −384 per FFN, −1,536 total (−0.16% of
+  ~0.95M). Shazeer 2/3 trick keeps param count within ~0.4% of
+  baseline per FFN.
 - **FLOPs Δ**: per token, two extra `d_model × d_ff_swiglu` matmuls
   per block for `gate_proj` and the same number for `up_proj` (these
   are the two inputs to the gate ⊙ value product). At step 0 the
-  gate is zero so those matmuls are wasted work, but the optimizer
-  ramps the gate in over the first few hundred steps. At
-  convergence: ~1.0× baseline FFN FLOPs (the 2/3 trick compensates
-  for the extra projection).
+  gate is zero so the `silu(gate) ⊙ up` product is exactly zero ⇒
+  the `down_proj` matmul is over a zero activation (waste, but
+  mathematically a no-op). The optimizer ramps the gate in over the
+  first few hundred steps. At convergence: ~1.0× baseline FFN FLOPs
+  (the 2/3 trick compensates for the extra projection).
 - **Memory Δ**: ~equal to baseline (fewer params, same activation
   cache shape at the FFN boundary).
+
+## Self-check note: gate zero-init re-applied after `apply(_init_weights)`
+
+`MinimalLLM.__init__` calls `self.apply(self._init_weights)` which
+re-initializes every `nn.Linear` weight with `normal_(std=0.02)` —
+this *overwrites* the in-constructor zero-init on `gate_proj.weight`
+inside `SwiGLUZeroInitFeedForward.__init__`. Without a fix the gate
+would NOT be zero at step 0, breaking the ReZero identity (`silu(0)=0
+⇒ FFN output = 0`). The fix mirrors the existing pattern for
+`use_gated_attn` (`models/llm.py:1278`): after the global
+`apply(_init_weights)`, walk every block's FFN and re-zero
+`gate_proj.weight` for the `SwiGLUZeroInitFeedForward` class. With
+the fix, `ffn.gate_proj.weight.abs().sum() == 0.0` is verified at
+CPU construct time.
 
 ## Run
 - **Command**: `cd /Users/vukrosic/my-life/llm-research-kit-scaling && /venv/main/bin/python _arq_170-swiglu-ffn.py`
