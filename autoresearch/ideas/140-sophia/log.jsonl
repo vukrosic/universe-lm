@@ -14,3 +14,4 @@
 {"ts":"2026-06-13T21:32:14Z","agent":"auto-implement","idea":"140-sophia","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-14T02:20:13Z","agent":"reviewer","idea":"140-sophia","from":"needs-review","to":"reviewing","round":2,"note":"claimed: r1 review of failed r2 run"}
 {"ts":"2026-06-14T02:20:37Z","agent":"reviewer","idea":"140-sophia","from":"reviewing","to":"needs-revision","round":2,"note":"verdict: revise — needs (a) quantified pass/fail bar in plan, (b) adamw_params scope fix at trainer.py:1746"}
+{"ts":"2026-06-14T04:32:13Z","agent":"reviser","idea":"140-sophia","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
