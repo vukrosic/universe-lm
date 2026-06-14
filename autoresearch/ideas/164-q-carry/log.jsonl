@@ -1,2 +1,3 @@
 {"ts":"2026-06-14T05:20:05Z","agent":"taste","idea":"164-q-carry","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-14T05:21:32Z","agent":"taste","idea":"164-q-carry","from":"tasting","to":"needs-review","round":1,"note":"accept: dual-axis test for 021-V-carry WIN; either outcome is informative (cross-block residual mixing general vs V-specific)"}
+{"ts":"2026-06-14T05:27:37Z","agent":"reviewer","idea":"164-q-carry","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
