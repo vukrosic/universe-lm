@@ -34,6 +34,10 @@
   The flag is read **before** the symmetric `q_norm/k_norm` branch so
   `use_q_only_norm=True` short-circuits 016's path entirely — they are
   mutually exclusive at this site.
+- `configs/llm_config.py` — adds `Tiny1M3MQOnlyNormConfig
+  (Tiny1M3MConfig)` `@dataclass` subclass with
+  `use_q_only_norm: bool = True`. This is the class the daemon
+  imports as `C` for the build-smoke and run.
 - `models/llm.py` — `MinimalLLM.__init__` reads `self.use_q_only_norm
   = getattr(config, "use_q_only_norm", False)` at line 445 and
   pass-throughs it into both `TransformerBlock(...)` constructors at
