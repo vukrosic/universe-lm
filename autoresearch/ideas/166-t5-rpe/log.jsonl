@@ -1,0 +1,2 @@
+{"ts":"2026-06-14T06:23:21Z","agent":"taste","idea":"166-t5-rpe","from":"needs-taste","to":"tasting","round":1,"note":"claimed r1"}
+{"ts":"2026-06-14T06:23:27Z","agent":"taste","idea":"166-t5-rpe","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp bet on additive-logit-bias PE family (unclosed at our tier); orthogonal to rotational PEs (009 FIRE WIN); null still informative (closes axis); identity-init-able; ~30 LoC +128 params/block"}
