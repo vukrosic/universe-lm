@@ -59,12 +59,14 @@ With `use_sophia=False` (default) the `Sophia` class is never instantiated and t
 ### Pass bar
 - Final `val_loss` is the last `eval/milestone` entry in `metrics_history['val_losses']` / `logs/<run-name>/log.jsonl`.
 - Compare against the locked tiny1m3m baseline cache at `autoresearch/baseline-cache.json` (`6.4394 ± 0.04`).
-- `WIN` if `Δ = val_loss - baseline ≤ -0.01`.
+- `WIN` if `Δ = val_loss - baseline < -0.01`.
 - `NULL` if `|Δ| < 0.01`.
 - `DRIFT` if `Δ > +0.01`.
+- Boundary cases at exactly `Δ = ±0.01` are `NULL`.
 
 ### Re-code note (2026-06-14, round 1 → 2)
 A previous GPU run failed with `ImportError: cannot import name 'Tiny1M3MSophiaConfig' from configs.llm_config` because the box was stale at `7a69c1a` and missing the `bd5adf5` commit that introduced the config class. **No local code change is required** — the class exists at `configs/llm_config.py:2084` and `optimizers/sophia.py` imports cleanly. The local smoke test passed: `MinimalLLM(Tiny1M3MSophiaConfig)` builds 949,056 params (bit-identical to `Tiny1M3MConfig`), forward at step 0 is bit-identical when seeded the same way, and `Sophia._step_count` increments correctly through `.step()`. The box must `git pull` (or fast-forward to a commit ≥ `bd5adf5`) before the next queue picks up `_arq_140-sophia.py`; otherwise the import will keep failing.
+That import issue is separate from the current trainer-scope fix below: derive `adamw_params` inside the Hutchinson block from `sophia_opt.param_groups` so the Sophia path does not depend on `setup_muon_optimizer()` scope.
 
 ### How the final val loss is read
 The trainer's `train_model` loop writes `metrics.json` to the run's `output_dir` after each eval milestone. The last entry in `metrics_history['val_losses']` (and the matching `val_perplexities`, `val_accuracies`) is the final raw `val_loss`; the runner compares that value against the pass bar above.
