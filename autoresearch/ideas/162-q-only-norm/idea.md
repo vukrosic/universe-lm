@@ -1,8 +1,8 @@
 ---
 id: 162-q-only-norm
-status: needs-plan
+status: needs-run
 round: 1
-updated: 2026-06-14T05:22:29Z
+updated: 2026-06-14T05:27:14Z
 transfer-risk: low
 plain: Apply RMS normalization to the query vectors only (not the keys) before the attention score is computed — start with the standard scale so step-0 is byte-identical to the baseline.
 ---
@@ -38,3 +38,29 @@ RMSNorm family is well-validated at 1B+ (LLaMA 3, Qwen 2.5, Mistral). Asymmetric
 
 ## Why it's worth a slot
 A win would tell us the *Q-side* normalization is the binding axis (orthogonal to 016's combined QK gain); a null would tell us 016's WIN was carried by the K-side or the symmetry. Either result closes the QK-norm-attribution axis at 0.94M and tells future per-Q-shape levers (943-softplus-gain, 938-lowrank-refine, etc.) whether to invest in Q-side or K-side.
+
+## Plan
+
+**Files changed**
+- `configs/llm_config.py` — add `use_q_only_norm: bool = False` field on `LLMConfig` (default off; bit-identical baseline).
+- `models/layers.py` — add `use_q_only_norm` kwarg to `MultiHeadAttention.__init__` and to `TransformerBlock.__init__` (pass-through). When on, register `self.q_only_norm = nn.RMSNorm(self.d_k, eps=1e-6)` on the MHA. In `MultiHeadAttention.forward`, the existing QK-norm branch (pre-RoPE / post-RoPE / nope-cope) gains a `use_q_only_norm` arm that applies `q_only_norm` to Q and leaves K raw (no `k_norm` call). The MoA extra-K branch mirrors the same K-skip.
+- `models/llm.py` — read `use_q_only_norm` from `config` (`getattr(config, "use_q_only_norm", False)`) and thread it to both MHA construction sites (lines ~678 and ~930).
+
+**Flag name**: `use_q_only_norm` (off by default).
+
+**Step-0 identity**: with the flag OFF, no `q_only_norm` module is built and the forward path is identical to the no-flag baseline → byte-identical at step 0 (verified: 0.0 max-abs-diff vs re-seed). With the flag ON, `nn.RMSNorm(d_k, eps=1e-6)` has weight=1, bias=0 init ⇒ Q is rescaled to unit RMS per head-dim; spec-allowed `fp32 max-abs-diff < 1e-3` tolerance (same trade-off as 159-emb-layernorm).
+
+**Run command** (per `prompts/runner.md` / `PIPELINE.md`, standard tiny1m3m seed 42):
+
+```bash
+cd /root/universe-lm && \
+LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
+/venv/main/bin/python -m training.trainer \
+  --config_class autoresearch.configs.tiny1m3m.Tiny1M3MConfig \
+  --activations "use_q_only_norm=True" \
+  --seed 42 --steps 3000 --batch_size 32
+```
+
+**Reading final val loss**: standard runner prints `val_loss` at the end of training and writes `runs/<run_id>/metrics.json` with the `val_loss` field.
+
+**LoC budget**: ~40 lines total (well under the 200 LoC cap).
