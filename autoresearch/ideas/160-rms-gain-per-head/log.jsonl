@@ -5,3 +5,4 @@
 {"ts":"2026-06-14T04:36:16Z","agent":"runner","idea":"160-rms-gain-per-head","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=2: /venv/main/bin/python: can't open file '/root/universe-lm/train.py'"}
 {"ts":"2026-06-14T04:46:53Z","agent":"implement-button","idea":"160-rms-gain-per-head","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-14T04:48:58Z","agent":"implement-button","idea":"160-rms-gain-per-head","from":"implementing","to":"needs-run","round":1,"note":"fixed: train.py → train_llm.py in Plan run command; code unchanged, still byte-identical at step 0"}
+{"ts":"2026-06-14T04:49:56Z","agent":"code-impl","idea":"160-rms-gain-per-head","from":"needs-run","to":"recoding","round":1,"note":"claimed: smoke artifact; build-smoke OK; commit local; flipping to needs-run"}

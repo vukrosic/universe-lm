@@ -1,8 +1,8 @@
 ---
 id: 160-rms-gain-per-head
-status: needs-run
+status: recoding
 round: 1
-updated: 2026-06-14T04:48:58Z
+updated: 2026-06-14T04:49:56Z
 transfer-risk: low
 plain: After the attention block, apply a small per-head RMS-normalized gain on the value output so each head's contribution to the residual stream has controlled magnitude — start with gain=1 so behavior matches the baseline exactly.
 ---
