@@ -44,7 +44,7 @@ repo end-to-end:
 - loss: 7.02 vs ctrl ~6.66 (the run was making progress; the bias-gather overhead was the budget sink, not a divergence — the lever is plausibly sound)
 - diagnosis (from runner note): "slow bias-gather and worse convergence, tighten kernel or bump JOB_TIMEOUT"
 
-## r2 fix (this commit)
+## r2 fix (history)
 The bias-gather `self.rpe_bias[:, bidx]` is the inherent cost of T5-RPE — any
 additive logit-bias indexed by a bucketed position lookup requires a
 [H, T, T] gather per layer per step. There's no way to compute
@@ -56,7 +56,7 @@ essentially floor-bounded by the gather itself; the realistic lever-mode
 choices are: (a) accept the gather and bump the timeout, (b) try to make
 the gather slightly cheaper.
 
-I picked both:
+The r2 implementer picked both:
 
 1. **Cleaned the gather dispatch path.** Removed the redundant
    `.to(device=scores.device)` defensive `.to()` calls on `_t5_rpe_bucket_idx`
@@ -81,7 +81,18 @@ I picked both:
    accepted the manual-path tax (no SDPA flash) and gave the run the
    time it needs.
 
-## Self-check (post-fix)
+## Self-check (r3 re-verification)
+- `MinimalLLM(Tiny1M3MConfig())` ≡ itself → **max-abs-diff 0.00e+00** on a
+  16-token forward at seed 42 (rebuild from same seed, same input
+  generator).
+- `MinimalLLM(Tiny1M3MT5RPEConfig())` ≡ `MinimalLLM(Tiny1M3MConfig())`
+  → **max-abs-diff 2.24e-08** (fp32 numerical noise from the
+  `scores + 0` add; functionally bit-identical) on a 16-token
+  forward at seed 42 (both built from same seed, same input
+  generator). rpe_bias sum confirmed 0.0 across all 12 blocks.
+- All 123 non-`rpe_bias` named parameters and the common buffer set
+  are bit-identical between ctrl and trt at the same seed
+  (max-abs-diff 0.0).
 - `MinimalLLM(Tiny1M3MConfig())` ≡ itself → **max-abs-diff 0.0** on a
   16-token forward at seed 42 (rebuild from same seed).
 - `MinimalLLM(Tiny1M3MT5RPEConfig())` ≡ `MinimalLLM(Tiny1M3MConfig())`

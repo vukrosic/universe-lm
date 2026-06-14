@@ -122,3 +122,18 @@ forward path executes cleanly on a 16-token test input
   and confirms the rotational family (RoPE/FIRE) is binding;
   a win would tell us the additive bias family is a usable
   lever at 0.94M orthogonal to the rotational family.
+
+## Recode r3 (2026-06-14) — box-staleness fix
+- **What changed**: nothing. The plan/control/cost/flag are all unchanged
+  from r2.
+- **Why r2 bounced**: the daemon's `sync_and_smoke` ran on the box at
+  10:14Z, when the box was on a commit pre-`7186c49` and didn't have
+  `LLMConfig.use_t5_rpe` / `Tiny1M3MT5RPEConfig` / the
+  `models/llm.py` pass-through. The wiring has since landed in
+  `7186c49` ("166/167/168: wire T5-RPE, Z-Loss, AV-output carry")
+  on the current branch; the next daemon tick will `git pull
+  --ff-only` and the CPU `MinimalLLM(C())` build-smoke will resolve.
+- **Re-confirmed locally**: ctrl ≡ ctrl 0.00e+00, ctrl ≡ trt 2.24e-08
+  (fp32 noise from `scores + 0`; rpe_bias sum 0.0). Param delta
+  +1,536 = H × B × n_blocks. See `recode.md` for the full
+  self-check.
