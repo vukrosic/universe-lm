@@ -5,3 +5,4 @@
 {"ts":"2026-06-14T09:25:12Z","agent":"reviewer","idea":"170-swiglu-ffn","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T09:25:38Z","agent":"reviewer","idea":"170-swiglu-ffn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T09:26:42Z","agent":"code-impl","idea":"170-swiglu-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:27:34Z","agent":"implement-button","idea":"170-swiglu-ffn","from":"planning","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}

@@ -1,8 +1,8 @@
 ---
 id: 170-swiglu-ffn
-status: planning
+status: needs-run
 round: 1
-updated: 2026-06-14T09:26:42Z
+updated: 2026-06-14T09:27:34Z
 transfer-risk: low
 plain: Swap the FFN's plain GELU activation for SwiGLU — a gate × value product used by LLaMA, Mistral, and PaLM — and start the gate matrix at zero so the FFN is silent on the first step.
 ---

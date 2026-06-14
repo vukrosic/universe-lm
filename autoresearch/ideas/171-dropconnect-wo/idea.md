@@ -1,10 +1,10 @@
 ---
 id: 171-dropconnect-wo
-status: repitching
-round: 1
-updated: 2026-06-14T09:25:43Z
+status: needs-taste
+round: 2
+updated: 2026-06-14T09:27:29Z
 transfer-risk: med
-plain: During training, randomly zero out individual weights of the attention output matrix (DropConnect) as a regularizer, with the rate starting at zero so the first step is identical to the baseline.
+plain: During training, randomly zero out individual weights of the attention output matrix (DropConnect) as a regularizer; rate ramps 0.0 -> 0.05 over the first 100 steps so step 0 is byte-identical to baseline and the lever fires after warmup.
 ---
 
 # 171 — DropConnect on W_O (Per-Weight Stochastic Masking of Attention Output Projection)
@@ -26,9 +26,13 @@ plain: During training, randomly zero out individual weights of the attention ou
     (per-block stochastic depth). 171 doesn't drop branches, only weights.
   - 138-looksam (NULL, `closed.md:108`): periodic SAM perturbation. Different
     mechanism (sharpness-seeking perturbation, not stochastic masking).
+  - 115-rdrop (NULL at 0.94M, `closed.md`): KL-divergence regularizer between
+    two forward passes; distinct from per-weight masking. Adjacent closed
+    regularizer that supports the "regularizer family exhausted" thesis.
 - DropConnect-on-attention-output is NOT in `closed.md`'s closed axes
   ("Dropout/regularizer family" is closed, but DropConnect is a distinct
-  per-weight stochastic regularizer from per-token Dropout / DropKey / DropPath).
+  per-weight stochastic regularizer from per-token Dropout / DropKey /
+  DropPath).
 
 ## Mechanism
 Standard attention: `out = concat(head_1, ..., head_H) @ W_O` where
@@ -44,36 +48,100 @@ all batch elements and all positions. This is "weight-level" noise, distinct
 from "token-level" noise (Dropout on activations) or "row-level" noise
 (DropKey on the K matrix).
 
+### Why weight-level should bind at 0.94M where token-level (147) and path-level (111) didn't
+Three regularizer variants have already nulled at tiny1m3m:
+147-dropkey (per-token K-mask), 111-drop-path (per-branch residual mask), and
+115-rdrop (KL-divergence loss regularizer). The pitch's "just a different
+tensor" framing is too weak — without an attribution argument, the
+pre-test-belief should be that the regularizer family is closed. The
+mechanistic argument for why weight-level is a distinct stochastic axis:
+
+**Q/K/V gradient updates can absorb token-level and path-level noise;
+W_O gradient updates cannot mask themselves.** Per-token DropKey (147)
+multiplies the K tensor by a random mask. The QK product sees a noisy K,
+but Q's own gradient (computed downstream from the loss) still receives a
+clean signal — the optimizer can route around the noise by adjusting Q.
+Per-branch DropPath (111) zeros entire residual branches; the surviving
+branches still receive clean gradients and the optimizer simply up-weights
+the surviving paths. Both are *signal-space* regularizers that the
+gradient updates can compensate for at the parameter level.
+
+**DropConnect on W_O is a *parameter-space* regularizer — the mask is the
+gradient mask, not just the forward mask.** When we zero a weight `W_O[i,j]`
+during the forward pass, that same weight's gradient is computed against a
+zeroed output: the parameter receives a smaller-magnitude update *and* the
+gradient tells the optimizer to up-weight surviving paths in W_O. The
+optimizer cannot route around the noise by adjusting a *different*
+parameter, because the noise is on the parameter being updated. W_O is
+also a single dense `d_model × d_model` matrix (64×64 = 4096 weights) that
+the optimizer can co-adapt onto narrow subspaces at small scale; weight
+masking forces redundant paths in that single matrix.
+
+The argument is not "weight-level always wins" — it's "weight-level is
+the only member of the family whose mask the optimizer cannot absorb
+into a different parameter's update," so it is a structurally distinct
+axis from the closed 147/111/115 variants.
+
+## Treatment (locked, no longer a 3-option sketch)
+**Canonical treatment: ramp `rate` from 0.0 → 0.05 over the first 100
+optimizer steps, then hold at 0.05 for the remaining ~92 steps.**
+
+Step-by-step:
+- **Step 0**: `rate = 0.0` ⇒ `p_keep = 1.0` ⇒ mask is all-ones ⇒
+  `W_O_masked = W_O ⊙ 1 / 1 = W_O` ⇒ **byte-identical to baseline
+  (max-abs-diff = 0.0)**. Identity holds because the guard
+  `rate > 0.0` short-circuits before any RNG is consumed.
+- **Steps 1–99**: linear ramp `rate = 0.05 * step / 100`. At step 1 the
+  mask is sampled with `p = 0.0005` (effectively all-ones); at step 100
+  the mask is sampled with `p = 0.05` (Wan et al.'s ImageNet sweet spot
+  for this kind of projection). The forward differs from baseline by
+  < 0.05% on average during this ramp, so the trajectory departs slowly.
+- **Steps 100+**: `rate = 0.05` held constant; this is the regime where
+  the regularizer actually does work, and where the val-loss comparison
+  against baseline is meaningful.
+
+Why not option A (rate = 0.1 immediately)? Breaks step-0 byte-identity —
+step 0 would sample a 10% mask on W_O, the forward would differ from
+baseline, and the §1 "step-0 byte-identical" gate fails.
+
+Why not option B (rate = 0.0 throughout, regularizer infrastructure
+present but inactive)? Tests "is the code path in place" — that's a
+definition-gate concern, not a lever test, and would burn a slot for
+an info-poor A/B. The regularizer family is at 3 nulls; we need *one*
+test of a live regularizer, not a control for a never-firing one.
+
+Why ramp 0.05 and not 0.1? Wan's CIFAR/ImageNet sweet spot is 0.1 on
+*fully connected* projections; the attention output projection at
+d_model=64 is structurally similar (dense, square, single-tensor), so
+0.1 is a defensible starting point, but 0.05 is a more conservative
+ramp target that gives the optimizer more time to learn through the
+noise. Either is defensible; 0.05 is the lower-risk choice and the
+r1 sketch explicitly named it as the alternative.
+
 ## Design sketch
 - **File**: `models/layers.py` (`MultiHeadAttention.__init__` adds
-  `use_dropconnect_wo: bool = False` and `dropconnect_wo_rate: float = 0.0`
-  kwargs; `MultiHeadAttention.forward` adds a single branch after the head
-  concatenation step).
+  `use_dropconnect_wo: bool = False`, `dropconnect_wo_rate: float = 0.05`,
+  `dropconnect_wo_warmup_steps: int = 100` kwargs;
+  `MultiHeadAttention.forward` adds a single branch after the head
+  concatenation step that samples the mask and applies it to W_O).
 - **Config flag**: `use_dropconnect_wo: bool = False` and
-  `dropconnect_wo_rate: float = 0.1` on `LLMConfig` (rate is a sensible
-  default from Wan et al.'s CIFAR/ImageNet sweet spot; the lever-test is the
-  *presence* of the regularizer, not the rate HP).
-- **Step-0 byte-identical**: at step 0, `dropconnect_wo_rate = 0.0` ⇒
-  `p_keep = 1.0` ⇒ mask is all-ones ⇒ `W_O_masked = W_O ⊙ 1 / 1 = W_O` ⇒
-  **byte-identical to baseline (max-abs-diff = 0.0)**. Set the rate to a
-  small positive value (e.g. 0.1) for the *treatment* config; at step 0
-  the mask is the all-ones mask only if the rate is 0.0 OR if we sample
-  without replacement on the first call. Cleaner: set the *flag* on, set
-  the *initial* rate to 0.0 with a warmup that ramps to 0.1 over the first
-  N steps. Or: just set rate = 0.0 in the treatment config (a "regularizer
-  present but inactive" control) — the lever-test is "is the regularizer
-  infrastructure in place" and a config that has it OFF but flag ON is a
-  valid A/B (flag-present cost: 1 branch + 1 schedule). For a stronger
-  treatment, schedule rate from 0.0 to 0.05 over the first 100 steps.
-- **Intuition (why it might lower val loss)**: per-weight masking on W_O
-  forces the remaining weights to compensate, which is a strong
-  co-adaptation regularizer on the output projection (analogous to dropout
-  on activations but applied at the weight level). W_O is a single dense
-  `d_model × d_model` matrix that the optimizer can co-adapt onto narrow
-  subspaces; DropConnect prevents this by forcing redundant weight paths.
-  Baseline weakness: the optimizer at 0.94M may over-fit W_O to spurious
-  features. DropConnect should reduce this.
-- **LoC**: ~25 lines (mask sample + apply + assert + schedule).
+  `dropconnect_wo_rate: float = 0.05` and
+  `dropconnect_wo_warmup_steps: int = 100` on `LLMConfig` (rate is
+  Wan's CIFAR/ImageNet sweet spot for dense projections, halved for
+  ramp safety; the lever-test is the *presence* of the regularizer
+  with a live ramp, not the rate HP).
+- **Step-0 byte-identical**: at step 0, the warmup-scheduled effective
+  rate is 0.0 ⇒ guard `effective_rate > 0.0` is False ⇒ branch is
+  never taken ⇒ no RNG consumed, no parameter modified ⇒
+  **byte-identical to baseline (max-abs-diff = 0.0)**.
+- **Intuition (why it might lower val loss)**: see the mechanistic
+  argument above. Per-weight masking on W_O is the only regularizer in
+  the 147/111/115 closed block whose mask the optimizer cannot absorb
+  into a different parameter's gradient update. W_O is a single dense
+  64×64 matrix; weight masking forces redundant paths in that matrix,
+  preventing the optimizer from co-adapting W_O onto a narrow subspace
+  over the 3M-token training horizon.
+- **LoC**: ~30 lines (mask sample + apply + assert + schedule + warmup).
 
 ## Scale evidence
 - DropConnect is well-validated at vision scale (CIFAR-10, ImageNet) in the
@@ -89,47 +157,85 @@ from "token-level" noise (Dropout on activations) or "row-level" noise
   to "W_O is a dense projection" + "0.94M sees ~3M tokens which is data-
   limited for LMs").
 
+## Win/null bar (sharpened against 0.04 noise band)
+The cached 6.4394±0.04 / 6.4504±0.0558 baseline bands put one-seed Δ
+detection at `|Δ| > 0.04` and "informative but inconclusive" at
+`0.01 < |Δ| ≤ 0.04`. Applying this to the 171 lever:
+- **Δ ≤ −0.020**: signal — clears the lower edge of the inconclusive
+  band and is consistent with a real regularizer effect. This is the
+  *only* single-seed outcome that survives the noise test.
+- **−0.020 < Δ < −0.005**: informative but inconclusive — treat as
+  null-and-close per the two-ctrl WIN rule (the effect is below
+  one-seed detection).
+- **Δ ≥ −0.005**: null.
+
+A null outcome still has payoff: "null closes the weight-level axis of
+the regularizer family (after token-level 147-dropkey and path-level
+111-drop-path, weight-level 171-dropconnect completes the family
+exhaustion at 0.94M). The remaining regularizer axes at this tier
+are not in the per-mask family — they would need a structurally new
+mechanism (e.g. SAM-style sharpness-seeking, 138-looksam, already
+null) or a different target (loss-shape, closed at 066–070)."
+
 ## Why it's worth a slot
-The bet: per-weight stochastic masking on W_O is a strong co-adaptation
-regularizer that should help at our data-limited 0.94M/3M-token tier. We
-expect Δval ≈ -0.005 to -0.015 (smaller than vision's gains because the
-W_O matrix is small, d_model=64). A null would tell us the *weight-level*
-axis of the regularizer family is also closed (147 key-drop, 111 path-drop
-already null; 171 weight-drop joins them) and the regularization family is
-exhausted at this tier. A win would tell us weight-level noise binds where
-token-level and path-level don't. Step-0 byte-identical, low implementation
-risk, well-isolated A/B.
+The bet: per-weight stochastic masking on W_O is the only member of the
+per-mask regularizer family whose mask the optimizer cannot absorb into
+a different parameter's gradient update, so it is a structurally distinct
+axis from the closed 147 (token-level K-mask) and 111 (path-level residual
+mask) variants. At our data-limited 0.94M/3M-token tier, W_O can co-adapt
+onto a narrow subspace over 192 steps; weight masking forces redundant
+paths in that single 64×64 matrix. We expect Δval ∈ [−0.020, −0.005]
+(borderline signal / inconclusive); a clear null would still close the
+weight-level axis and complete the per-mask family exhaustion at this
+tier. Step-0 byte-identical, ~30 LoC + ~3–4 min compute + a few hours of
+agent attention — acceptable spend for closing the last open axis in
+the regularizer family.
 
 ## Plan
 
 - **Files**:
-  - `configs/llm_config.py` — add `use_dropconnect_wo: bool = False` and
-    `dropconnect_wo_rate: float = 0.1` next to `use_drop_key` (≈ line 720).
+  - `configs/llm_config.py` — add `use_dropconnect_wo: bool = False`,
+    `dropconnect_wo_rate: float = 0.05`,
+    `dropconnect_wo_warmup_steps: int = 100` next to `use_drop_key`
+    (≈ line 720). Default rate 0.05 reflects the ramp target (not the
+    step-0 value, which is 0.0 via the warmup schedule).
   - `models/layers.py` —
-    - `MultiHeadAttention.__init__`: add the two kwargs after `use_drop_key`
-      / `drop_key_rate` (≈ line 968); store as `self.use_dropconnect_wo`,
-      `self.dropconnect_wo_rate` after `self.use_drop_key` (≈ line 1636).
+    - `MultiHeadAttention.__init__`: add the three kwargs after
+      `use_drop_key` / `drop_key_rate` (≈ line 968); store as
+      `self.use_dropconnect_wo`, `self.dropconnect_wo_rate`,
+      `self.dropconnect_wo_warmup_steps` after `self.use_drop_key`
+      (≈ line 1636). Track a `self._step_count: int = 0` counter that
+      increments on every forward pass (or, cleaner, accept the current
+      step from the trainer via a kwarg).
     - `MultiHeadAttention.forward`: branch at the W_O application site
-      (≈ line 3233) — sample Bernoulli mask, rescale, use masked W_O.
+      (≈ line 3233) — compute the effective rate
+      `effective_rate = dropconnect_wo_rate * min(step, warmup) / warmup`,
+      guard `use_dropconnect_wo and self.training and effective_rate > 0.0`,
+      sample Bernoulli mask with `p = effective_rate`, rescale by
+      `1 / (1 - effective_rate)`, apply to W_O.
     - `TransformerBlock.__init__`: pass-through kwargs after the drop_key
       pass-through (≈ line 3737). YOCOLlamaBlock forwards via `*args,
       **kwargs` so it's covered automatically.
   - `models/llm.py` — `MinimalLLM.__init__`: read
-    `use_dropconnect_wo` / `dropconnect_wo_rate` next to
-    `use_drop_key` (≈ line 264); pass-through at the YOCO upper-half
-    construction (≈ line 607) and the standard TransformerBlock
-    construction (≈ line 870).
-- **Config flag**: `use_dropconnect_wo: bool = False` (off by default),
-  `dropconnect_wo_rate: float = 0.1` (Wan et al. sweet spot).
+    `use_dropconnect_wo` / `dropconnect_wo_rate` /
+    `dropconnect_wo_warmup_steps` next to `use_drop_key` (≈ line 264);
+    pass-through at the YOCO upper-half construction (≈ line 607) and
+    the standard TransformerBlock construction (≈ line 870).
+- **Config flag**: `use_dropconnect_wo: bool = False` (off by default,
+  baseline path bit-identical), `dropconnect_wo_rate: float = 0.05`
+  (ramp target — the step-0 value is 0.0 via the warmup schedule),
+  `dropconnect_wo_warmup_steps: int = 100` (ramp length).
 - **Step-0 byte-identical**: when `use_dropconnect_wo=False`, the branch
   is never taken (no RNG consumed, no parameter created) ⇒ baseline path
-  bit-identical. When `use_dropconnect_wo=True` with
-  `dropconnect_wo_rate=0.0`, the guard `rate > 0.0` skips the mask
-  branch ⇒ also bit-identical (cost: one extra branch comparison).
-  Eval mode (`self.training == False`) also skips the mask.
+  bit-identical. When `use_dropconnect_wo=True`, at step 0 the
+  warmup-scheduled effective rate is 0.0, the guard
+  `effective_rate > 0.0` skips the mask branch ⇒ also bit-identical
+  (cost: one branch comparison + one min()). Eval mode
+  (`self.training == False`) also skips the mask.
 - **Run command** (treatment):
   `/venv/main/bin/python runner/runner.py --config tiny1m3m
-   --seed 42 --override use_dropconnect_wo=True,dropconnect_wo_rate=0.1`
+   --seed 42 --override use_dropconnect_wo=True,dropconnect_wo_rate=0.05,dropconnect_wo_warmup_steps=100`
 - **Read final val loss**: from the runner's standard log line
   `val_loss=...` at the final step; compare against the baseline
-  6.4216 from `token2science-papers-platform` memory.
+  6.4216 from `token2science-papers-platform` memory and the cached
+  6.4394±0.04 / 6.4504±0.0558 two-ctrl bracket.
