@@ -9,3 +9,4 @@
 {"ts":"2026-06-14T04:44:23Z","agent":"implement-button","idea":"158-gau","from":"needs-recode","to":"implementing","round":1,"note":"claimed by re-code fix"}
 {"ts":"2026-06-14T04:47:40Z","agent":"implement-button","idea":"158-gau","from":"implementing","to":"needs-run","round":1,"note":"fix: _collect_entropy_reg guard against transformer_blocks=None (GAU path); minimal change, baseline byte-identical"}
 {"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"158-gau","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-14T05:36:31Z","agent":"reset-button","idea":"158-gau","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}

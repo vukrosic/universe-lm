@@ -1,8 +1,8 @@
 ---
 id: 158-gau
-status: running
+status: needs-run
 round: 1
-updated: 2026-06-14T05:29:21Z
+updated: 2026-06-14T05:36:31Z
 transfer-risk: low
 plain: Fuse the attention block and the feed-forward block into a single shared gated unit so the model has fewer parameters and a single information-mixing operation per layer.
 ---
