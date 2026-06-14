@@ -1,6 +1,43 @@
-# Recode — 166 T5-RPE (round 2)
+# Recode — 166 T5-RPE (round 3)
 
-## r1 failure
+## r2 failure (recoded by orchestrator / box stale)
+- runner: `bin/queue-daemon.sh`, build-smoke pre-check, seed 42
+- pre-check FAIL: "box configs/llm_config.py lacks LLMConfig.use_t5_rpe/t5_rpe_buckets fields and models/llm.py plumbing — lever wired only in models/layers.py MHA. Implementer must add LLMConfig field + Tiny1M3MT5RPEConfig subclass + llm.py pass-through to TransformerBlock before re-run."
+- The r2 release was a build-smoke bounce — the daemon's CPU `MinimalLLM(C())` import on the box could not resolve `getattr(config, "use_t5_rpe", False)` against a config class that didn't have the field. The local working tree at r2 release time had the wiring in uncommitted edits only; the box was on an earlier commit (pre-7186c49) that only had the layers.py MHA changes from the r1/r2 implementer.
+- The actual fields and pass-through are present in commit `7186c49` ("166/167/168: wire T5-RPE, Z-Loss, AV-output carry") on the current branch:
+  - `configs/llm_config.py:122` — `use_t5_rpe: bool = False` and `t5_rpe_buckets: int = 32` (LLMConfig).
+  - `configs/llm_config.py:2112` — `@dataclass class Tiny1M3MT5RPEConfig(Tiny1M3MConfig)` with `use_t5_rpe: bool = True` / `t5_rpe_buckets: int = 32` (the daemon's `C` import target).
+  - `models/llm.py:307-308` — `self.use_t5_rpe = getattr(config, "use_t5_rpe", False)` and `self.t5_rpe_buckets = max(1, int(getattr(config, "t5_rpe_buckets", 32)))`.
+  - `models/llm.py:652-653, 885-886` — pass-through to BOTH block constructor sites (YOCO upper-half at ~line 605 and standard TransformerBlock at ~line 825).
+  - `models/layers.py:623-624, 3387-3388` — MHA and TransformerBlock kwargs; layer 1329-1356 builds the bias parameter + bucket-index buffer; layer 2864-2868 / 3021-3025 apply it in both branches; line 2892 adds it to the manual-path trigger list.
+
+## r3 fix (this pass)
+The cause is box staleness, not a missing local change. Re-verified the local
+repo end-to-end:
+
+- `git show 7186c49:configs/llm_config.py` and `:models/llm.py` both contain
+  the wiring (commit is reachable on the current branch).
+- The arq stub (`_arq_166-t5-rpe.py`) and `run.json` are unchanged from r2 and
+  are still correct (`C = Tiny1M3MT5RPEConfig` imported from
+  `configs.llm_config`; `job_timeout: 30m`).
+- Local build-smoke:
+  - `MinimalLLM(Tiny1M3MConfig())` ≡ `MinimalLLM(Tiny1M3MConfig())`
+    → **max-abs-diff 0.00e+00** (ctrl ≡ ctrl, same seed).
+  - `MinimalLLM(Tiny1M3MT5RPEConfig())` ≡ `MinimalLLM(Tiny1M3MConfig())`
+    → **max-abs-diff 2.24e-08** (fp32 noise from the `scores + 0` add;
+    functionally bit-identical). rpe_bias sum confirmed 0.0.
+  - Param delta: 950,592 − 949,056 = +1,536 = `H × B × n_blocks
+    = 4 × 32 × 12`. Matches plan.
+  - All non-`rpe_bias` parameters and shared buffers are bit-identical
+    between ctrl and trt at the same seed (max-abs-diff 0.0 across
+    123 named params and the common buffer set).
+- The daemon's `sync_and_smoke` does `git pull --ff-only` on the box
+  before the CPU build-smoke, so once this recode flips back to
+  `needs-run` the next tick will pull the wiring commit into the
+  box's working tree, the SCP will drop the arq file, and the
+  `python _box_smoke.py _arq_166-t5-rpe.py` will return `SMOKE_OK`.
+
+## r1 failure (history)
 - runner: `bin/queue-daemon.sh`, `job_timeout: 12m`, seed 42
 - rc=124: TIMEOUT at step 300/732 (~41% complete)
 - speed: ~1750 tok/s vs ctrl ~30000 tok/s (≈ 17× slower than baseline SDPA path)
