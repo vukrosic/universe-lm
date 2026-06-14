@@ -13,3 +13,4 @@
 {"ts":"2026-06-14T05:46:03Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux (CACHED path; baseline 6.4504 ± 0.0558, n=7)"}
 {"ts":"2026-06-14T05:47:35Z","agent":"reset-button","idea":"161-dyt-temp","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-14T05:58:09Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux (MEASURE path: 3 ctrls + 161)"}
+{"ts":"2026-06-14T06:12:49Z","agent":"runner","idea":"161-dyt-temp","from":"running","to":"done","round":2,"note":"NULL (DRIFT): trt=6.5150 vs baseline 6.4320±0.04 (Δ=+0.0830 ≫ +0.005 drift threshold); per-layer τ_l is hostile at 0.94M/12L"}
