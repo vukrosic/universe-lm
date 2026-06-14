@@ -6,3 +6,4 @@
 {"ts":"2026-06-14T09:42:56Z","agent":"code-impl","idea":"172-per-head-rope-base","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-14T10:13:22Z","agent":"runner","idea":"172-per-head-rope-base","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T10:14:53Z","agent":"reset-button","idea":"172-per-head-rope-base","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T10:35:40Z","agent":"runner","idea":"172-per-head-rope-base","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (cache CACHED for box 5b8a7fea8963, treatment-only run)"}
