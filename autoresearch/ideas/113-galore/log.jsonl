@@ -16,3 +16,4 @@
 {"ts":"2026-06-14T04:33:16Z","agent":"code-impl","idea":"113-galore","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-14T04:47:07Z","agent":"runner","idea":"113-galore","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T04:50:00Z","agent":"reset-button","idea":"113-galore","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T04:59:35Z","agent":"runner","idea":"113-galore","from":"needs-run","to":"done","round":1,"note":"NULL (DRIFT): trt=7.1609 vs fresh ctrl mean=6.4376±0.04 (Δ=+0.7233, ~18× noise band; train=7.0982 vs 6.40 ctrl; degenerate at tiny1m3m — GaLore QR-projection under-converges)"}
