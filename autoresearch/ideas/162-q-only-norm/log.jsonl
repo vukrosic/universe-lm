@@ -1,3 +1,4 @@
 {"ts":"2026-06-14T05:18:42Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-14T05:19:32Z","agent":"taste","idea":"162-q-only-norm","from":"implementing","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-14T05:20:05Z","agent":"taste","idea":"162-q-only-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp orthogonal Q-side ablation to 016's WIN; QK-norm family sparse; clean null still informative; transfer low (Cohere 35B+, RMSNorm 1B+)"}
+{"ts":"2026-06-14T05:22:29Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
