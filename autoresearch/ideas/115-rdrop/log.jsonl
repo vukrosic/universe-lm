@@ -13,3 +13,4 @@
 {"ts":"2026-06-13T20:33:27Z","agent":"runner","idea":"115-rdrop","from":"needs-run","to":"needs-recode","round":2,"note":"run FAILED rc=1: torch.OutOfMemoryError CUDA OOM (tried 768 MiB, free 572 MiB, prev process held 11.06 GiB); R-Drop forward×2 doubles activation memory; subclass must either reduce batch_size / seq_len or use gradient checkpointing; see log 115-rdrop.log"}
 {"ts":"2026-06-13T20:53:08Z","agent":"implement-button","idea":"115-rdrop","from":"needs-recode","to":"implementing","round":2,"note":"claimed by implement button"}
 {"ts":"2026-06-13T20:58:04Z","agent":"implement-button","idea":"115-rdrop","from":"implementing","to":"needs-run","round":2,"note":"OOM fixed: chunked KL in _rdrop_loss (16x memory reduction, ~100MB peak); step-0 byte-identical with flag off. Runnable at tiny1m3m seed 42."}
+{"ts":"2026-06-14T04:47:07Z","agent":"runner","idea":"115-rdrop","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux"}

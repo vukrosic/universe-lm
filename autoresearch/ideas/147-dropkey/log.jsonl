@@ -12,3 +12,4 @@
 {"ts":"2026-06-14T02:20:30Z","agent":"reviewer","idea":"147-dropkey","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise (r1: add pass/fail bar, reconcile mechanism vs paper, document prior)"}
 {"ts":"2026-06-14T02:46:47Z","agent":"implement-button","idea":"147-dropkey","from":"needs-revision","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-14T02:50:10Z","agent":"implement-button","idea":"147-dropkey","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T04:47:07Z","agent":"runner","idea":"147-dropkey","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
