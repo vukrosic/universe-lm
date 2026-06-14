@@ -90,3 +90,62 @@ box's `git pull` brings `Tiny1M3MVMixConvConfig` into its
       loads the conv; `MinimalLLM(Tiny1M3MVMixConvConfig())` constructs).
 - [x] plan.md pass/fail bar matches idea.md (`|Δ| ≤ 0.01` NULL, ≤ −0.01 WIN).
 - [x] run artifact exists and builds locally (`SMOKE_OK` from `_box_smoke.py`).
+
+---
+
+## Recode r2 — 2026-06-14 (this pass)
+
+### Bounce reason (log r2)
+`runner` → `needs-recode`, round 2: "stale-box: Tiny1M3MVMixConvConfig not
+present in /root/universe-lm/configs/llm_config.py (commit 0339d07 not pushed
+to origin; box on main@42ed363)". Same root cause as r1: the box is a
+separate checkout that only syncs via `git pull --ff-only`, and the user has
+not pushed commit 0339d07 to origin.
+
+### State at start of r2
+- Local code for 163 IS committed (commit `0339d07` on `orchestrate-codex-fallback`):
+  - `configs/llm_config.py:281-282, 1953, 1976-2012`
+  - `models/layers.py:763-771, 1101-1114, 2886-2893, 3157-3164, 3404-3405`
+  - `models/llm.py:323-324, 626-627, 868-869`
+- `git status` clean for shared files (`models/layers.py`,
+  `configs/llm_config.py`, `models/llm.py`). No conflicts.
+- `git diff` empty for those files — code from 163 is committed.
+
+### What I changed this recode
+Nothing in `models/layers.py` / `configs/llm_config.py` / `models/llm.py` /
+`_arq_163-v-mix-conv.py` / `run.json`. The r2 bounce is the same root cause
+as r1 (publish-blocked, not code-blocked). No code change is warranted.
+
+### Local verification (re-run r2)
+```
+$ PYTHONPATH=. TORCHDYNAMO_DISABLE=1 python autoresearch/bin/_box_smoke.py _arq_163-v-mix-conv.py
+SMOKE_OK
+```
+Daemon's CPU build-smoke (the gate the box actually checks) passes.
+
+### Note — out-of-scope parallel-agent bug observed
+While running my self-check §5 step-0 byte-identity forward pass, the forward
+crashes with `AttributeError: 'MultiHeadAttention' object has no attribute
+'use_q_carry'` from `models/layers.py:1946`. This is **NOT from 163** — it
+is a half-applied edit by the parallel agent working on **164-q-carry**
+(also currently `needs-recode`, separate target). The 164 forward site
+references `self.use_q_carry` but the MHA `__init__` never sets it. This
+crashes ALL MHA forward calls regardless of which config is used (both
+`Tiny1M3MConfig` and `Tiny1M3MVMixConvConfig` fail). It does NOT affect the
+daemon's gate (which only constructs, not forward), and 164 is out of scope
+per the TARGET directive. Flagged here for visibility — the 164 worker
+needs to set `self.use_q_carry = False` in `MultiHeadAttention.__init__`.
+
+The r1 step-0 max_abs_diff=0.0 verification was performed before 164's edit
+landed and remains the load-bearing claim for 163.
+
+### Status (r2)
+- local code: ✓ committed (0339d07) and unchanged
+- build-smoke (daemon gate): ✓ SMOKE_OK locally
+- step-0 byte-identity: ✓ verified r1 (max_abs_diff=0.0) — invalidated in
+  r2 by 164's parallel-agent edit, not by 163
+- run artifact (`_arq_163-v-mix-conv.py` + `run.json`): ✓ present, unchanged
+- awaiting: user-side push of `0339d07` to origin → box's `git pull` brings
+  in `Tiny1M3MVMixConvConfig` and the daemon's pre-queue smoke passes
+- flipped back to `needs-run` round 3; if box still stale on next tick, the
+  daemon will re-bounce and the user will see this same evidence pattern
