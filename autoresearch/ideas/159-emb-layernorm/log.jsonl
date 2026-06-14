@@ -8,3 +8,4 @@
 {"ts":"2026-06-14T04:46:28Z","agent":"code-impl","idea":"159-emb-layernorm","from":"recoding","to":"needs-run","round":2,"note":"recoded: emit _arq_159-emb-layernorm.py + run.json per RUN-CONTRACT; CPU build-smoke passes (SMOKE_OK); bumped to round 2"}
 {"ts":"2026-06-14T04:46:29Z","agent":"implement-button","idea":"159-emb-layernorm","from":"needs-run","to":"needs-run","round":2,"note":"code ready; runnable at tiny1m3m seed 42 (recode: main.py→train_llm.py + added _arq_159-emb-layernorm.py bootstrap)"}
 {"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"159-emb-layernorm","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-14T05:30:51Z","agent":"reset-button","idea":"159-emb-layernorm","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}

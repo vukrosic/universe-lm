@@ -4,3 +4,4 @@
 {"ts":"2026-06-14T05:22:29Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T05:27:14Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-plan","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
 {"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-14T05:30:51Z","agent":"reset-button","idea":"162-q-only-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
