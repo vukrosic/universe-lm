@@ -6,3 +6,4 @@
 {"ts":"2026-06-14T09:08:31Z","agent":"code-impl","idea":"166-t5-rpe","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-14T09:11:56Z","agent":"runner","idea":"166-t5-rpe","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (CACHED-path treatment, n=11 ctrl baseline)"}
 {"ts":"2026-06-14T09:34:02Z","agent":"runner","idea":"166-t5-rpe","from":"running","to":"needs-recode","round":1,"note":"run FAILED rc=124: TIMEOUT 12m at step 300/732 (~1750 tok/s vs ctrl ~30000 tok/s); loss=7.02 vs ctrl ~6.66 — slow bias-gather and worse convergence, tighten kernel or bump JOB_TIMEOUT"}
+{"ts":"2026-06-14T09:34:29Z","agent":"implement-button","idea":"166-t5-rpe","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}

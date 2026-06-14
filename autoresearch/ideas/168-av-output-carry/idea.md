@@ -1,8 +1,8 @@
 ---
 id: 168-av-output-carry
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-14T09:34:05Z
+updated: 2026-06-14T09:34:07Z
 transfer-risk: med
 plain: Have each attention block borrow the *post-attention output* of the previous block, mixed in by a learnable scalar starting at zero — a residual pathway at the attention output rather than the residual stream.
 ---
