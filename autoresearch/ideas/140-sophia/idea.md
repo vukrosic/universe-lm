@@ -38,10 +38,10 @@ Sophia is the simplest second-order optimizer that doesn't require full Hessian 
 ## Plan
 
 ### Files changed
-- `optimizers/sophia.py` (NEW, ~200 LoC) — `Sophia` optimizer class with per-parameter `m_t` (gradient EMA), `h_t` (Hessian-diagonal EMA), and `update_h_hat(h_hat_list, beta2)` method to ingest the Hutchinson sample. Per-element preconditioning `update = clip(g, ±ρ) / max(h, ε)` plus a per-parameter `update_clip` magnitude guard for the cold-start `h_t ≈ 0` case. Tracks `_step_count` so the trainer can fire the Hutchinson sample on a known schedule.
+- `optimizers/sophia.py` (NEW, ~200 LoC) — `Sophia` optimizer class with per-parameter `m_t` (gradient EMA), `h_t` (Hessian-diagonal EMA), and `update_hessian(h_hat_list, beta2)` method to ingest the Hutchinson sample. Per-element preconditioning `update = clip(g, ±ρ) / max(h, ε)` plus a per-parameter `update_clip` magnitude guard for the cold-start `h_t ≈ 0` case. Tracks `_step_count` so the trainer can fire the Hutchinson sample on a known schedule.
 - `optimizers/__init__.py` — `from .sophia import Sophia` + add `'Sophia'` to `__all__`.
 - `configs/llm_config.py` — add `use_sophia: bool = False` + 7 hyperparameters (`sophia_lr`, `sophia_beta1`, `sophia_beta2`, `sophia_eps`, `sophia_rho`, `sophia_hessian_freq`, `sophia_update_clip`). Defaults match the paper's 125M model (lr=6e-3, β1=0.965, β2=0.99, ρ=0.04, k=10). Add `Tiny1M3MSophiaConfig` that flips the flag and pins the paper defaults for the A/B run.
-- `training/trainer.py` — top-level `from optimizers.sophia import Sophia`; add the `use_sophia` branch in the AdamW-replacement elif chain; add a Hutchinson block in `train_model` right after `torch.nn.utils.clip_grad_norm_` that (a) checks `sophia_opt._step_count % hessian_freq == 0`, (b) saves the post-clip grads, (c) samples `u ~ Rademacher(±1)` per parameter, (d) computes the scalar `g·u` and runs a second backward to populate `p.grad = H·u`, (e) builds `h_hat = u · (H·u)`, (f) restores the original grads so `.step()` uses `g_t` not `H·u`, (g) calls `sophia_opt.update_hessian(h_hat_list, beta2)`.
+- `training/trainer.py` — top-level `from optimizers.sophia import Sophia`; add the `use_sophia` branch in the AdamW-replacement elif chain; add a Hutchinson block in `train_model` right after `torch.nn.utils.clip_grad_norm_` that (a) checks `sophia_opt._step_count % hessian_freq == 0`, (b) builds a local `adamw_params` list from `sophia_opt.param_groups[*]['params']` so the block does not depend on `setup_muon_optimizer()` scope, (c) saves the post-clip grads, (d) samples `u ~ Rademacher(±1)` per parameter, (e) computes the scalar `g·u` and runs a second backward to populate `p.grad = H·u`, (f) builds `h_hat = u · (H·u)`, (g) restores the original grads so `.step()` uses `g_t` not `H·u`, (h) calls `sophia_opt.update_hessian(h_hat_list, beta2)`.
 - `_arq_140-sophia.py` (NEW) — A/B wrapper that subclasses `Tiny1M3MSophiaConfig` and invokes `train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
 
 ### Config flag name
@@ -56,8 +56,15 @@ With `use_sophia=False` (default) the `Sophia` class is never instantiated and t
 ```
 (matches the convention of the other `_arq_*.py` wrappers — they invoke `train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`).
 
+### Pass bar
+- Final `val_loss` is the last `eval/milestone` entry in `metrics_history['val_losses']` / `logs/<run-name>/log.jsonl`.
+- Compare against the locked tiny1m3m baseline cache at `autoresearch/baseline-cache.json` (`6.4394 ± 0.04`).
+- `WIN` if `Δ = val_loss - baseline ≤ -0.01`.
+- `NULL` if `|Δ| < 0.01`.
+- `DRIFT` if `Δ > +0.01`.
+
 ### Re-code note (2026-06-14, round 1 → 2)
 A previous GPU run failed with `ImportError: cannot import name 'Tiny1M3MSophiaConfig' from configs.llm_config` because the box was stale at `7a69c1a` and missing the `bd5adf5` commit that introduced the config class. **No local code change is required** — the class exists at `configs/llm_config.py:2084` and `optimizers/sophia.py` imports cleanly. The local smoke test passed: `MinimalLLM(Tiny1M3MSophiaConfig)` builds 949,056 params (bit-identical to `Tiny1M3MConfig`), forward at step 0 is bit-identical when seeded the same way, and `Sophia._step_count` increments correctly through `.step()`. The box must `git pull` (or fast-forward to a commit ≥ `bd5adf5`) before the next queue picks up `_arq_140-sophia.py`; otherwise the import will keep failing.
 
 ### How the final val loss is read
-The trainer's `train_model` loop writes `metrics.json` to the run's `output_dir` after each eval milestone. The last entry in `metrics_history['val_losses']` (and the matching `val_perplexities`, `val_accuracies`) is the final val loss; the run-reporting harness reads it the same way as every other `_arq_*.py` A/B.
+The trainer's `train_model` loop writes `metrics.json` to the run's `output_dir` after each eval milestone. The last entry in `metrics_history['val_losses']` (and the matching `val_perplexities`, `val_accuracies`) is the final raw `val_loss`; the runner compares that value against the pass bar above.
