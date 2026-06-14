@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward
+from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward, ReLU2FeedForward
 from .fire_pe import FIREBias
 from .cope import CoPE
 from .deberta import DeBERTaRelativePositionBias
@@ -15,6 +15,7 @@ from .switch_ffn import SwitchFFN
 from .expert_choice_moe import ExpertChoiceMoE
 from .ttt_linear import TTTFeedForward
 from .xlayer_attn import XLayerCrossAttn
+from .conv_ffn import ConvFFN
 
 
 class Rotary(nn.Module):
@@ -603,6 +604,38 @@ class MultiHeadAttention(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 152 — Per-head attention logit bias (PaLM 2 §arch,
+        # OLMo 2). Add a learnable per-head additive bias `b_h ∈ R^H`
+        # to the attention logits pre-softmax: `logits_h ← logits_h
+        # + b_h`. `b_h` is init 0 → `softmax(logits_h + 0) = softmax
+        # (logits_h)` byte-for-byte at step 0. NB: mathematically, a
+        # per-head *scalar* bias cancels in softmax over the key axis
+        # for all subsequent steps too (per-(b,h,t) `e^{b_h}` factor
+        # cancels in the per-row normalizer); the experiment is
+        # therefore a *recorded null* rather than a useful lever.
+        # Default off → baseline path bit-identical (no Parameter is
+        # registered, no branch is taken). Forces the manual
+        # attention path so SDPA's flash/efficient backends don't
+        # perturb step-0 numerics. See
+        # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
+        use_attn_logit_bias: bool = False,
+        # 155 — Per-head learnable attention temperature
+        # (PaLM 2 §arch, OLMo 2, Gemma 2). Replace the standard
+        # `1/sqrt(d_k)` attention scale with a per-head learnable
+        # scalar `τ_h ∈ R^H` so the per-head logit scale becomes
+        # `Q_h K_h^T * τ_h`. Init `τ_h = 1/sqrt(d_k)` exactly ⇒
+        # `Q_h K_h^T * (1/sqrt(d_k))` is bit-identical to the
+        # standard `Q_h K_h^T / sqrt(d_k)` at step 0 (the standard
+        # pre-softmax scaling is exactly that factor). Each head
+        # can then adjust its own temperature during training —
+        # heads wanting sharper focus can lower `τ_h`, heads wanting
+        # broader context can raise it. Cost: H scalars/layer (4 at
+        # tiny1m3m, total 48 — negligible). Forces the manual
+        # attention path so SDPA's flash/efficient backends don't
+        # perturb step-0 numerics. Default off → baseline path
+        # bit-identical (no Parameter is registered, no branch is
+        # taken). See `autoresearch/ideas/155-per-head-temp/idea.md`.
+        use_per_head_temp: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -834,6 +867,33 @@ class MultiHeadAttention(nn.Module):
         # Q,K; RoV becomes a no-op (the geometric lever is
         # unavailable). See `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 154 — Rebased Attention (Shi et al. 2024, arXiv:2407.06641):
+        # pool K, V along the time axis with stride `rebase_stride`
+        # (default 8) before the softmax, so attention reads from R =
+        # ceil(T/R) summary positions instead of T raw ones. Identity
+        # when `rebase_stride >= T` (pool collapses to a no-op). When
+        # `use_rebased_attn=False` (default) the branch is never
+        # taken and the standard softmax path is bit-identical to the
+        # no-flag baseline. When ON, the manual attention path is
+        # forced because the rebased causal mask can't go through
+        # SDPA's flash kernel. See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        use_rebased_attn: bool = False,
+        rebase_stride: int = 8,
+        # 156 — Mixture-of-Attentions (MoA). Run `E` parallel
+        # attention computations per layer with SEPARATE K_e, V_e
+        # projections (Q is shared across experts, so the routing is
+        # only on the K/V side). The E attention outputs are mixed by
+        # a per-token router `g_e = softmax(W_g x)_e`. At init the
+        # (E-1) extra K/V projections are zero so the extra experts
+        # produce 0, and the router bias is one-hot on expert 0 so
+        # g_0 = 1.0, g_e>=1 = 0 ⇒ step-0 output is bit-identical to
+        # a single standard attention. Distinct from MoS (144, closed)
+        # which mixes softmax *variants* within a single attention —
+        # MoA mixes full attention computations. See
+        # `autoresearch/ideas/156-moa/idea.md`.
+        use_moa: bool = False,
+        moa_num_experts: int = 2,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -997,6 +1057,30 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_output_channel_gate = use_attn_output_channel_gate
         if self.use_attn_output_channel_gate:
             self.attn_output_channel_gate = nn.Parameter(torch.zeros(n_heads, self.d_k))
+        # 152 — Per-head attention logit bias. Zero-init `b_h ∈ R^H`
+        # added to scores pre-softmax in the manual path. See
+        # `MultiHeadAttention.use_attn_logit_bias` kwarg for the
+        # full mechanism and the math-identity caveat (per-head
+        # scalar cancels in softmax over keys for all steps).
+        self.use_attn_logit_bias = use_attn_logit_bias
+        if self.use_attn_logit_bias:
+            self.attn_logit_bias = nn.Parameter(torch.zeros(n_heads))
+        # 155 — Per-head learnable attention temperature `τ_h ∈ R^H`.
+        # Init `1/sqrt(d_k)` (the standard inverse-temperature) so the
+        # per-head `Q_h K_h^T * τ_h` score scale matches baseline
+        # `Q_h K_h^T / sqrt(d_k)` at step 0. `1/sqrt(d_k)` here is
+        # computed as `float(self.d_k) ** -0.5` (matching the rest
+        # of this file, no `import math` needed). Stored on the
+        # module so the manual-path forward site can broadcast it
+        # over the [B, H, T, T] score tensor with
+        # `.view(1, n_heads, 1, 1)`. Default off → no Parameter
+        # created, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/155-per-head-temp/idea.md`.
+        self.use_per_head_temp = use_per_head_temp
+        if self.use_per_head_temp:
+            self.attn_temperature = nn.Parameter(
+                torch.full((self.n_heads,), float(self.d_k) ** -0.5)
+            )
         # #107 Exclusive self-attn: subtract the projection of the head
         # output onto its current-token value vector. Per-head scalar gate
         # is zero-init so step 0 is the baseline graph.
@@ -1262,6 +1346,67 @@ class MultiHeadAttention(nn.Module):
         self.use_rov = use_rov
         if self.use_rov:
             self.rov_gate = nn.Parameter(torch.zeros(1))
+        # 154 — Rebased Attention. Stored on self; the rebase pool
+        # is applied in `forward()` right after the [B,T,H,D] reshape
+        # (post-RoPE) and *before* the [B,H,T,D] transpose, so K, V
+        # retain their per-head layout through the pool. The
+        # `rebase_stride` is clamped to `>= 1` at construction; if
+        # the user passes a value larger than `max_seq_len` the pool
+        # collapses to a single block (R=1) and the rebased causal
+        # mask is the standard causal mask ⇒ the lever is a no-op.
+        # When `use_rebased_attn=False` the branch is never taken
+        # and the standard softmax path is bit-identical to the
+        # no-flag baseline. See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        self.use_rebased_attn = use_rebased_attn
+        self.rebase_stride = max(1, int(rebase_stride))
+
+        # 156 — Mixture-of-Attentions (MoA). Stored on self; the
+        # MoA branch in `forward()` runs E parallel attention
+        # computations and mixes them by a per-token router. The
+        # expert count is clamped to `>= 2` when the flag is on (1
+        # expert is the no-op MoA = standard attention, so the
+        # construction refuses it). When `use_moa=False` (default)
+        # the MoA parameters are NOT built (no extra memory cost on
+        # the baseline path) and the standard softmax path is
+        # bit-identical. Cost when on (E=2): (E-1) × (2·kv_size ×
+        # d_model) = (2·32 × 64) = 4096 params/layer for the extra
+        # K/V, plus d_model × E = 128 params/layer for the router =
+        # ~4224/layer, ~50,688 total at tiny1m3m (+5.4% of the
+        # 0.94M model). See `autoresearch/ideas/156-moa/idea.md`.
+        self.use_moa = use_moa
+        self.moa_num_experts = max(2, int(moa_num_experts)) if use_moa else 1
+        if use_moa:
+            extra_kv_size = self.qkv_size - self.q_size  # 2 × kv_size
+            # (E-1) extra sets of K_e, V_e projections; init 0 so
+            # experts 1..E-1 produce 0 attention output at step 0.
+            # Constructed as a raw `nn.Parameter` (NOT `nn.Linear`)
+            # so the construction does NOT consume RNG — keeping the
+            # RNG state aligned with the baseline path for the
+            # step-0 byte-identity test (any RNG advance between the
+            # two constructions would shift the qkvo_proj random
+            # init of later blocks and break the comparison).
+            self.moa_extra_kv = nn.Parameter(
+                torch.zeros(self.moa_num_experts - 1, extra_kv_size, self.d_model)
+            )
+            # Router: weight=0 + bias one-hot on expert 0
+            # (saturating +30 vs 0 ⇒ softmax([30, 0, …]) ≈ [1, 0, …]
+            # in fp32; g_0 = 1 ⇒ attn_output = 1·attn_output_0
+            # bit-identical to a single standard attention at step
+            # 0). Same raw-`Parameter` choice as `moa_extra_kv`
+            # above for the RNG-alignment reason.
+            self.moa_router_weight = nn.Parameter(
+                torch.zeros(self.moa_num_experts, self.d_model)
+            )
+            r_bias = torch.zeros(self.moa_num_experts)
+            r_bias[0] = 30.0
+            self.moa_router_bias = nn.Parameter(r_bias)
+        else:
+            # Stubs so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references these
+            # when `use_moa=False` so they can be anything.
+            self.moa_router_weight = None
+            self.moa_router_bias = None
 
         # ============================================================================
         # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
@@ -1928,8 +2073,68 @@ class MultiHeadAttention(nn.Module):
             V_rot = self.rotary(V)
             V = V + self.rov_gate * V_rot
 
+        # 154 — Rebased Attention (deferred). `self._rebase_R` is the
+        # rebased key count: 0 = no rebase active (K, V stay in the
+        # standard `[B, H, T, d_k]` shape after the transpose below),
+        # > 0 = rebase to R keys. The actual pool op runs AFTER the
+        # Q,K,V transpose so K, V are in `[B, H, T, d_k]` when the
+        # reshape reads `K.size(1)` as the head axis (the previous
+        # pre-transpose placement was a SMOKE-FAIL: K was `[B, T, H,
+        # d_k]` and `K.size(1)` was T, not H). See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        self._rebase_R = 0
+
         # Transpose for attention
         Q, K, V = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)
+
+        # 154 — Rebased Attention. Pool K, V along the time axis with
+        # a fixed stride `rebase_stride` (default 8) by *time-axis*
+        # avg-pool — `K' = avg_pool_R(K)`, `V' = avg_pool_R(V)` of
+        # shape `[B, H, R, d_k]` with R = ceil(T / rebase_stride).
+        # The attention is then run with a *rebased* causal mask
+        # (query t can only attend to rebasin r when t >= r·R —
+        # i.e. the rebasin is "in the past" of the query). For
+        # attention this means the AV product sums over R positions
+        # instead of T, and the softmax is over R keys. With
+        # `rebase_stride >= T` (e.g. `rebase_stride=2048` at our
+        # T=2048) R=1 and the rebased causal mask is just `all-True`
+        # for the single rebasin ⇒ the path reduces to full attention
+        # (bit-identical to baseline up to a single-block avg-pool of
+        # a uniform-time key, which is just the per-position mean —
+        # equivalent to the no-pool softmax under our pointwise-K
+        # baseline). With `use_rebased_attn=False` (default) the
+        # branch is never taken and the standard softmax path is
+        # bit-identical. Forces the manual attention path below
+        # because the rebased causal mask can't go through SDPA's
+        # flash kernel. Sits AFTER the Q,K,V transpose (line 2125) so
+        # K, V are `[B, H, T, d_k]` — `K.size(1)` is the head axis
+        # and the pool below reads the right dim. See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        if self.use_rebased_attn:
+            R = self.rebase_stride
+            if R < seq_len:
+                # Pad on the right to a multiple of R, then mean-pool
+                # over R-sized non-overlapping blocks along T. `pad`
+                # is the number of right-pad tokens needed so T+pad
+                # is a multiple of R. `F.pad` with `(0, 0, 0, pad)`
+                # pads the third-from-last dim, which is T for a
+                # `[B, H, T, d_k]` tensor.
+                pad = (R - (seq_len % R)) % R
+                if pad:
+                    K = F.pad(K, (0, 0, 0, pad))
+                    V = F.pad(V, (0, 0, 0, pad))
+                # [B, H, T_padded, d_k] -> [B, H, R, d_k]
+                K = K.reshape(K.size(0), K.size(1), -1, R, K.size(-1)).mean(dim=3)
+                V = V.reshape(V.size(0), V.size(1), -1, R, V.size(-1)).mean(dim=3)
+                self._rebase_R = (seq_len + pad) // R
+            else:
+                # R >= seq_len ⇒ no compression. K, V stay in the
+                # original layout; the manual attention branch sees
+                # `_rebase_R == 0` and falls back to the standard
+                # full causal mask (equivalent to no-rebase at this
+                # scale, modulo the optional no-op average over a
+                # single block which equals the un-pooled V).
+                self._rebase_R = 0
 
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K applied AFTER the [B, T, H, D]
@@ -2002,12 +2207,112 @@ class MultiHeadAttention(nn.Module):
         # The O1 talking_heads_out lever (docs/research/attention_output/)
         # lives on the OUTPUT side of softmax (post-matmul(attn_w, V)),
         # so it also forces the manual path.
-        if self.use_fire_pe:
+        # 156 — MoA: when `use_moa=True`, replace the standard
+        # attention branch with E parallel attention computations
+        # (separate K_e, V_e projections per expert, shared Q) and
+        # mix by a per-token router. Inserted BEFORE the other
+        # attention branches because MoA replaces the entire
+        # attention computation (composes with no other attention-
+        # side lever at step 0). See
+        # `autoresearch/ideas/156-moa/idea.md`.
+        if self.use_moa:
+            E = self.moa_num_experts
+            B, H, T, D = Q.shape  # Q, K, V already in [B, H, T, D]
+            # Compute extra K_e, V_e (e in [1, E-1]) from the
+            # zero-init `moa_extra_kv`. x is the sublayer input,
+            # still in scope. Reshape `moa_extra_kv` from
+            # [E-1, 2·kv_size, d_model] to
+            # [(E-1)·2·kv_size, d_model] so F.linear reads it as a
+            # single dense projection (output size =
+            # (E-1)·2·kv_size, input size = d_model).
+            extra = F.linear(
+                x, self.moa_extra_kv.reshape(-1, self.d_model),
+            )  # [B, T, (E-1)·2·kv_size]
+            extra = extra.reshape(B, T, E - 1, 2 * self.kv_size)
+            extra_K_pre = extra[..., :self.kv_size]
+            extra_V_pre = extra[..., self.kv_size:]
+            # Apply k_norm + RoPE to extra K_e, matching the standard
+            # Q/K processing path (norm then RoPE in the default
+            # branch; this is identical to what Q, K_0 saw above).
+            # For step-0 byte-identity use_nope/use_cope are off
+            # (the MoA config keeps them off). RoPE expects a 4D
+            # `[*, T, H, D]` layout; we collapse the E-1 dim into
+            # the batch dim (`B·(E-1)`) for the rotary call, then
+            # reshape back.
+            extra_K_4d = extra_K_pre.reshape(
+                B * (E - 1), T, self.n_kv_heads, self.d_k,
+            )
+            extra_V_pre = extra_V_pre.reshape(
+                B, T, E - 1, self.n_kv_heads, self.d_k,
+            )
+            if self.use_nope or self.use_cope:
+                extra_K_4d = self.k_norm(extra_K_4d)
+            elif self.use_qk_norm_post_rope:
+                extra_K_4d = self.k_norm(self.rotary(extra_K_4d))
+            else:
+                extra_K_4d = self.rotary(self.k_norm(extra_K_4d))
+            extra_K_pre = extra_K_4d.reshape(
+                B, T, E - 1, self.n_kv_heads, self.d_k,
+            )
+            # GQA repeat if needed (matches the standard path).
+            if self.n_kv_heads != self.n_heads:
+                extra_K_pre = torch.repeat_interleave(
+                    extra_K_pre, self.num_key_value_groups, dim=3,
+                )
+                extra_V_pre = torch.repeat_interleave(
+                    extra_V_pre, self.num_key_value_groups, dim=3,
+                )
+            # Permute to [B, E-1, H, T, d_k] and concat with K_0, V_0.
+            extra_K = extra_K_pre.permute(0, 2, 3, 1, 4).contiguous()
+            extra_V = extra_V_pre.permute(0, 2, 3, 1, 4).contiguous()
+            K_all = torch.cat([K.unsqueeze(1), extra_K], dim=1)
+            V_all = torch.cat([V.unsqueeze(1), extra_V], dim=1)
+            # SDPA over batch+expert combined dim (E parallel
+            # causal-mask attentions in one fused kernel call).
+            Q_sdpa = Q.unsqueeze(1).expand(-1, E, -1, -1, -1).reshape(
+                B * E, H, T, D,
+            )
+            K_sdpa = K_all.reshape(B * E, H, T, D)
+            V_sdpa = V_all.reshape(B * E, H, T, D)
+            drop_p = self.dropout if self.training else 0.0
+            attn_out_sdpa = F.scaled_dot_product_attention(
+                Q_sdpa, K_sdpa, V_sdpa, is_causal=True, dropout_p=drop_p,
+            )
+            expert_outputs = attn_out_sdpa.reshape(B, E, H, T, D)
+            # Per-token routing weights from the sublayer input.
+            # softmax([30, 0, …]) ≈ [1, 0, …] in fp32 at init; with
+            # the extra experts' K_e=V_e=0 the mixed output is
+            # exactly attn_output_0 (single standard attention).
+            # `moa_router_weight` is `[E, d_model]` (init 0) and
+            # `moa_router_bias` is `[E]` (init [30, 0, …]). Built
+            # as raw `nn.Parameter`s (not `nn.Linear`) so the
+            # construction does NOT consume RNG (keeping the RNG
+            # state aligned with the no-flag path for the step-0
+            # byte-identity check).
+            router_logits = (
+                torch.einsum("btd,ed->bte", x, self.moa_router_weight)
+                + self.moa_router_bias
+            )  # [B, T, E]
+            g = torch.softmax(router_logits, dim=-1)  # [B, T, E]
+            # Broadcast g over H, d_k: [B, E, 1, T, 1].
+            g_bcast = g.permute(0, 2, 1).unsqueeze(2).unsqueeze(-1)
+            attn_output = (expert_outputs * g_bcast).sum(dim=1)  # [B, H, T, D]
+        elif self.use_fire_pe:
             # 009 FIRE PE — drop-in for RoPE. Manual path: scores
             # = Q K^T / √d_k + FIRE bias, then mask + softmax + @V.
             # x is the original input [B, T, d_model] (still in scope).
-            scale = 1.0 / (float(self.d_k) ** 0.5)
-            scores = torch.matmul(Q, K.transpose(-1, -2)) * scale
+            # 155 — Per-head temperature REPLACES the standard
+            # `1/sqrt(d_k)` scale (per the idea spec). At init
+            # `τ_h = 1/sqrt(d_k)` ⇒ `scores = Q^T K / sqrt(d_k)` ≡
+            # baseline at step 0. The else-branch keeps the standard
+            # `* (1/sqrt(d_k))` scale untouched for the flag-off
+            # path. See `autoresearch/ideas/155-per-head-temp/idea.md`.
+            if self.use_per_head_temp:
+                scores = torch.matmul(Q, K.transpose(-1, -2))
+                scores = scores * self.attn_temperature.view(1, self.n_heads, 1, 1)
+            else:
+                scale = 1.0 / (float(self.d_k) ** 0.5)
+                scores = torch.matmul(Q, K.transpose(-1, -2)) * scale
             fire_bias = self.fire_bias(x)  # [B, H, T, T]
             scores = scores + fire_bias
             # 013 — CoPE stacks on top of FIRE: add the content-aware
@@ -2073,6 +2378,8 @@ class MultiHeadAttention(nn.Module):
             or self.use_fox  # 020 — FoX: post-softmax multiply can't go through SDPA.
             or self.use_softpick  # 022 — Softpick: defensive fallback (swap site is the FIRE branch above).
             or self.use_ssmax  # 025 — SSMax: score-side multiply, can't go through SDPA's flash kernel.
+            or self.use_attn_logit_bias  # 152 — Per-head logit bias (manual path; force SDPA off so step-0 is bit-identical).
+            or self.use_per_head_temp  # 155 — Per-head temperature (manual path; force SDPA off so the score-side multiply is exact).
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -2100,9 +2407,30 @@ class MultiHeadAttention(nn.Module):
             else:
                 Qn, Kn = Q, K
             # ---- Base scores ----
-            # Standard QK^T / sqrt(d_k). SDPA-style "scale" math.
-            scale = 1.0 / (float(self.d_k) ** 0.5)
-            scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # 155 — Per-head learnable attention temperature REPLACES
+            # the standard `1/sqrt(d_k)` scale (per the idea spec):
+            # `scores_h = Q_h K_h^T * τ_h` with `τ_h` init
+            # `1/sqrt(d_k)` ⇒ `scores = Q^T K / sqrt(d_k)` ≡ baseline
+            # at step 0 (the standard pre-softmax scale is exactly
+            # that factor). The else-branch keeps the standard
+            # `* (1/sqrt(d_k))` scale untouched for the flag-off
+            # path. See `autoresearch/ideas/155-per-head-temp/idea.md`.
+            if self.use_per_head_temp:
+                scores = torch.matmul(Qn, Kn.transpose(-1, -2))
+                scores = scores * self.attn_temperature.view(1, self.n_heads, 1, 1)
+            else:
+                scale = 1.0 / (float(self.d_k) ** 0.5)
+                scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # 152 — Per-head logit bias `b_h ∈ R^H`. Broadcast
+            # `[1, H, 1, 1]` over the [B, H, T, T] score tensor,
+            # applied BEFORE softmax (and before other score-side
+            # tweaks so the lever composes cleanly). At init
+            # `b_h = 0` → `scores + 0` is bit-identical to baseline.
+            # Mathematically the per-(b,h,t) normalizer absorbs
+            # `e^{b_h}` for all subsequent steps too; this is the
+            # recorded-null caveat noted at the flag docstring.
+            if self.use_attn_logit_bias:
+                scores = scores + self.attn_logit_bias.view(1, self.n_heads, 1, 1)
             # ---- Q3 per-head τ: multiply by τ_h (Q3 only — different
             # from Q1 alibi which is a constant prior) ----
             if self.use_cosine_attn:
@@ -2204,6 +2532,33 @@ class MultiHeadAttention(nn.Module):
             lam = self.diff_lambda.view(1, self.n_heads, 1, 1)
             attn_output = a1 - lam * a2
             attn_output = self.diff_norm(attn_output) * (1.0 - self._diff_lambda_init)
+        elif self._rebase_R > 0:
+            # 154 — Rebased Attention manual branch. K, V are already
+            # pooled to `[B, H, R, d_k]` (post-transpose, post-pool).
+            # The rebased causal mask: query t attends to rebasin r
+            # when `t >= r·R` (the rebasin's start position is at or
+            # before t). Build a [T, R] bool mask and broadcast over
+            # [B, H, T, R]. Then `softmax(Q @ K_r^T) @ V_r` produces
+            # an attention output of shape `[B, H, T, d_k]` (queries
+            # are at full T resolution; keys/values are at R
+            # resolution). When `_rebase_R == 0` (flag-on but stride
+            # >= T) we don't enter this branch — the standard
+            # softmax path runs at full T-T resolution. When
+            # `use_rebased_attn=False` (default) the branch is never
+            # reached and the standard path is bit-identical. See
+            # `autoresearch/ideas/154-rebased-attn/idea.md`.
+            R = self._rebase_R
+            scale = 1.0 / (float(self.d_k) ** 0.5)
+            scores = torch.matmul(Q, K.transpose(-1, -2)) * scale  # [B,H,T,R]
+            q_pos = torch.arange(seq_len, device=Q.device).view(seq_len, 1)
+            r_pos = torch.arange(R, device=Q.device).view(1, R)
+            rebased_mask = q_pos >= (r_pos * self.rebase_stride)  # [T, R]
+            scores = scores.masked_fill(
+                ~rebased_mask.view(1, 1, seq_len, R), -1e9
+            )
+            attn_w = torch.softmax(scores, dim=-1)
+            attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
+            attn_output = torch.matmul(attn_w, V)  # [B, H, T, d_k]
         elif self.use_hybrid_heads:
             # #89 Hybrid heads: per-head local/global mask, one SDPA call.
             attn_output = F.scaled_dot_product_attention(
@@ -2374,6 +2729,16 @@ class TransformerBlock(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 152 — Per-head attention logit bias. Pass-through to the
+        # inner MHA (see `MultiHeadAttention.use_attn_logit_bias` for
+        # the mechanism and the math-identity caveat). Default off →
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
+        use_attn_logit_bias: bool = False,
+        # 155 — Per-head learnable attention temperature. Pass-through
+        # to the inner MHA. See `MultiHeadAttention.use_per_head_temp`
+        # for the mechanism. Default off → baseline path bit-identical.
+        use_per_head_temp: bool = False,
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K during training. Pass-through
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
@@ -2384,6 +2749,23 @@ class TransformerBlock(nn.Module):
         # mechanism. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 154 — Rebased Attention. Pass-through to the inner MHA.
+        # See `MultiHeadAttention.use_rebased_attn` for the
+        # mechanism. Default off → baseline path bit-identical.
+        # `rebase_stride` is the time-axis pool stride (default 8,
+        # → R=256 rebasins at T=2048). Identity when
+        # `rebase_stride >= T`. See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        use_rebased_attn: bool = False,
+        rebase_stride: int = 8,
+        # 156 — Mixture-of-Attentions (MoA). Pass-through to the
+        # inner MHA. See `MultiHeadAttention.use_moa` for the
+        # mechanism (E parallel K/V experts + per-token router).
+        # `moa_num_experts` is clamped to >= 2 at MHA construction.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/156-moa/idea.md`.
+        use_moa: bool = False,
+        moa_num_experts: int = 2,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -2411,6 +2793,11 @@ class TransformerBlock(nn.Module):
         use_deep_value_embed: bool = False,
         deep_value_embed_hidden: int | None = None,
         use_ffn_embed: bool = False,
+        # 153 — Squared-ReLU FFN activation. Default off → the
+        # standard `ffn_variant` branch runs unchanged, baseline
+        # forward graph bit-identical. See
+        # `autoresearch/ideas/153-relu2-ffn/idea.md`.
+        use_relu2_ffn: bool = False,
         use_qk_norm_post_rope: bool = False,
         use_sliding_window: bool = False,
         sliding_window_size: int = 512,
@@ -2684,6 +3071,28 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/150-xlayer-feedback/idea.md`.
         use_xlayer_feedback: bool = False,
         xlayer_k: int = 2,
+        # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style,
+        # Jiang et al. 2020 arXiv:2008.02496; Woo et al. 2020). A
+        # symmetric depthwise Conv1d applied to the FFN output in
+        # `TransformerBlock.forward` (after `feed_forward(ffn_in)`,
+        # before any layerscale/sub_ln/residual-add). Conv weights
+        # are identity-initialized (center tap = 1, rest = 0) with
+        # `padding=k//2` so the conv is a strict identity at step 0
+        # ⇒ the block's FFN output is bit-identical to baseline at
+        # step 0. Differs from 143-shortconv (pre-attention, causal,
+        # gated) by (a) post-FFN placement (NOT pre-attention on the
+        # residual stream), (b) symmetric (non-causal) padding —
+        # appropriate because the FFN output has already integrated
+        # the full causal context via attention, so mixing neighbors
+        # on both sides does not leak future tokens. `conv_ffn_kernel`
+        # defaults to 3 (spec pin); valid range is odd integers ≥ 3.
+        # Default off → baseline path bit-identical (the `ConvFFN`
+        # module is never built, the forward branch is never taken).
+        # Cost: n_layers × (kernel × d_model) extra params (~2.3K at
+        # tiny1m3m with k=3, +0.25%). See
+        # `autoresearch/ideas/157-conv-ffn/idea.md`.
+        use_conv_ffn: bool = False,
+        conv_ffn_kernel: int = 3,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -2707,6 +3116,15 @@ class TransformerBlock(nn.Module):
             use_attn_output_channel_gate=use_attn_output_channel_gate,
             use_exclusive_self_attn=use_exclusive_self_attn,
             use_kda_channel_gate=use_kda_channel_gate,
+            # 152 — Per-head logit bias pass-through to the inner MHA.
+            # See `MultiHeadAttention.use_attn_logit_bias` for the
+            # mechanism. Default off → baseline path bit-identical.
+            use_attn_logit_bias=use_attn_logit_bias,
+            # 155 — Per-head learnable attention temperature
+            # pass-through to the inner MHA. Default off → baseline
+            # path bit-identical. See
+            # `autoresearch/ideas/155-per-head-temp/idea.md`.
+            use_per_head_temp=use_per_head_temp,
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,
@@ -2714,6 +3132,16 @@ class TransformerBlock(nn.Module):
             # → baseline path bit-identical. See
             # `autoresearch/ideas/151-rov-gated/idea.md`.
             use_rov=use_rov,
+            # 154 — Rebased Attention pass-through to the inner MHA.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/154-rebased-attn/idea.md`.
+            use_rebased_attn=use_rebased_attn,
+            rebase_stride=rebase_stride,
+            # 156 — MoA pass-through to the inner MHA. Default off
+            # → baseline path bit-identical. See
+            # `autoresearch/ideas/156-moa/idea.md`.
+            use_moa=use_moa,
+            moa_num_experts=moa_num_experts,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,
@@ -2796,7 +3224,19 @@ class TransformerBlock(nn.Module):
             use_q_noise_reg=use_q_noise_reg,
             value_embed_rank=value_embed_rank,
         )
-        if use_soft_moe:
+        if use_relu2_ffn:
+            # 153 — Squared-ReLU FFN activation (So et al. "Primer",
+            # arXiv:2109.08668, 2021). `relu2(x) = x * F.relu(x)`
+            # (≡ `(max(0, x))^2`). Two-projection shape matches
+            # `SquaredReLUFeedForward` so the lever is purely the
+            # activation change. Branch sits AHEAD of every other
+            # FFN-replacement flag (MoE / TTT / `ffn_variant`) so it
+            # isn't silently shadowed when more than one is set.
+            # Default off → no `ReLU2FeedForward` is constructed, the
+            # baseline path runs bit-identical. See
+            # `autoresearch/ideas/153-relu2-ffn/idea.md`.
+            self.feed_forward = ReLU2FeedForward(d_model, d_ff, dropout)
+        elif use_soft_moe:
             # 117 — Soft MoE: E parallel narrower FFNs + softmax
             # dispatch/combine. See `models/soft_moe.py` for the
             # mechanism. Each expert uses the same `ffn_variant` as
@@ -2860,6 +3300,19 @@ class TransformerBlock(nn.Module):
             self.feed_forward = SaturatingReLUFeedForward(d_model, d_ff, dropout)
         else:
             raise ValueError(f"Unknown ffn_variant: {ffn_variant}")
+
+        # 157 — Depthwise Conv inside FFN. Identity-init symmetric
+        # depthwise Conv1d applied to the FFN output (post-FFN, pre-
+        # residual-add) in `forward`. Built lazily; never called when
+        # `use_conv_ffn=False` so the baseline path is bit-identical.
+        # See `models/conv_ffn.py` for the module docstring and
+        # `autoresearch/ideas/157-conv-ffn/idea.md` for the design.
+        self.use_conv_ffn = use_conv_ffn
+        self.conv_ffn_kernel = int(conv_ffn_kernel)
+        if self.use_conv_ffn:
+            self.conv_ffn = ConvFFN(d_model, kernel_size=self.conv_ffn_kernel)
+        else:
+            self.conv_ffn = None
 
         # Normalization layers
         self.norm1 = make_norm(d_model, norm_type, use_layernorm)
@@ -3005,8 +3458,11 @@ class TransformerBlock(nn.Module):
         # is bit-identical. K=2 by default (the spec pin). The per-
         # block scalar `xlayer_gate` is the identity-init lever: 0
         # means the cross-attn contribution is exactly 0 at step 0
-        # regardless of the Q/K/V projection values. See
-        # `models/xlayer_attn.py` and
+        # regardless of the Q/K/V projection values. (The gate is
+        # `tanh`-bounded at the call site, so its effective range is
+        # `[-1, 1]` during training — this prevents the unbounded
+        # runaway positive-feedback loop the round-2 GPU run hit.)
+        # See `models/xlayer_attn.py` and
         # `autoresearch/ideas/150-xlayer-feedback/idea.md`.
         self.use_xlayer_feedback = use_xlayer_feedback
         self.xlayer_k = max(1, int(xlayer_k))
@@ -3258,6 +3714,12 @@ class TransformerBlock(nn.Module):
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in)
+            # 157 — Depthwise Conv inside FFN. Identity-init
+            # symmetric conv → bit-identical to no-conv at step 0.
+            # Applied after the FFN returns, before the
+            # layerscale/LayerScale/post-norm multipliers.
+            if self.use_conv_ffn:
+                ff_out = self.conv_ffn(ff_out)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
             if self.use_layer_scale:
@@ -3295,6 +3757,10 @@ class TransformerBlock(nn.Module):
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in)
+            # 157 — Depthwise Conv inside FFN. Identity-init
+            # symmetric conv → bit-identical to no-conv at step 0.
+            if self.use_conv_ffn:
+                ff_out = self.conv_ffn(ff_out)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
             if self.use_layer_scale:
@@ -3338,20 +3804,60 @@ class TransformerBlock(nn.Module):
             # from `xlayer_mem` (the previous K blocks' pre-FFN
             # states, accumulated by the model loop) and adds a gated
             # contribution back to the residual. `xlayer_gate=0` at
-            # init ⇒ contribution is exactly 0 at step 0 regardless
-            # of the Q/K/V projection values ⇒ forward is
-            # bit-identical to the no-feedback baseline. After the
-            # block returns, the model loop appends `x_pre_ffn` to
-            # `xlayer_mem` so the NEXT block can read it.
+            # init ⇒ `tanh(0)=0` ⇒ contribution is exactly 0 at
+            # step 0 regardless of the Q/K/V projection values ⇒
+            # forward is bit-identical to the no-feedback baseline.
+            # After the block returns, the model loop appends
+            # `x_pre_ffn` to `xlayer_mem` so the NEXT block can read
+            # it. The `tanh` wraps the gate so its effective range
+            # is `[-1, 1]` (the `xlayer_gate` parameter is a
+            # pre-activation). This bounds the cross-attn
+            # contribution and prevents the runaway positive-
+            # feedback loop the unbounded gate had in the round-2
+            # GPU run (gate opens → cross-attn learns → output
+            # grows → gradient on gate grows → gate opens more →
+            # loop until explosion, val loss diverging 7.36→9.77
+            # after step ~100). The tanh gradient saturates
+            # smoothly so the gate can still open to its full
+            # `±1` effective range during training; it just can't
+            # run away. Bit-identity at step 0 is preserved
+            # (`tanh(0)` is exactly `0.0` in fp32).
             x_pre_ffn = x
             if self.use_xlayer_feedback:
-                y_xa = self.xlayer_attn(x_pre_ffn, xlayer_mem)
-                x = x_pre_ffn + self.xlayer_gate * y_xa
+                # 150 — Cross-Layer Feedback: detach the previous-layer
+                # mem entries BEFORE the cross-attn so gradient does NOT
+                # flow back into the pre-FFN states of earlier blocks.
+                # The forward computation is unchanged (the cross-attn
+                # still reads the actual previous-layer pre-FFN values).
+                # The backward pass: the cross-attn path contributes
+                # gradients to (q_proj/k_proj/v_proj/out_proj/xlayer_gate
+                # + the current block's x via the Q projection) — but NOT
+                # to the pre-FFN x of blocks [-K, -1]. Mirrors the
+                # `V.detach()` pattern in 021-value-residual, where the
+                # stashed V_1 from layer 0 is detached before the layer-l
+                # blend `V = (1-λ)·V + λ·v_residual`. The detach was
+                # the round-2 fix; the round-3 fix is the `tanh`-
+                # bounding of `xlayer_gate` (see block comment above).
+                mem_det = ([t.detach() for t in xlayer_mem]
+                           if xlayer_mem is not None else None)
+                y_xa = self.xlayer_attn(x_pre_ffn, mem_det)
+                # `tanh`-bound the gate to `[-1, 1]`. At init
+                # `tanh(0)=0` ⇒ contribution is exactly 0 ⇒
+                # forward is bit-identical to the no-feedback
+                # baseline. During training the gate is bounded,
+                # so the cross-attn path cannot inject arbitrarily
+                # large values into the residual stream even if
+                # the Q/K/V projections grow.
+                x = x_pre_ffn + torch.tanh(self.xlayer_gate) * y_xa
 
             ffn_in = self.norm2(x)
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in)
+            # 157 — Depthwise Conv inside FFN. Identity-init
+            # symmetric conv → bit-identical to no-conv at step 0.
+            if self.use_conv_ffn:
+                ff_out = self.conv_ffn(ff_out)
             if self.use_layerscale:
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
             if self.use_layer_scale:
@@ -3413,3 +3919,188 @@ class TransformerBlock(nn.Module):
             if len(xlayer_mem) > self.xlayer_k:
                 del xlayer_mem[: len(xlayer_mem) - self.xlayer_k]
         return x
+
+
+# ============================================================================
+# 158 — Gated Attention Unit (GAU, Hua et al. 2022, arXiv:2202.10447).
+# Fuses `Attention → Add → FFN → Add` into a single block with shared
+# projections. Per the idea spec:
+#
+#   y   = x + U_g x            # input-conditional gating
+#   z   = softmax(Q_g y · K_g y^T) V_g y   # causal attention on y
+#   out = U_o (z * V_o y)      # output proj with element-wise gating
+#
+# Step-0 identity (the spec pin):
+#   U_g = 0  →  y = x + 0 = x
+#   V_o = 0  →  z * V_o y = z * 0 = 0
+#   out = U_o(0) = 0           → block returns `x + dropout(0) = x`
+#
+# Inherits the standard pre-norm from `make_norm` and reuses
+# `Rotary`/`SDPA` (causal) for the attention half. GQA is supported
+# the same way `MultiHeadAttention` supports it (kv heads repeated
+# by `num_key_value_groups` to match Q's head count). The block has
+# NO FFN — the FFN's job is folded into the U_g/V_o gating pair,
+# saving roughly the FFN's `2·d_model·d_ff` parameters per layer
+# (~37% of `TransformerBlock`'s per-layer param cost at tiny1m3m).
+#
+# Param count per block at tiny1m3m (d_model=64, n_heads=4, d_k=16,
+# n_kv_heads=2, kv_size=32):
+#   TransformerBlock (squared_relu FFN, GQA):
+#     qkvo: (64 + 2·32 + 64)·64 = 12288
+#     FFN : 2·64·256            = 32768
+#     Total                       ≈ 45K
+#   GAUBlock:
+#     fused: (64 + 2·32 + 2·64)·64 = 64·192 = 12288 (Q,K,V,U_g,V_o)
+#     out  : 64·64                = 4096  (U_o)
+#     Total                         ≈ 16K
+#   Saving: ~29K/block × 12 = ~350K (~37% of the 0.94M model).
+#
+# The freed budget can be re-spent on attention dim per the GAU paper's
+# retuning — out of scope for this 1-idea A/B at fixed tiny1m3m tier;
+# the savings simply mean the model is smaller, which we report on.
+#
+# Default off → the block is never built, the standard `TransformerBlock`
+# is built instead, and the baseline forward is bit-identical. See
+# `autoresearch/ideas/158-gau/idea.md`.
+# ============================================================================
+class GAUBlock(nn.Module):
+    """158 — Gated Attention Unit (Hua et al. 2022).
+
+    Single fused `Attention + FFN` block. Identity at step 0 (see
+    module docstring). Supports GQA, RoPE, RMSNorm pre-norm, dropout.
+    No FFN — the gating pair (U_g, V_o) plays the FFN role.
+
+    The block accepts the same `forward(x, x0=None, ve=None, ...)`
+    signature shape as `TransformerBlock` so the model loop in
+    `MinimalLLM.forward` can dispatch to it transparently when
+    `use_gau=True`. Unused kwargs (`x0`, `ve`, `gate_x`,
+    `v_residual`, `shared_kv`, `xlayer_mem`, `layer_index`) are
+    accepted via `**kwargs` and ignored.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        max_seq_len: int,
+        dropout: float = 0.1,
+        n_kv_heads: int | None = None,
+        norm_type: str = "rmsnorm",
+        rope_base: int = 10000,
+    ):
+        super().__init__()
+        self.d_model = int(d_model)
+        self.n_heads = int(n_heads)
+        self.n_kv_heads = int(n_kv_heads) if n_kv_heads is not None else int(n_heads)
+        self.num_key_value_groups = self.n_heads // self.n_kv_heads
+        self.d_k = self.d_model // self.n_heads
+        self.kv_size = self.n_kv_heads * self.d_k
+        # Fused Q,K,V,U_g,V_o projection: total size
+        #   q_size + 2·kv_size + 2·d_model
+        self.q_size = self.d_model
+        self.gate_size = 2 * self.d_model  # U_g + V_o
+        self.fused_size = self.q_size + 2 * self.kv_size + self.gate_size
+        # One merged `nn.Parameter` (NOT `nn.Linear`) so init does not
+        # consume RNG — keeps construction aligned with the baseline
+        # `MultiHeadAttention`'s `qkvo_proj` (which is also a raw
+        # parameter). The two zero-init gate slices are set AFTER the
+        # global normal init below.
+        self.fused_proj = nn.Parameter(torch.empty(self.fused_size, self.d_model))
+        with torch.no_grad():
+            torch.nn.init.normal_(self.fused_proj, mean=0.0, std=0.02)
+            # Zero-init U_g and V_o (the gate slices) → step-0
+            # identity per the module docstring. Slice ranges:
+            #   Q  : [0, q_size)
+            #   K  : [q_size, q_size + kv_size)
+            #   V  : [q_size + kv_size, q_size + 2·kv_size)
+            #   U_g: [q_size + 2·kv_size, q_size + 2·kv_size + d_model)
+            #   V_o: [q_size + 2·kv_size + d_model, fused_size)
+            q_end = self.q_size
+            kv_end = q_end + self.kv_size
+            v_end = kv_end + self.kv_size
+            ug_end = v_end + self.d_model
+            self.fused_proj[v_end:ug_end].zero_()              # U_g
+            self.fused_proj[ug_end:self.fused_size].zero_()   # V_o
+        # Output projection U_o (d_model → d_model). Standard init.
+        self.out_proj = nn.Parameter(torch.empty(self.d_model, self.d_model))
+        with torch.no_grad():
+            torch.nn.init.normal_(self.out_proj, mean=0.0, std=0.02)
+        # Rotary on Q, K (same convention as MultiHeadAttention). V
+        # stays un-rotated per the standard GAU formulation. Reuses
+        # the existing `Rotary` helper for byte-for-byte parity with
+        # the baseline RoPE path.
+        self.rotary = Rotary(self.d_k, max_seq_len, base=rope_base)
+        # Pre-norm (matches TransformerBlock's norm1 placement).
+        self.norm = make_norm(self.d_model, norm_type, False)
+        self.dropout = nn.Dropout(dropout)
+        # GAU has no FFN, so it has nothing to add to the residual
+        # stream at step 0 (both gates zero → block output = 0). The
+        # residual stream therefore advances unchanged through every
+        # block at step 0; after the first non-zero gradient step
+        # the model begins learning from the all-zero attention output.
+        # This is the spec's "identity at step 0" pin.
+
+    def forward(self, x, x0=None, ve=None, **kwargs):
+        """GAU forward. Returns `x` shape-preserved.
+
+        Args:
+            x: [B, T, d_model] residual stream.
+            x0, ve, **kwargs: accepted for signature parity with
+                `TransformerBlock.forward`. All ignored (GAU doesn't
+                use the embed-residual path or the various attention-
+                side flags from the standard MHA).
+
+        Returns:
+            [B, T, d_model] — `x + dropout(U_o(z ⊙ V_o y))` where
+            `y = norm(x) + U_g(norm(x))` and
+            `z = SDPA_causal(Q, K, V)`.
+        """
+        B, T, D = x.shape
+        # Pre-norm (same placement as TransformerBlock.norm1).
+        x_norm = self.norm(x)
+        # Single fused linear: [B, T, fused_size].
+        qkv_ug_vo = F.linear(x_norm, self.fused_proj)
+        # Split into Q, K, V, U_g, V_o slices.
+        q_end = self.q_size
+        kv_end = q_end + self.kv_size
+        v_end = kv_end + self.kv_size
+        ug_end = v_end + self.d_model
+        Q = qkv_ug_vo[..., :q_end]
+        K = qkv_ug_vo[..., q_end:kv_end]
+        V = qkv_ug_vo[..., kv_end:v_end]
+        U_g = qkv_ug_vo[..., v_end:ug_end]
+        V_o = qkv_ug_vo[..., ug_end:]
+        # GAU input: `y = x_norm + U_g(x_norm)`. U_g init 0 ⇒ `y = x_norm`.
+        y = x_norm + U_g
+        # Per-head reshape. Q is full d_model = n_heads·d_k; K, V are
+        # kv_size = n_kv_heads·d_k. Reuses the same convention as
+        # MultiHeadAttention.forward.
+        Q = Q.reshape(B, T, self.n_heads, self.d_k)
+        K = K.reshape(B, T, self.n_kv_heads, self.d_k)
+        V = V.reshape(B, T, self.n_kv_heads, self.d_k)
+        # Apply RoPE (Q, K only — V is not rotated).
+        Q = self.rotary(Q)
+        K = self.rotary(K)
+        # GQA: repeat K (and V) by num_key_value_groups to match Q's
+        # head count.
+        if self.num_key_value_groups > 1:
+            K = K.repeat_interleave(self.num_key_value_groups, dim=2)
+            V = V.repeat_interleave(self.num_key_value_groups, dim=2)
+        # SDPA expects [B, n_heads, T, d_k].
+        Q = Q.transpose(1, 2)
+        K = K.transpose(1, 2)
+        V = V.transpose(1, 2)
+        # Causal SDPA — `is_causal=True` ⇒ flash/efficient path on
+        # supported devices. PyTorch's SDPA matches the baseline
+        # math within fp32 rounding on sm_86 (the V100 box).
+        z = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
+        z = z.transpose(1, 2).contiguous().view(B, T, self.d_model)
+        # Output: `U_o(z * V_o y)`. V_o init 0 ⇒ `z * 0 = 0` ⇒
+        # `out = U_o(0) = 0` (linear of zero vector = zero vector).
+        # Element-wise `z * V_o` is the GAU paper's gating (§3.2):
+        # "multiply the attention output element-wise by an
+        # input-conditional gate V_o(y)."
+        out = F.linear(z * V_o, self.out_proj)
+        # Residual + dropout. At step 0, `out = 0` exactly ⇒ the
+        # block is identity (matches the spec's step-0 pin).
+        return x + self.dropout(out)

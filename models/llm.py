@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from typing import Optional
 from configs.llm_config import LLMConfig
-from models.layers import TransformerBlock, make_norm
+from models.layers import TransformerBlock, GAUBlock, make_norm
 from models.mhc import MultiStreamResidual
 from models.yoco import GlobalKVHead, YOCOLlamaBlock
 
@@ -256,6 +256,25 @@ class MinimalLLM(nn.Module):
         # bit-identical to baseline at step 0). Default off → baseline
         # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
         self.use_rov = getattr(config, "use_rov", False)
+        # 154 — Rebased Attention. When on, the block's MHA pools
+        # K, V along the time axis with stride `rebase_stride`
+        # (default 8) *before* the softmax, so attention reads from
+        # R = ceil(T/R) ≈ 256 rebasins instead of T=2048 raw
+        # positions. Identity at `rebase_stride >= T` (no compression)
+        # and when the flag is off. Default off → baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+        self.use_rebased_attn = getattr(config, "use_rebased_attn", False)
+        self.rebase_stride = max(1, int(getattr(config, "rebase_stride", 8)))
+        # 156 — Mixture-of-Attentions (MoA). When on, the block's
+        # MHA runs E parallel K/V experts with a per-token router
+        # `g_e = softmax(W_g x)_e`. Identity-init (extra K/V
+        # projections are zero, router bias is one-hot on expert
+        # 0) ⇒ bit-identical to a single standard attention at
+        # step 0. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/156-moa/idea.md`.
+        self.use_moa = getattr(config, "use_moa", False)
+        self.moa_num_experts = max(2, int(getattr(config, "moa_num_experts", 2))) if self.use_moa else 1
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -323,6 +342,26 @@ class MinimalLLM(nn.Module):
         # `models/ttt_linear.py` + `autoresearch/ideas/149-ttt-linear/idea.md`.
         self.use_ttt_ffn = getattr(config, "use_ttt_ffn", False)
         self.ttt_lr_init = getattr(config, "ttt_lr_init", 0.0)
+        # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style,
+        # Jiang et al. 2020 arXiv:2008.02496; Woo et al. 2020). When
+        # True, each block builds a `ConvFFN(d_model, kernel=k)` that
+        # applies a symmetric depthwise Conv1d to the FFN output
+        # (post-FFN, pre-residual-add). Conv weights are identity-
+        # initialized (center tap = 1, rest = 0) so the conv is a
+        # strict identity at step 0 ⇒ baseline path bit-identical
+        # when the flag is off (the `ConvFFN` module is never built,
+        # the forward branch is never taken). `conv_ffn_kernel`
+        # defaults to 3 (spec pin); valid range is odd integers ≥ 3.
+        # Differs from 143-shortconv by placement (post-FFN vs
+        # pre-attention) and causality (symmetric vs causal). See
+        # `models/conv_ffn.py` +
+        # `autoresearch/ideas/157-conv-ffn/idea.md`.
+        self.use_conv_ffn = getattr(config, "use_conv_ffn", False)
+        self.conv_ffn_kernel = max(3, int(getattr(config, "conv_ffn_kernel", 3)))
+        # 153 — Squared-ReLU FFN activation. Default off → standard
+        # `ffn_variant` branch runs, baseline FFN path bit-identical.
+        # See `autoresearch/ideas/153-relu2-ffn/idea.md`.
+        self.use_relu2_ffn = getattr(config, "use_relu2_ffn", False)
         # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
         # when on, each block builds a per-token `MoDRouter` and gates
         # the block's residual update to the top-k = `mod_capacity · T`
@@ -383,6 +422,15 @@ class MinimalLLM(nn.Module):
         self.use_v_layernorm = getattr(config, "use_v_layernorm", False)
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
+        # 158 — Gated Attention Unit (Hua et al. 2022, arXiv:2202.10447).
+        # When on, REPLACE the standard `TransformerBlock` stack with a
+        # stack of `GAUBlock` instances (fused Attention+FFN, no separate
+        # FFN). Default off → standard `TransformerBlock` stack is built
+        # unchanged; baseline path bit-identical. The replacement is a
+        # hard swap (`self.transformer_blocks` is NOT built when
+        # `use_gau=True`), so the GAU branch and the standard branch
+        # can't co-exist. See `autoresearch/ideas/158-gau/idea.md`.
+        self.use_gau = getattr(config, "use_gau", False)
         self.use_attn_sink = getattr(config, "use_attn_sink", False)
         # 017 — Sub-LN / Sandwich block (residual-stream re-bounding).
         self.use_sub_ln = getattr(config, "use_sub_ln", False)
@@ -499,6 +547,17 @@ class MinimalLLM(nn.Module):
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
                         # Init 0 ⇒ bit-identical to baseline at step 0.
                         use_rov=self.use_rov,
+                        # 154 — Rebased Attention pass-through to the
+                        # YOCO upper-half block. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+                        use_rebased_attn=self.use_rebased_attn,
+                        rebase_stride=self.rebase_stride,
+                        # 156 — MoA pass-through to the YOCO upper-half
+                        # block. Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/156-moa/idea.md`.
+                        use_moa=self.use_moa,
+                        moa_num_experts=self.moa_num_experts,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -556,6 +615,9 @@ class MinimalLLM(nn.Module):
                         # `autoresearch/ideas/149-ttt-linear/idea.md`.
                         use_ttt_ffn=self.use_ttt_ffn,
                         ttt_lr_init=self.ttt_lr_init,
+                        # 153 — Squared-ReLU FFN activation pass-
+                        # through to the YOCO upper-half block.
+                        use_relu2_ffn=self.use_relu2_ffn,
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
                         mod_router_hidden=self.mod_router_hidden,
@@ -620,6 +682,12 @@ class MinimalLLM(nn.Module):
                         # `autoresearch/ideas/150-xlayer-feedback/idea.md`.
                         use_xlayer_feedback=self.use_xlayer_feedback,
                         xlayer_k=self.xlayer_k,
+                        # 157 — Depthwise Conv inside FFN pass-through
+                        # to the YOCO upper-half block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/157-conv-ffn/idea.md`.
+                        use_conv_ffn=self.use_conv_ffn,
+                        conv_ffn_kernel=self.conv_ffn_kernel,
                     )
                     for _ in range(config.n_layers - self.yoco_split)
                 ]
@@ -628,176 +696,250 @@ class MinimalLLM(nn.Module):
             self.global_kv_head = None
             self.yoco_upper_blocks = None
 
-        self.transformer_blocks = nn.ModuleList(
-            [
-                TransformerBlock(
-                    config.d_model,
-                    config.n_heads,
-                    config.d_ff,
-                    config.max_seq_len,
-                    config.dropout,
-                    n_kv_heads=config.n_kv_heads,
-                    ffn_variant=config.ffn_variant,
-                    use_embed_residual=getattr(config, "use_embed_residual", False),
-                    use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
-                    use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
-                    use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
-                    use_exclusive_self_attn=self.use_exclusive_self_attn,
-                    use_kda_channel_gate=self.use_kda_channel_gate,
-                    # 147 — DropKey: per-head Bernoulli gate on K.
-                    use_drop_key=self.use_drop_key,
-                    drop_key_rate=self.drop_key_rate,
-                    # 151 — RoV (Rotary Value Embeddings, gated):
-                    # per-block scalar `rov_gate` mixes the rotary-
-                    # rotated V into V via `V ← V + rov_gate·V_rot`.
-                    # Init 0 ⇒ bit-identical to baseline at step 0.
-                    use_rov=self.use_rov,
-                    use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
-                    out_op=getattr(config, "out_op", ""),
-                    use_re_zero=getattr(config, "use_re_zero", False),
-                    resid_mode=getattr(config, "resid_mode", ""),
-                    n_layers=config.n_layers,
-                    use_layerscale=getattr(config, "use_layerscale", False),
-                    use_layer_scale=getattr(config, "use_layer_scale", False),
-                    layer_scale_init=getattr(config, "layer_scale_init", 1e-4),
-                    use_value_embed=self.use_value_embed,
-                    use_query_embed=self.use_query_embed,
-                    use_key_embed=self.use_key_embed,
-                    use_output_embed=self.use_output_embed,
-                    use_q_gain=self.use_q_gain,
-                    use_k_gain=self.use_k_gain,
-                    use_deep_value_embed=self.use_deep_value_embed,
-                    deep_value_embed_hidden=deep_value_embed_hidden,
-                    use_ffn_embed=self.use_ffn_embed,
-                    use_qk_norm_post_rope=self.use_qk_norm_post_rope,
-                    use_sliding_window=_block_uses_swa(i),
-                    # YOCO uses `yoco_lower_window` (default 512) on
-                    # the lower half; otherwise the standard
-                    # `sliding_window_size` from the config (default
-                    # 512). Both default to 512 at tiny1m3m, but
-                    # keep them distinct for clarity.
-                    sliding_window_size=(
-                        self.yoco_lower_window if self.use_yoco
-                        else self.sliding_window_size
-                    ),
-                    use_nope=self.use_nope,
-                    use_fire_pe=self.use_fire_pe,
-                    fire_pe_d_phi=self.fire_pe_d_phi,
-                    use_gated_attn=self.use_gated_attn,
-                    use_cope=self.use_cope,
-                    use_fox=self.use_fox,
-                    use_softpick=self.use_softpick,
-                    use_ssmax=self.use_ssmax,
-                    use_canon_conv=self.use_canon_conv,
-                    # 143 — ShortConv pass-through to the standard
-                    # transformer block. See
-                    # `autoresearch/ideas/143-shortconv/idea.md`.
-                    use_short_conv=self.use_short_conv,
-                    short_conv_kernel=self.short_conv_kernel,
-                    use_value_residual=self.use_value_residual,
-                    # 117 — Soft MoE pass-through to the block.
-                    use_soft_moe=self.use_soft_moe,
-                    soft_moe_n_experts=self.soft_moe_n_experts,
-                    soft_moe_n_slots=self.soft_moe_n_slots,
-                    # 145 — Expert-Choice MoE pass-through to the block.
-                    use_expert_choice_moe=self.use_expert_choice_moe,
-                    n_moe_experts=self.n_moe_experts,
-                    # 149 — TTT-Linear pass-through to the standard
-                    # transformer block. Default off → FFN path bit-
-                    # identical. See
-                    # `autoresearch/ideas/149-ttt-linear/idea.md`.
-                    use_ttt_ffn=self.use_ttt_ffn,
-                    ttt_lr_init=self.ttt_lr_init,
-                    # 118 — Mixture-of-Depths pass-through to the block.
-                    use_mod=self.use_mod,
-                    mod_capacity=self.mod_capacity,
-                    mod_router_hidden=self.mod_router_hidden,
-                    # 148 — Focal Modulation pass-through to the
-                    # block. Default off → MHA path is bit-identical.
-                    # See `autoresearch/ideas/148-focal-mod/idea.md`.
-                    use_focal_mod=getattr(config, "use_focal_mod", False),
-                    focal_mod_kernels=getattr(config, "focal_mod_kernels", (3, 5, 7)),
-                    # 111 — DropPath / Stochastic Depth. Pass-through
-                    # to the block; the per-step Bernoulli sample runs
-                    # inside `TransformerBlock.forward` keyed off the
-                    # `layer_index` kwarg passed by the model loop.
-                    use_drop_path=getattr(config, "use_drop_path", False),
-                    drop_path_max=getattr(config, "drop_path_max", 0.1),
-                    # 131 — LayerDrop. Pass-through to the block.
-                    use_layerdrop=self.use_layerdrop,
-                    layerdrop_p=self.layerdrop_p,
-                    layerdrop_schedule=self.layerdrop_schedule,
-                    rope_base=self.rope_base,
-                    use_tied_qk=self.use_tied_qk,
-                    use_mla=self.use_mla,
-                    mla_latent_dim=self.mla_latent_dim,
-                    attention_dilation=self.attention_dilation,
-                    use_post_norm=self.use_post_norm,
-                    use_layernorm=self.use_layernorm,
-                    use_linear_attn=self.use_linear_attn,
-                    use_diff_attn=self.use_diff_attn,
-                    use_nsa_global=self.use_nsa_global,
-                    nsa_block=self.nsa_block,
-                    use_hybrid_heads=self.use_hybrid_heads,
-                    norm_type=self.norm_type,
-                    qk_norm_type=self.qk_norm_type,
-                    v_norm_type=self.v_norm_type,
-                    # #16 QK-Norm pass-through to the block.
-                    use_qk_layernorm=self.use_qk_layernorm,
-                    # 029 — V-Norm pass-through to the block.
-                    use_v_layernorm=self.use_v_layernorm,
-                    use_multiscale_heads=self.use_multiscale_heads,
-                    use_parallel_block=self.use_parallel_block,
-                    use_attn_sink=self.use_attn_sink,
-                    use_sub_ln=self.use_sub_ln,
-                    q_norm_type=self.q_norm_type,
-                    use_alibi_bias=self.use_alibi_bias,
-                    use_q_temp_token=self.use_q_temp_token,
-                    use_cosine_attn=self.use_cosine_attn,
-                    use_qk_bilinear=self.use_qk_bilinear,
-                    use_talking_heads_q=self.use_talking_heads_q,
-                    use_per_head_rope_base=self.use_per_head_rope_base,
-                    partial_rotary_p=self.partial_rotary_p,
-                    use_q_expansion=self.use_q_expansion,
-                    use_decoupled_content_pos=self.use_decoupled_content_pos,
-                    use_antisym_qk=self.use_antisym_qk,
-                    use_q_per_head_bias=self.use_q_per_head_bias,
-                    use_q_per_channel_gain=self.use_q_per_channel_gain,
-                    use_q_hd_gain=self.use_q_hd_gain,
-                    use_q_norm_gate=self.use_q_norm_gate,
-                    use_q_lowrank_refine=self.use_q_lowrank_refine,
-                    q_lowrank_refine_rank=self.q_lowrank_refine_rank,
-                    use_q_layerscale=self.use_q_layerscale,
-                    use_q_softplus_gain=self.use_q_softplus_gain,
-                    use_q_head_mix=self.use_q_head_mix,
-                    use_q_time_conv=self.use_q_time_conv,
-                    use_q_ema_smooth=self.use_q_ema_smooth,
-                    q_ema_alpha=self.q_ema_alpha,
-                    use_q_feature_map=self.use_q_feature_map,
-                    q_feature_map_hidden=self.q_feature_map_hidden,
-                    use_q_per_token_rope=self.use_q_per_token_rope,
-                    q_per_token_rope_hidden=self.q_per_token_rope_hidden,
-                    use_q_noise_reg=self.use_q_noise_reg,
-                    # 134 — Mega EMA on V. Pass-through to each
-                    # MultiHeadAttention. The construction-time assert
-                    # requires 2·n_kv_heads == n_heads; tiny1m3m
-                    # satisfies this (n_kv_heads=2, n_heads=4). Default
-                    # off → baseline path bit-identical.
-                    use_mega=getattr(config, "use_mega", False),
-                    mega_beta=getattr(config, "mega_beta", 0.9),
-                    mega_use_input=getattr(config, "mega_use_input", True),
-                    value_embed_rank=value_embed_rank,
-                    # 150 — Cross-Layer Feedback Attention pass-through
-                    # to the block. Default off → baseline path bit-
-                    # identical (no `XLayerCrossAttn` module built, no
-                    # `xlayer_gate` param allocated). See
-                    # `autoresearch/ideas/150-xlayer-feedback/idea.md`.
-                    use_xlayer_feedback=self.use_xlayer_feedback,
-                    xlayer_k=self.xlayer_k,
+        # 158 — Gated Attention Unit (Hua et al. 2022, arXiv:2202.10447).
+        # When `use_gau=True`, REPLACE the standard `TransformerBlock`
+        # stack with `n_unique` `GAUBlock` instances and skip the
+        # `TransformerBlock` build. The forward loop dispatches via
+        # `gau_blocks[i // tie_layer_groups]`. Default off →
+        # `gau_blocks = None`, baseline path bit-identical. GAU does
+        # NOT compose with YOCO (mutually exclusive: YOCO needs an
+        # MHA with shared KV; GAU has no FFN at all). We assert below
+        # to fail loudly if the user sets both.
+        if self.use_gau:
+            if self.use_yoco:
+                raise ValueError(
+                    "use_gau=True is incompatible with use_yoco=True "
+                    "(YOCO requires a standard MHA + shared KV path; "
+                    "GAU replaces the whole block with a fused "
+                    "Attention+FFN unit)."
                 )
-                for i in range(n_unique)
-            ]
-        )
+            self.gau_blocks = nn.ModuleList(
+                [
+                    GAUBlock(
+                        config.d_model,
+                        config.n_heads,
+                        config.max_seq_len,
+                        config.dropout,
+                        n_kv_heads=config.n_kv_heads,
+                        norm_type=self.norm_type,
+                        rope_base=self.rope_base,
+                    )
+                    for _ in range(n_unique)
+                ]
+            )
+        else:
+            self.gau_blocks = None
+
+        # 158 — GAU: when `use_gau=True`, skip the standard
+        # `TransformerBlock` build entirely. The forward loop
+        # dispatches via `gau_blocks[i]` (see `_run_post_embed`).
+        # Building both stacks would double-count the layer params
+        # AND waste compute in the optimizer setup. We assert the
+        # `transformer_blocks is None` invariant with a property-
+        # style check at the end of `__init__` below.
+        if self.use_gau:
+            self.transformer_blocks = None
+        else:
+                self.transformer_blocks = nn.ModuleList(
+                [
+                    TransformerBlock(
+                        config.d_model,
+                        config.n_heads,
+                        config.d_ff,
+                        config.max_seq_len,
+                        config.dropout,
+                        n_kv_heads=config.n_kv_heads,
+                        ffn_variant=config.ffn_variant,
+                        use_embed_residual=getattr(config, "use_embed_residual", False),
+                        use_attn_output_gate=getattr(config, "use_attn_output_gate", False),
+                        use_value_channel_gate=getattr(config, "use_value_channel_gate", False),
+                        use_attn_output_channel_gate=getattr(config, "use_attn_output_channel_gate", False),
+                        use_exclusive_self_attn=self.use_exclusive_self_attn,
+                        use_kda_channel_gate=self.use_kda_channel_gate,
+                        # 152 — Per-head attention logit bias. Pass-through
+                        # to the block. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
+                        use_attn_logit_bias=getattr(config, "use_attn_logit_bias", False),
+                        # 155 — Per-head learnable attention temperature
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/155-per-head-temp/idea.md`.
+                        use_per_head_temp=getattr(config, "use_per_head_temp", False),
+                        # 147 — DropKey: per-head Bernoulli gate on K.
+                        use_drop_key=self.use_drop_key,
+                        drop_key_rate=self.drop_key_rate,
+                        # 151 — RoV (Rotary Value Embeddings, gated):
+                        # per-block scalar `rov_gate` mixes the rotary-
+                        # rotated V into V via `V ← V + rov_gate·V_rot`.
+                        # Init 0 ⇒ bit-identical to baseline at step 0.
+                        use_rov=self.use_rov,
+                        # 154 — Rebased Attention pass-through to the
+                        # standard transformer block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/154-rebased-attn/idea.md`.
+                        use_rebased_attn=self.use_rebased_attn,
+                        rebase_stride=self.rebase_stride,
+                        # 156 — MoA pass-through to the standard block.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/156-moa/idea.md`.
+                        use_moa=self.use_moa,
+                        moa_num_experts=self.moa_num_experts,
+                        use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
+                        out_op=getattr(config, "out_op", ""),
+                        use_re_zero=getattr(config, "use_re_zero", False),
+                        resid_mode=getattr(config, "resid_mode", ""),
+                        n_layers=config.n_layers,
+                        use_layerscale=getattr(config, "use_layerscale", False),
+                        use_layer_scale=getattr(config, "use_layer_scale", False),
+                        layer_scale_init=getattr(config, "layer_scale_init", 1e-4),
+                        use_value_embed=self.use_value_embed,
+                        use_query_embed=self.use_query_embed,
+                        use_key_embed=self.use_key_embed,
+                        use_output_embed=self.use_output_embed,
+                        use_q_gain=self.use_q_gain,
+                        use_k_gain=self.use_k_gain,
+                        use_deep_value_embed=self.use_deep_value_embed,
+                        deep_value_embed_hidden=deep_value_embed_hidden,
+                        use_ffn_embed=self.use_ffn_embed,
+                        use_qk_norm_post_rope=self.use_qk_norm_post_rope,
+                        use_sliding_window=_block_uses_swa(i),
+                        # YOCO uses `yoco_lower_window` (default 512) on
+                        # the lower half; otherwise the standard
+                        # `sliding_window_size` from the config (default
+                        # 512). Both default to 512 at tiny1m3m, but
+                        # keep them distinct for clarity.
+                        sliding_window_size=(
+                            self.yoco_lower_window if self.use_yoco
+                            else self.sliding_window_size
+                        ),
+                        use_nope=self.use_nope,
+                        use_fire_pe=self.use_fire_pe,
+                        fire_pe_d_phi=self.fire_pe_d_phi,
+                        use_gated_attn=self.use_gated_attn,
+                        use_cope=self.use_cope,
+                        use_fox=self.use_fox,
+                        use_softpick=self.use_softpick,
+                        use_ssmax=self.use_ssmax,
+                        use_canon_conv=self.use_canon_conv,
+                        # 143 — ShortConv pass-through to the standard
+                        # transformer block. See
+                        # `autoresearch/ideas/143-shortconv/idea.md`.
+                        use_short_conv=self.use_short_conv,
+                        short_conv_kernel=self.short_conv_kernel,
+                        use_value_residual=self.use_value_residual,
+                        # 117 — Soft MoE pass-through to the block.
+                        use_soft_moe=self.use_soft_moe,
+                        soft_moe_n_experts=self.soft_moe_n_experts,
+                        soft_moe_n_slots=self.soft_moe_n_slots,
+                        # 145 — Expert-Choice MoE pass-through to the block.
+                        use_expert_choice_moe=self.use_expert_choice_moe,
+                        n_moe_experts=self.n_moe_experts,
+                        # 149 — TTT-Linear pass-through to the standard
+                        # transformer block. Default off → FFN path bit-
+                        # identical. See
+                        # `autoresearch/ideas/149-ttt-linear/idea.md`.
+                        use_ttt_ffn=self.use_ttt_ffn,
+                        ttt_lr_init=self.ttt_lr_init,
+                        # 153 — Squared-ReLU FFN activation pass-
+                        # through to the standard block.
+                        use_relu2_ffn=self.use_relu2_ffn,
+                        # 118 — Mixture-of-Depths pass-through to the block.
+                        use_mod=self.use_mod,
+                        mod_capacity=self.mod_capacity,
+                        mod_router_hidden=self.mod_router_hidden,
+                        # 148 — Focal Modulation pass-through to the
+                        # block. Default off → MHA path is bit-identical.
+                        # See `autoresearch/ideas/148-focal-mod/idea.md`.
+                        use_focal_mod=getattr(config, "use_focal_mod", False),
+                        focal_mod_kernels=getattr(config, "focal_mod_kernels", (3, 5, 7)),
+                        # 111 — DropPath / Stochastic Depth. Pass-through
+                        # to the block; the per-step Bernoulli sample runs
+                        # inside `TransformerBlock.forward` keyed off the
+                        # `layer_index` kwarg passed by the model loop.
+                        use_drop_path=getattr(config, "use_drop_path", False),
+                        drop_path_max=getattr(config, "drop_path_max", 0.1),
+                        # 131 — LayerDrop. Pass-through to the block.
+                        use_layerdrop=self.use_layerdrop,
+                        layerdrop_p=self.layerdrop_p,
+                        layerdrop_schedule=self.layerdrop_schedule,
+                        rope_base=self.rope_base,
+                        use_tied_qk=self.use_tied_qk,
+                        use_mla=self.use_mla,
+                        mla_latent_dim=self.mla_latent_dim,
+                        attention_dilation=self.attention_dilation,
+                        use_post_norm=self.use_post_norm,
+                        use_layernorm=self.use_layernorm,
+                        use_linear_attn=self.use_linear_attn,
+                        use_diff_attn=self.use_diff_attn,
+                        use_nsa_global=self.use_nsa_global,
+                        nsa_block=self.nsa_block,
+                        use_hybrid_heads=self.use_hybrid_heads,
+                        norm_type=self.norm_type,
+                        qk_norm_type=self.qk_norm_type,
+                        v_norm_type=self.v_norm_type,
+                        # #16 QK-Norm pass-through to the block.
+                        use_qk_layernorm=self.use_qk_layernorm,
+                        # 029 — V-Norm pass-through to the block.
+                        use_v_layernorm=self.use_v_layernorm,
+                        use_multiscale_heads=self.use_multiscale_heads,
+                        use_parallel_block=self.use_parallel_block,
+                        use_attn_sink=self.use_attn_sink,
+                        use_sub_ln=self.use_sub_ln,
+                        q_norm_type=self.q_norm_type,
+                        use_alibi_bias=self.use_alibi_bias,
+                        use_q_temp_token=self.use_q_temp_token,
+                        use_cosine_attn=self.use_cosine_attn,
+                        use_qk_bilinear=self.use_qk_bilinear,
+                        use_talking_heads_q=self.use_talking_heads_q,
+                        use_per_head_rope_base=self.use_per_head_rope_base,
+                        partial_rotary_p=self.partial_rotary_p,
+                        use_q_expansion=self.use_q_expansion,
+                        use_decoupled_content_pos=self.use_decoupled_content_pos,
+                        use_antisym_qk=self.use_antisym_qk,
+                        use_q_per_head_bias=self.use_q_per_head_bias,
+                        use_q_per_channel_gain=self.use_q_per_channel_gain,
+                        use_q_hd_gain=self.use_q_hd_gain,
+                        use_q_norm_gate=self.use_q_norm_gate,
+                        use_q_lowrank_refine=self.use_q_lowrank_refine,
+                        q_lowrank_refine_rank=self.q_lowrank_refine_rank,
+                        use_q_layerscale=self.use_q_layerscale,
+                        use_q_softplus_gain=self.use_q_softplus_gain,
+                        use_q_head_mix=self.use_q_head_mix,
+                        use_q_time_conv=self.use_q_time_conv,
+                        use_q_ema_smooth=self.use_q_ema_smooth,
+                        q_ema_alpha=self.q_ema_alpha,
+                        use_q_feature_map=self.use_q_feature_map,
+                        q_feature_map_hidden=self.q_feature_map_hidden,
+                        use_q_per_token_rope=self.use_q_per_token_rope,
+                        q_per_token_rope_hidden=self.q_per_token_rope_hidden,
+                        use_q_noise_reg=self.use_q_noise_reg,
+                        # 134 — Mega EMA on V. Pass-through to each
+                        # MultiHeadAttention. The construction-time assert
+                        # requires 2·n_kv_heads == n_heads; tiny1m3m
+                        # satisfies this (n_kv_heads=2, n_heads=4). Default
+                        # off → baseline path bit-identical.
+                        use_mega=getattr(config, "use_mega", False),
+                        mega_beta=getattr(config, "mega_beta", 0.9),
+                        mega_use_input=getattr(config, "mega_use_input", True),
+                        value_embed_rank=value_embed_rank,
+                        # 150 — Cross-Layer Feedback Attention pass-through
+                        # to the block. Default off → baseline path bit-
+                        # identical (no `XLayerCrossAttn` module built, no
+                        # `xlayer_gate` param allocated). See
+                        # `autoresearch/ideas/150-xlayer-feedback/idea.md`.
+                        use_xlayer_feedback=self.use_xlayer_feedback,
+                        xlayer_k=self.xlayer_k,
+                        # 157 — Depthwise Conv inside FFN pass-through
+                        # to the standard transformer block. Default off
+                        # → baseline path bit-identical. See
+                        # `autoresearch/ideas/157-conv-ffn/idea.md`.
+                        use_conv_ffn=self.use_conv_ffn,
+                        conv_ffn_kernel=self.conv_ffn_kernel,
+                    )
+                    for i in range(n_unique)
+                ]
+            )
 
         # 116 — Hyper-Connections (mHC, Xie et al. 2024): when on,
         # wrap each tied-block slot with a per-position
@@ -1084,12 +1226,18 @@ class MinimalLLM(nn.Module):
         # branch is no-op on the baseline path).
         xlayer_mem: list = []
         for i in range(self.config.n_layers):
-            # 129 — YOCO dispatch: for i >= yoco_split, use the
-            # upper-half ModuleList (YOCOLlamaBlock with
-            # use_shared_kv=True) and pass `shared_kv` through. For
-            # i < yoco_split, use the standard transformer_blocks
-            # slot (with SWA on). Default off → standard path.
-            if self.use_yoco and i >= self.yoco_split:
+            # 158 — GAU dispatch: when on, use the `gau_blocks` stack
+            # instead of `transformer_blocks`. YOCO is already mutually
+            # exclusive with GAU (validated at construction), so the
+            # YOCO branch below is dead when `use_gau=True`. GAUBlock
+            # ignores `shared_kv`/`v_residual`/`x0`/`ve` via `**kwargs`,
+            # so we pass the same `block(...)` kwargs as the standard
+            # path for source uniformity (no kwargs hurt GAU). Default
+            # off → standard transformer_blocks path runs.
+            if self.use_gau:
+                block = self.gau_blocks[i // self.tie_layer_groups]
+                block_shared_kv = None
+            elif self.use_yoco and i >= self.yoco_split:
                 block = self.yoco_upper_blocks[i - self.yoco_split]
                 block_shared_kv = shared_kv
             else:
@@ -1118,6 +1266,13 @@ class MinimalLLM(nn.Module):
                     "(the Hyper-Connections wrapper does not plumb "
                     "shared_kv through to the upper-half block)"
                 )
+                assert not self.use_gau, (
+                    "use_hyper_connections + use_gau is not supported "
+                    "(the Hyper-Connections wrapper expects a standard "
+                    "TransformerBlock with `.attention` and `.norm`; "
+                    "GAUBlock fuses attention+FFN and has different "
+                    "internals)"
+                )
                 x = self.hc_wrappers[i](
                     x, x0, ve, v_residual=v_residual, layer_index=i
                 )
@@ -1143,7 +1298,12 @@ class MinimalLLM(nn.Module):
                 # After layer-0 MHA forward, V_1 is stashed at
                 # `block.attention._v_residual` (post-transpose,
                 # shape `[B, n_heads, T, d_k]`). Capture for layers 1..N-1.
-                v_residual = block.attention._v_residual
+                # GAUBlock has no `.attention` attribute; skip the
+                # stash when `use_gau=True` (GAU is a different
+                # operator entirely; value-residual mixing would not
+                # compose with the fused gating).
+                if not self.use_gau:
+                    v_residual = block.attention._v_residual
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary

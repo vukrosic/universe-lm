@@ -82,6 +82,30 @@ class LLMConfig:
     # output *= (1 + gate). This is the channelwise sibling of
     # use_attn_output_gate.
     use_attn_output_channel_gate: bool = False
+    # 152 — Per-head attention logit bias (PaLM 2 §arch, OLMo 2).
+    # Learnable `b_h ∈ R^H` added to attention logits pre-softmax.
+    # Init 0 → step-0 byte-identical to baseline. NB: per-head
+    # *scalar* bias cancels in softmax over the key axis for all
+    # subsequent steps too (per-(b,h,t) `e^{b_h}` factor cancels in
+    # the per-row normalizer); the experiment is a recorded null.
+    # Default off → baseline path bit-identical. See
+    # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
+    use_attn_logit_bias: bool = False
+    # 155 — Per-head learnable attention temperature
+    # (PaLM 2 §arch, OLMo 2, Gemma 2). Replace the standard
+    # `1/sqrt(d_k)` attention scale with a per-head learnable
+    # scalar `τ_h ∈ R^H` so the per-head logit scale becomes
+    # `Q_h K_h^T * τ_h`. Init `τ_h = 1/sqrt(d_k)` exactly ⇒
+    # `Q_h K_h^T * (1/sqrt(d_k))` ≡ `Q_h K_h^T / sqrt(d_k)`
+    # (bit-identical to the standard pre-softmax scale) at step 0.
+    # Each head can then adjust its own temperature during
+    # training — heads wanting sharper focus can lower `τ_h`,
+    # heads wanting broader context can raise it. Cost: H
+    # scalars/layer (4 at tiny1m3m, total 48 — negligible). Default
+    # off → baseline path bit-identical (no Parameter registered,
+    # no branch taken). See
+    # `autoresearch/ideas/155-per-head-temp/idea.md`.
+    use_per_head_temp: bool = False
     # #107 Exclusive self-attn: subtract the component of the attention
     # output that lies along the current token's value vector. Zero-init
     # per-head coefficient → step-0 is baseline; default off keeps the
@@ -158,6 +182,34 @@ class LLMConfig:
     # identity without going through attention. Cost: 24 × (d_model
     # 144 × emb_rank 48) = 165,888 extra params (~2.1%).
     use_ffn_embed: bool = False
+    # 153 — Squared-ReLU FFN activation (So et al. "Primer", arXiv:2109.08668,
+    # 2021). When True, swap the FFN's activation for `relu2(x) = x *
+    # F.relu(x)` (equivalently `(max(0, x))^2`) regardless of `ffn_variant`.
+    # Two-projection shape (up_proj, down_proj, dropout) — same param count
+    # as `SquaredReLUFeedForward` so the lever is purely the activation
+    # change. At init with normal-distributed pre-activations, both GELU
+    # and `ReLU²` produce zero-mean, similar-variance outputs — the first
+    # forward differs by < 1e-3 in fp32 max-abs-diff (well inside the
+    # harness tolerance for non-bit-identical flags). Default off → no
+    # `ReLU2FeedForward` is constructed and the standard `ffn_variant`
+    # path runs bit-identical to baseline at step 0. See
+    # `autoresearch/ideas/153-relu2-ffn/idea.md`.
+    use_relu2_ffn: bool = False
+    # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style, Jiang
+    # et al. 2020 arXiv:2008.02496; Woo et al. 2020). When True, each
+    # block builds a `ConvFFN(d_model, kernel=k)` that applies a
+    # symmetric depthwise Conv1d to the FFN output (post-FFN, pre-
+    # residual-add). Conv weights are identity-initialized (center tap
+    # = 1, rest = 0) so the conv is a strict identity at step 0 ⇒
+    # baseline path bit-identical when the flag is off (the `ConvFFN`
+    # module is never built, the forward branch is never taken).
+    # `conv_ffn_kernel` defaults to 3 (spec pin); valid range is odd
+    # integers ≥ 3. Differs from 143-shortconv by placement (post-FFN
+    # vs pre-attention) and causality (symmetric vs causal). Cost:
+    # n_layers × (kernel × d_model) extra params (~2.3K at tiny1m3m
+    # with k=3, +0.25%). See `autoresearch/ideas/157-conv-ffn/idea.md`.
+    use_conv_ffn: bool = False
+    conv_ffn_kernel: int = 3
     # #49 QK-norm-post-RoPE: apply RMSNorm to Q,K AFTER RoPE (modded-
     # nanogpt variant) instead of the default BEFORE RoPE. Flag-only,
     # no extra params. The post-RoPE norm constrains post-RoPE Q,K
@@ -540,6 +592,43 @@ class LLMConfig:
     # (the geometric lever is unavailable). Default off → baseline
     # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
     use_rov: bool = False
+
+    # 156 — Mixture-of-Attentions (MoA). Run `E` parallel attention
+    # computations per layer with separate K_e, V_e projections (Q
+    # is shared across experts). Mix the E attention outputs by a
+    # per-token router `g_e = softmax(W_g x)_e`. At init the
+    # (E-1) extra K/V projections are zero (extra experts produce
+    # 0 attention) and the router bias is one-hot on expert 0
+    # (g_0 = 1.0) ⇒ step-0 output is bit-identical to a single
+    # standard attention. Distinct from MoS (144, closed) which
+    # mixes softmax variants within one attention — MoA mixes full
+    # attention computations. Default off → baseline path bit-
+    # identical (no MoA parameters built, no MoA branch taken).
+    # `moa_num_experts=E` is the expert count; default E=2 (one
+    # extra expert). Cost when on: (E-1) × (2·kv_size × d_model)
+    # extra K/V + d_model × E router params per layer ≈ 4-5K
+    # params/layer at tiny1m3m (~5% of the 0.94M model). See
+    # `autoresearch/ideas/156-moa/idea.md`.
+    use_moa: bool = False
+    moa_num_experts: int = 2
+
+    # 154 — Rebased Attention (Shi et al. 2024, arXiv:2407.06641):
+    # pool K and V along the time axis with a fixed stride-R average
+    # *before* the softmax, so attention reads from a learned set of R
+    # summary positions instead of T raw ones. `rebase_stride=R` (default
+    # 8) gives R = ceil(T/R) ≈ 256 rebasins at tiny1m3m's T=2048.
+    # Implementation: `K' = avg_pool(K, R)`, `V' = avg_pool(V, R)`,
+    # then `softmax(Q @ K'^T) @ V'` with a causal mask at the
+    # rebased-time level (query t can only attend to rebasin r when
+    # t >= r·R). When `rebase_stride >= T` the pool collapses to a
+    # single block per token, equivalent to the standard full attention
+    # → bit-identical to baseline. When `use_rebased_attn=False`
+    # (default) the rebase branch is never built and the standard
+    # softmax path runs unchanged. Forces the manual attention path
+    # (the rebased causal mask can't go through SDPA's flash kernel).
+    # See `autoresearch/ideas/154-rebased-attn/idea.md`.
+    use_rebased_attn: bool = False
+    rebase_stride: int = 8
 
     # 134 — Mega: Moving Average Equipped Gated Attention
     # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
@@ -1709,6 +1798,62 @@ class Tiny1M3MShortConvConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MReLU2FFNConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Squared-ReLU FFN activation (So et al. "Primer",
+    arXiv:2109.08668, 2021; Mercury Coder / Inception Labs, 2024).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Replaces the
+    FFN activation with `relu2(x) = x * F.relu(x)` (≡ `(max(0, x))^2`)
+    via the `use_relu2_ffn` lever — two-projection shape (up_proj,
+    down_proj, dropout) so param count matches `SquaredReLUFeedForward`
+    and the comparison isolates the activation change. At init with
+    normal-distributed pre-activations, both GELU and `ReLU²` produce
+    zero-mean, similar-variance outputs; first-forward max-abs-diff
+    < 1e-3 in fp32 (well inside the harness tolerance for non-bit-
+    identical flags). The branch sits AHEAD of the `ffn_variant`
+    cascade in `TransformerBlock` so the activation swap isn't silently
+    shadowed by another active FFN-replacement flag.
+
+    Transfer-risk: low. Primer tested at 125M–1.5B (matched SwiGLU on
+    language modeling with one fewer matmul); Mercury Coder ships
+    `ReLU²` in production. NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS
+    ≤ −0.01. See `autoresearch/ideas/153-relu2-ffn/idea.md`.
+    """
+    use_relu2_ffn: bool = True
+
+
+@dataclass
+class Tiny1M3MConvFFNConfig(Tiny1M3MConfig):
+    """Tiny1M3M with depthwise Conv inside FFN (ConvBERT/ConvNeXt-style).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4216
+    on the Vast V100 box). Adds a symmetric depthwise Conv1d (kernel
+    3, identity-init center tap) on the FFN output (post-FFN, pre-
+    residual-add). The conv is a strict identity at step 0 ⇒ the
+    baseline path is bit-identical when the flag is off. Per-block
+    cost: 3 × d_model = 192 params; total at tiny1m3m: 12 × 192 =
+    2,304 params (+0.25% of the 0.94M model).
+
+    Different from 143-shortconv (closed null): 143 sits *pre-attention*
+    on the residual stream with a CAUSAL conv (last-tap identity init,
+    per-block scalar gate init 0); 157 sits *post-FFN* on the FFN
+    output with a SYMMETRIC conv (center-tap identity init, no gate).
+    Both are local-mixing levers but on different sides of the
+    attention sublayer.
+
+    From ConvBERT (Jiang et al. 2020, arXiv:2008.02496) and ConvNeXt
+    (Woo et al. 2020) — depthwise conv inside FFN for parameter-
+    efficient local mixing. Transfer risk is low (≥100M source scale,
+    multiple replications).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/157-conv-ffn/idea.md`.
+    """
+    use_conv_ffn: bool = True
+    conv_ffn_kernel: int = 3
+
+
+@dataclass
 class Tiny1M5MConfig(Tiny1M3MConfig):
     """Tiny screen — ~0.94M params · 5M tokens.
 
@@ -1725,6 +1870,59 @@ class Tiny1M5MConfig(Tiny1M3MConfig):
 class Tiny1M3MQGainConfig(Tiny1M3MConfig):
     """Tiny1M3M with per-head Q-gain."""
     use_q_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MAttnLogitBiasConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head attention logit bias (PaLM 2 §arch,
+    OLMo 2). A learnable `b_h ∈ R^H` (n_heads=4 at tiny1m3m) is added
+    to the attention scores pre-softmax.
+
+    Init `b_h = 0` ⇒ `softmax(scores + 0) = softmax(scores)` byte-for-
+    byte at step 0. Forces the manual attention path so SDPA's flash/
+    efficient backends don't perturb step-0 numerics.
+
+    NB: mathematically, a *per-head scalar* `b_h` cancels in softmax
+    over the key axis for all subsequent steps too (per-(b,h,t)
+    `e^{b_h}` factor cancels in the per-row normalizer); the
+    experiment is therefore a *recorded null* rather than a useful
+    lever. See `autoresearch/ideas/152-attn-logit-bias/idea.md` for
+    the full math caveat (PaLM 2's actual `attn_logits` bias is
+    `[H, S]`, not `[H]`).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    NULL band |Δ| < 0.005 expected (predicted mathematical null).
+    """
+    use_attn_logit_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MPerHeadTempConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head learnable attention temperature
+    (PaLM 2 §arch, OLMo 2, Gemma 2). One learnable scalar `τ_h`
+    per head (init `1/sqrt(d_k)`), so the per-head logit scale
+    becomes `Q_h K_h^T * τ_h` and each head can adjust its own
+    sharpness during training.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Init `τ_h = 1/sqrt(d_k)` so the lever is byte-
+    identical to the baseline `1/sqrt(d_k)` scale at step 0
+    (no Parameter perturbation, no branch). Forces the manual
+    attention path so SDPA's flash/efficient backends don't
+    perturb step-0 numerics. Cost: H scalars/layer (4 at
+    tiny1m3m, total 48 — negligible).
+
+    Predictions: most likely a small wash (|Δ| < 0.005); the
+    `1/sqrt(d_k)` constant is the canonical default across
+    Transformers and the Q/K gradients can absorb the per-head
+    scale change. A clear win would be a strong signal that
+    the per-head temperature axis was missing; a clear loss
+    would suggest a useful prior is being clobbered.
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/155-per-head-temp/idea.md`.
+    """
+    use_per_head_temp: bool = True
 
 
 @dataclass
@@ -4730,4 +4928,144 @@ class Tiny1M3MXLayerFeedbackConfig(Tiny1M3MConfig):
     xlayer_k: int = 2
 
 
+@dataclass
+class Tiny1M3MRebasedAttnConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Rebased Attention (Shi et al. 2024, arXiv:2407.06641).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Pools K, V along the time axis with a fixed stride-R average *before*
+    the softmax, so attention reads from R = ceil(T/R) ≈ 256 rebasins
+    instead of T=2048 raw positions. The rebase is *before* the softmax
+    (distinct from NSA which adds a global branch *after* attention, and
+    from diff-attn which acts on the *output* of attention). The rebased
+    softmax acts as a soft locality prior: each rebasin pools 8 tokens
+    by default.
+
+    `rebase_stride=8` is the default; larger strides reduce the
+    compression. With `rebase_stride >= T` (e.g. `rebase_stride=2048`),
+    R = 1 (or R = T) and the rebase is a no-op — the bit-identical
+    case. The lever is the *stride* sweep on the standard `tiny1m3m`
+    0.94M / 3M-token setup. Identity at step 0: when the flag is OFF
+    (default), the MHA's rebase branch is never taken and the standard
+    softmax path is bit-identical to the no-flag baseline. When the
+    flag is ON but `rebase_stride >= T`, the pool collapses to a
+    no-op (the causal mask at the rebased level equals the standard
+    causal mask and the avg-pooled V equals the un-pooled V under
+    a uniform-time identity).
+
+    PASS ≤ ctrl − 0.005 (small/null band — taste puts leverage at the
+    low end for an attention-side locality prior at 12L depth, where
+    the existing SWA levers (closed) and the rebased-softmax neighbor
+    are already in the explored space). NULL band |Δ| < 0.005. DRIFT
+    > +0.005 (the avg-pool destroys per-token K/V resolution). See
+    `autoresearch/ideas/154-rebased-attn/idea.md`.
+    """
+    use_rebased_attn: bool = True
+    rebase_stride: int = 8
+
+
+@dataclass
+class Tiny1M3MMoAConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Mixture-of-Attentions (MoA) per layer.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Each block's MHA runs `E = moa_num_experts` (default 2) parallel
+    attention computations with SEPARATE K_e, V_e projections (Q is
+    shared across experts), then mixes the E attention outputs by a
+    per-token router `g_e = softmax(W_g x)_e`. Expert 0 reuses the
+    standard W_K, W_V slices of the merged qkvo_proj so the bit-
+    identical init claim holds against the no-flag baseline. At init
+    the (E-1) extra K/V projections are zero (extra experts produce 0)
+    and the router bias is one-hot on expert 0 (g_0 = 1.0) ⇒ step-0
+    output is bit-identical to a single standard attention.
+
+    Distinct from MoS (144, closed) which mixes softmax *variants*
+    within one attention — MoA mixes full attention computations.
+    Distinct from the FFN-side MoE levers (117-soft-moe, 118-MoD,
+    145-expert-choice, 146-sparse-ffn, all closed) which route on the
+    FFN side — MoA routes on the attention side. The lever asks: is
+    the *attention output* the binding capacity constraint at 0.94M
+    (in which case multi-attention-per-layer helps) or is it the FFN
+    / residual stream (in which case MoA nulls like the FFN MoEs did).
+
+    Cost when on (E=2): (E-1)·(2·kv_size·d_model) extra K/V + d_model·E
+    router params per layer ≈ 4-5K params/layer at tiny1m3m (~5% of
+    the 0.94M model, ~50,688 extra params total). Uses one fused
+    SDPA call over the combined (B·E) batch dim ⇒ no extra kernel
+    launches and no score-side modifications (composes with the
+    no-auxiliary-loss routing of 145-expert-choice). NULL band |Δ| ≤
+    0.01. DRIFT > +0.01 (the per-token router training is a slow
+    signal at 92 update steps, like 117-118-145-146). PASS ≤ −0.01.
+    See `autoresearch/ideas/156-moa/idea.md`.
+    """
+    use_moa: bool = True
+    moa_num_experts: int = 2
+
+
 # =====================================================================
+
+
+@dataclass
+class Tiny1M3MGAUConfig(Tiny1M3MConfig):
+    """Tiny1M3M with the Gated Attention Unit (Hua et al. 2022,
+    arXiv:2202.10447).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Replaces every `TransformerBlock` in the stack with a single
+    `GAUBlock` — a fused Attention + FFN unit that merges the FFN's
+    gating and the attention's gating into ONE block via a shared
+    gating pair `(U_g, V_o)` plus a 5-projection fused linear
+    `(Q, K, V, U_g, V_o)` and a separate output projection `U_o`.
+
+    Step-0 identity (the spec pin):
+        U_g = 0  →  y = x
+        V_o = 0  →  V_o · z = 0  →  U_o(0) = 0  →  block(x) = x
+    ⇒ at step 0 every block is the identity, so the residual stream
+    passes through unchanged. The `transformer_blocks` stack is NOT
+    built when `use_gau=True` (the GAU block replaces it entirely);
+    the model loop dispatches via `gau_blocks[i]`.
+
+    Param cost at tiny1m3m (d_model=64, n_heads=4, d_k=16, n_kv_heads=2,
+    kv_size=32, d_ff=256, 12 layers):
+        TransformerBlock per layer (squared_relu FFN, GQA):
+            qkvo:  (64 + 2·32 + 64)·64  = 12,288
+            FFN :  2·64·256              = 32,768
+            Total                         ≈ 45K (≈558K total over 12)
+        GAUBlock per layer:
+            fused: (64 + 2·32 + 2·64)·64 = 12,288  (Q,K,V,U_g,V_o)
+            out  : 64·64                  =  4,096  (U_o)
+            norm : 64 (gain only)          ≈    64
+            Total                         ≈ 16K (≈196K total over 12)
+        Saving: ~29K/layer × 12 ≈ 350K (~37% of the 0.94M model).
+    The freed budget can be re-spent on attention dim per the GAU
+    paper's retuning — out of scope for this 1-idea A/B at fixed
+    tiny1m3m tier; the model is simply smaller, which we report on.
+
+    Distinct from every closed lever at this tier (the FFN MoEs 117,
+    118, 145, 146 all close; the FFN-internal conv 157 closed; the
+    pre-attn conv 143 closed null). The GAU lever is *not* an FFN-
+    internal modification — it ELIMINATES the FFN entirely and folds
+    the FFN's role into the attention block's gating pair. Tests
+    whether the separation between Attention and FFN is the binding
+    structural bottleneck at 0.94M (a WIN would suggest it is) or
+    whether the per-block computation budget is what matters and the
+    smaller GAU model simply under-trains (a NULL or DRIFT).
+
+    Mutual-exclusions (asserted at construction):
+        - `use_yoco`: GAU has no MHA + shared-KV; YOCO needs both.
+        - `use_hyper_connections`: wrapper assumes standard block.
+        - `use_value_residual`: stash lives on `block.attention`.
+    None of these are enabled at the tiny1m3m baseline, so the
+    default config combination (no flags) is compatible with GAU.
+
+    Transfer-risk: low. GAU was tested by Google at T5 scale (250M-
+    13B) and the bit-budget-free FFN savings is qualitatively
+    different from all the closed MoE/conv levers — if GAU wins at
+    0.94M, the transfer risk is mild because GAU's design point
+    *is* the small-scale regime (it specifically targets parameter
+    efficiency at low budgets).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/158-gau/idea.md`.
+    """
+    use_gau: bool = True
