@@ -12,3 +12,4 @@
 {"ts":"2026-06-13T21:14:59Z","agent":"auto-implement","idea":"113-galore","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-14T02:20:17Z","agent":"reviewer","idea":"113-galore","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-14T02:20:40Z","agent":"reviewer","idea":"113-galore","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T04:31:48Z","agent":"code-impl","idea":"113-galore","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
