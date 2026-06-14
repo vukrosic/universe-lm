@@ -3,3 +3,4 @@
 {"ts":"2026-06-14T09:27:24Z","agent":"reviewer","idea":"172-per-head-rope-base","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T09:28:19Z","agent":"reviewer","idea":"172-per-head-rope-base","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T09:30:01Z","agent":"code-impl","idea":"172-per-head-rope-base","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:42:56Z","agent":"code-impl","idea":"172-per-head-rope-base","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
