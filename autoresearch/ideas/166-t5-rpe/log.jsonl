@@ -3,3 +3,4 @@
 {"ts":"2026-06-14T08:55:08Z","agent":"reviewer","idea":"166-t5-rpe","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T08:55:31Z","agent":"reviewer","idea":"166-t5-rpe","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-14T08:57:10Z","agent":"code-impl","idea":"166-t5-rpe","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:08:31Z","agent":"code-impl","idea":"166-t5-rpe","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
