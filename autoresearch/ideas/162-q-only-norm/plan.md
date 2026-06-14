@@ -74,16 +74,16 @@ layernorm precedent).
   (one-seed-only rule).
 
 ## Cost
-- Params: + `d_k` = +64 at tiny1m3m (one `nn.RMSNorm(d_head)` per
-  block, 12 blocks ⇒ +768 = +0.08% of 0.94M).
+- Params: + `d_k` = +16 per block (weight only — `nn.RMSNorm` has no
+  bias), × 12 blocks = +192 = +0.02% of 0.94M (verified by counting
+  `MinimalLLM(C()).parameters()`).
 - FLOPs: 1·d_head per token per forward (a single RMSNorm pass on Q)
   × 12 layers × ~250 tokens/step = ~negligible.
-- Memory: + `d_k` floats per block × 12 blocks = +768 floats;
-  activation memory unchanged.
+- Memory: + 192 floats; activation memory unchanged.
 
 ## Run
-- Artifact: `_arq_162-q-only-norm.py` (repo root) defines top-level
-  `class C(Tiny1M3MConfig): use_q_only_norm: bool = True` and
+- Artifact: `_arq_162-q-only-norm.py` (repo root) imports
+  `Tiny1M3MQOnlyNormConfig as C` from `configs.llm_config` and
   dispatches `train_llm.main()` with `--config_class __main__.C
   --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
 - Descriptor: `autoresearch/ideas/162-q-only-norm/run.json` —
