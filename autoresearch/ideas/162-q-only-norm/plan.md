@@ -4,9 +4,13 @@
 - `use_q_only_norm: bool` (default `False`) on `LLMConfig`.
   - Field: `configs/llm_config.py:558` (sits next to the closed 016
     `qk_norm_type` lever — same family, explicit-asymmetric sibling).
-- A/B subclass: `class C(Tiny1M3MConfig): use_q_only_norm: bool = True`
-  at the top of `_arq_162-q-only-norm.py`. The canonical daemon stub
-  pattern (per `autoresearch/RUN-CONTRACT.md`).
+- A/B subclass: `Tiny1M3MQOnlyNormConfig(Tiny1M3MConfig)` (newly
+  added at end of `configs/llm_config.py`), `@dataclass`-decorated
+  with `use_q_only_norm: bool = True`. Imported directly from
+  `configs.llm_config` by `_arq_162-q-only-norm.py` — the dataclass
+  inheritance pitfall (159/155/161) precludes the bare
+  `class C(Tiny1M3MConfig): use_q_only_norm: bool = True` annotation
+  pattern.
 
 ## Change
 - `configs/llm_config.py` — adds `use_q_only_norm: bool = False` at
