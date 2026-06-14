@@ -1,8 +1,8 @@
 ---
 id: 166-t5-rpe
-status: implementing
-round: 1
-updated: 2026-06-14T09:34:29Z
+status: needs-run
+round: 2
+updated: 2026-06-14T10:00:07Z
 transfer-risk: med
 plain: Replace RoPE with T5-style bucketed relative-position bias on the attention logits — each pair of token positions gets a learnable additive bias from a small set of logarithmic distance buckets, initialized to zero so step-0 is bit-identical to the baseline.
 ---

@@ -8,3 +8,4 @@
 {"ts":"2026-06-14T09:00:33Z","agent":"code-impl","idea":"169-qk-norm-depth","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-14T09:12:19Z","agent":"code-impl","idea":"169-qk-norm-depth","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-14T09:40:03Z","agent":"runner","idea":"169-qk-norm-depth","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (170/171 deferred: 170 missing Tiny1M3MSwigluFFNConfig on box, 171 no plan/code)"}
+{"ts":"2026-06-14T10:00:14Z","agent":"orchestrator","idea":"169-qk-norm-depth","from":"running","to":"needs-run","round":1,"note":"reclaimed: running 20m but box arq queue dead (drainer wedged)"}
