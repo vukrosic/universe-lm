@@ -14,3 +14,4 @@
 {"ts":"2026-06-14T05:41:20Z","agent":"auto-implement","idea":"158-gau","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-14T05:42:27Z","agent":"reviewer","idea":"158-gau","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-14T05:43:53Z","agent":"reviewer","idea":"158-gau","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T05:46:33Z","agent":"code-impl","idea":"158-gau","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
