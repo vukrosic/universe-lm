@@ -11,3 +11,4 @@
 {"ts":"2026-06-14T04:51:08Z","agent":"implement-button","idea":"160-rms-gain-per-head","from":"implementing","to":"needs-run","round":2,"note":"re-code verify: build-smoke OK, step-0 byte-identical (g_h=1.0); no code change needed"}
 {"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"160-rms-gain-per-head","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-14T05:30:51Z","agent":"reset-button","idea":"160-rms-gain-per-head","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T05:32:36Z","agent":"runner","idea":"160-rms-gain-per-head","from":"needs-run","to":"needs-run","round":2,"note":"reclaimed: daemon smoke batch dropped (only 158-gau survived; ssh connection throttling)"}
