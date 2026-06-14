@@ -3,3 +3,4 @@
 {"ts":"2026-06-14T06:25:57Z","agent":"reviewer","idea":"169-qk-norm-depth","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise"}
 {"ts":"2026-06-14T08:56:26Z","agent":"reviser","idea":"169-qk-norm-depth","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-14T08:56:33Z","agent":"reviser","idea":"169-qk-norm-depth","from":"revising","to":"needs-review","round":2,"note":"applied 5 findings (pass/fail bar, Plan section, Option A lock, step-0 wording, mutual-exclusion asserts); 0 disagreements"}
+{"ts":"2026-06-14T08:58:56Z","agent":"reviewer","idea":"169-qk-norm-depth","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
