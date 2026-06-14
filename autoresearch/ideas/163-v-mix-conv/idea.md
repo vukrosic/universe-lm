@@ -1,8 +1,8 @@
 ---
 id: 163-v-mix-conv
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-14T05:33:42Z
+updated: 2026-06-14T05:42:17Z
 transfer-risk: low
 plain: After the attention output is computed, smooth the value vectors across nearby tokens with a tiny sliding-window convolution — start with an identity filter so step-0 matches the baseline exactly.
 ---
