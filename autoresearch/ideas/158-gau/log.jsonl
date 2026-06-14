@@ -5,3 +5,4 @@
 {"ts":"2026-06-14T00:51:22Z","agent":"implement-button","idea":"158-gau","from":"implementing","to":"needs-run","round":1,"note":"code ready: _arq_158-gau.py added (subclass Tiny1M3MConfig use_gau=True); GAUBlock + Tiny1M3MGAUConfig verified clean; step-0 identity pin: U_g=V_o=0 ⇒ block(x)=x; 640K vs 949K (-32.5%)"}
 {"ts":"2026-06-14T01:31:10Z","agent":"runner","idea":"158-gau","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T01:39:27Z","agent":"reset-button","idea":"158-gau","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T04:36:16Z","agent":"runner","idea":"158-gau","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=1: TypeError: 'NoneType' object is not iterable in _collect_entropy_reg(model)"}

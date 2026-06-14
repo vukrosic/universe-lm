@@ -1,8 +1,8 @@
 ---
 id: 161-dyt-temp
-status: needs-run
+status: needs-recode
 round: 1
-updated: 2026-06-14T01:33:16Z
+updated: 2026-06-14T04:36:16Z
 transfer-risk: med
 plain: Let each layer learn its own attention "sharpness" so different depths of the model can have different attention focus levels — start every layer at sharpness 1 (no change) so step-0 matches the baseline exactly.
 ---

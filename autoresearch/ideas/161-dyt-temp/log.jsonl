@@ -2,3 +2,4 @@
 {"ts":"2026-06-14T00:55:32Z","agent":"done-button","idea":"161-dyt-temp","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
 {"ts":"2026-06-14T01:31:10Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-14T01:33:16Z","agent":"reset-button","idea":"161-dyt-temp","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T04:36:16Z","agent":"runner","idea":"161-dyt-temp","from":"needs-run","to":"needs-recode","round":1,"note":"run FAILED rc=1: module 'configs.llm_config' has no attribute 'Tiny1M3MPerLayerTempConfig'"}
