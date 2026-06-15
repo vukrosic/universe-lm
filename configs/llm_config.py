@@ -512,6 +512,20 @@ class LLMConfig:
     # family (021 = V-side pre-AV, 164 = Q-side pre-AV, 168 = post-
     # AV). See `autoresearch/ideas/168-av-output-carry/plan.md`.
     use_av_output_carry: bool = False
+    # 186 — Within-Block V-Carry (per-head learnable V
+    # recurrence). Per-head scalar `α_h = tanh(v_carry_alphas_h)`
+    # (init 0 ⇒ `α_h = 0` exactly) drives a left-to-right
+    # recurrence on V: `V_new[0] = V[0];  V_new[t] = V[t] + α_h ·
+    # V_new[t-1]` for `t ≥ 1`. Closed form: `V_new[t] = Σ_{k=0}^{t}
+    # α_h^k V[t-k]`, a 1-pole IIR low-pass on V per head (the
+    # Katharopoulos 2020 linear-attention recurrence restricted to
+    # the V side). Implemented via depthwise `F.conv1d` along T.
+    # Local to each block (no cross-block stash). Default off ⇒
+    # baseline path bit-identical (α_h=0 ⇒ conv kernel is `[1, 0,
+    # …, 0]` ⇒ V is unchanged). Cost: H × n_layers = 48 scalars
+    # (+0.005% of 0.94M). See
+    # `autoresearch/ideas/186-v-carry-block/plan.md`.
+    use_v_carry_block: bool = False
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
@@ -904,6 +918,21 @@ class LLMConfig:
     # See `autoresearch/ideas/154-rebased-attn/idea.md`.
     use_rebased_attn: bool = False
     rebase_stride: int = 8
+    # 185 — Static per-head learned K-rotation (learned orthogonal
+    # rebase of K only, position-independent). Each head has its own
+    # `R_h ∈ R^{d_k × d_k}` orthogonal matrix applied as `K_h =
+    # R_h @ K_h` pre-RoPE / pre-qk_norm, parametrized as a product of
+    # `d_k/2 = 8` 2D rotations on disjoint `(2i, 2i+1)` planes — one
+    # angle `θ_{h,i} ∈ R` per plane. Init `θ_{h,i} = 0` ⇒
+    # `R_h = I_{d_k}` exactly in fp32 ⇒ `K = R_h @ K = K` exactly
+    # ⇒ step-0 forward is byte-identical to the no-flag baseline.
+    # `R_h` orthogonal preserves norms and dot products, so QK^T
+    # magnitudes are unchanged (no softmax temperature shift) — same
+    # "preserve the dot product" property RoPE has for its position
+    # rotation and 154's fixed orthogonal rebase has. Default off ⇒
+    # no Parameter registered, no branch taken, baseline path bit-
+    # identical. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+    use_static_k_rotation: bool = False
 
     # 134 — Mega: Moving Average Equipped Gated Attention
     # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
@@ -2477,6 +2506,59 @@ class Tiny1M3MPreLMHeadRMSNormConfig(Tiny1M3MAlibiConfig):
     `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
     """
     use_pre_lm_head_rmsnorm: bool = True
+
+
+@dataclass
+class Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M stacked on the 175-alibi champion with a learnable
+    per-vocab additive LM-head bias (idea 187, OutputHead Batch 2 OH5
+    VocabBias, T5-style; see `docs/research/output_head/plan.md`).
+
+    Subclasses `Tiny1M3MAlibiConfig` so the lever stacks on top of
+    the current champion — matching the 184-logit-scale and
+    183-pre-LM-head-RMSNorm precedent subclasses. The OH5 lever
+    (`use_vocab_bias`, declared on `LLMConfig` at line 545 with the
+    OH5 docstring block at lines 541-544) is **already wired** in
+    `models/llm.py` — allocation at lines 1311-1313 and forward hook
+    at lines 1883-1884 — so this subclass only flips the flag.
+
+    Allocates `self.vocab_bias = nn.Parameter(torch.zeros(vocab_size))`
+    (49152 entries per `LLMConfig.vocab_size` at line 26). The
+    forward applies `logits = logits + vocab_bias` after softcap
+    (so it is a logit op that flows into eval CE legitimately per
+    the output_head plan's Reporting rule). Init 0 ⇒ `logits + 0 =
+    logits` exactly in fp32 ⇒ **byte-identical to the 175-alibi
+    champion at step 0** (max-abs-diff = 0.0). The gradient on
+    the bias is `softmax(logits) − onehot(target)`; non-zero at
+    step 0 because the model makes confident-but-wrong predictions
+    on the first batch, so the bias moves immediately.
+
+    Cost: vocab_size = 49152 fp32 scalars = +5.23% of 0.94M
+    (49,152 / 940k). 1-D parameter, routes to AdamW under the
+    existing rule. Compute: one fp32 add per (B, T, V) cell —
+    negligible; plan row OH5 explicitly tags this "many params
+    but trivial compute."
+
+    Distinct from the existing `use_output_temp` (OH4) and the
+    184 `use_logit_scale` levers — those are *shared* scalars (one
+    number multiplies/divides all logits); this is a *per-vocab*
+    additive shift (one number per vocab token). Mechanistically
+    orthogonal to 183 (pre-LM-head RMSNorm), 184 (logit
+    temperature), and the closed *attention-side* per-head-scalar
+    family (152, 155, 160, 166, 175). Architecturally located on
+    the LM head output, not on the attention scores.
+
+    A/B vs the 175-alibi champion (val 6.2403, band 0.04, seed
+    42, box `5b8a7fea8963`). Expected Δval ∈ [−0.005, −0.02]
+    per OH5 framing ("mostly re-learns token frequency"). WIN
+    ≤ ctrl − 0.005. NULL |Δ| < 0.01. DRIFT > ctrl + 0.01.
+
+    See `autoresearch/ideas/187-lm-head-bias/idea.md` for the full
+    mechanism, two-framing unification (output/input decoupling
+    vs learned unigram prior), and the step-0 byte-identity
+    verification contract.
+    """
+    use_vocab_bias: bool = True
 
 
 @dataclass
@@ -6451,3 +6533,105 @@ class Tiny1M3MAntiCausalSubHeadsConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
     """
     use_anti_causal_subheads: bool = True
+
+
+@dataclass
+class Tiny1M3MStaticKRotationConfig(Tiny1M3MConfig):
+    """Tiny1M3M with static per-head learned K-rotation.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    val 6.3988 cached at `5b8a7fea8963` ±0.04, see
+    `autoresearch/baseline-cache.json`). Each MHA head gets
+    its own orthogonal rebase matrix `R_h ∈ R^{d_k × d_k}`
+    applied to K as `K_h = R_h @ K_h` (post-GQA-repeat, pre-
+    RoPE / pre-qk_norm), parametrized as a product of
+    `d_k/2 = 8` 2D rotations on disjoint `(2i, 2i+1)` planes.
+    One learnable angle `θ_{h,i} ∈ R` per (head, plane). Init
+    `θ_{h,i} = 0` ⇒ `R_h = I_{d_k}` exactly in fp32 (cos/sin
+    bit-exact at 0) ⇒ `K = R_h @ K = K` exactly ⇒ step-0
+    forward is bit-identical to the no-flag baseline.
+
+    `R_h` orthogonal ⇒ `||R_h v|| = ||v||` and `<R_h q, R_h k>
+    = <q, k>` ⇒ QK^T magnitudes are preserved (no softmax
+    temperature shift) — same "preserve the dot product"
+    property RoPE has for its position rotation and 154's
+    fixed orthogonal rebase has.
+
+    Distinct from:
+      - 154-rebased-attn (WIN, fixed *random shared* rebase of
+        K and V with the same matrix): 185 is *learned, per-head,
+        K-only*.
+      - 172-per-head-rope-base (closed null, position-dependent
+        per-head RoPE base): 185 is *position-independent*.
+      - 176-v-pre-av-norm (closed null, V-norm pre-AV):
+        different tensor, different op.
+      - 180-qk-logit-conv (rejected, pre-softmax QK^T
+        smoothing): different op.
+      - 152/155/160/166 per-head scalar family (closed):
+        185 is per-head *matrices* on K, not scalars on scores.
+
+    Param cost: `n_heads × d_k/2 × n_layers = 4 × 8 × 12 = 384`
+    params (+0.041% of 0.94M — negligible). PASS ≤ ctrl − 0.005
+    AND clears the two-ctrl rule. NULL band |Δ| < 0.01. DRIFT >
+    +0.01. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+    """
+    use_static_k_rotation: bool = True
+
+
+@dataclass
+class Tiny1M3MVCarryBlockConfig(Tiny1M3MAlibiConfig):
+    """186 — Stacks on the 175-alibi champion (`Tiny1M3MAlibiConfig`,
+    val 6.2403 — current champion per `autoresearch/champion.json`)
+    with Within-Block V-Carry (per-head learnable V recurrence).
+
+    Subclasses the current champion so the lever stacks on top of
+    the winning 175 axis (learnable per-head ALiBi slopes). The
+    180-qk-logit-conv config was reverted as a causal-mask LEAK
+    (val 0.984 ⇒ not a real win), so it is NOT the champion —
+    subclassing it would inherit the leak. With
+    `use_v_carry_block=False`, this class reduces to the champion
+    — step-0 forward is byte-identical to `Tiny1M3MAlibiConfig`
+    (max-abs-diff = 0.0; verified in the build smoke by toggling
+    the flag and comparing `MinimalLLM(C(use_v_carry_block=False)).
+    forward(...)` logits against the champion). With
+    `use_v_carry_block=True` (default), each MHA allocates a per-
+    head `v_carry_alphas = nn.Parameter(zeros(H))` and applies a
+    left-to-right recurrence on the post-W_V / post-GQA / post-
+    transpose V stream (`[B, n_heads, T, d_k]`) before the AV
+    product:
+      `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for `t ≥ 1`,
+    with `α_h = tanh(v_carry_alphas_h)` (init 0 ⇒ `α_h = 0`
+    exactly ⇒ identity at step 0; tanh keeps `|α_h| < 1` so the
+    geometric sum `Σ_k α_h^k V[t-k]` stays bounded at T=2048).
+    Implemented as a vectorized depthwise `F.conv1d` along T with
+    kernel `[α_h^0, α_h^1, …, α_h^{T-1}]` per head (matches 134-
+    Mega's depthwise EMA conv1d pattern; ~0.5 GFLOPs/layer).
+
+    Local to each block — no cross-block stash or `q_carry=`/
+    `av_carry=`-style plumbing. Composes with the closed 021/164/
+    168 carries (those run on the Q / post-AV side; 186 is on V
+    pre-AV) and with the closed 176 v_rmsnorm / 109 kda_channel_gate
+    multiplicative V mods (different axes, different orderings).
+
+    Distinct from the closed V-axis cluster:
+      - 154-rebased-attn (WIN): static orthogonal rebase of K, V
+        (fixed rotation). 186 is a *learned dynamic* carry on V
+        only.
+      - 168-av-output-carry (null): cross-block AV carry with fixed
+        α=0.999. 186 is within-block V carry with per-head learned
+        α_h.
+      - 164-q-carry (null): cross-block Q carry.
+      - 021-value-residual (WIN): cross-block V carry.
+      - 012/008-gated-deltanet, 004-retnet-retention (closed): full
+        linear-attention / delta-rule / retention, not a single
+        scalar α_h.
+
+    Param cost: H × n_layers = 4 × 12 = 48 scalars (+0.005% of
+    0.94M — negligible). NULL band |Δ| < 0.01 (most likely
+    outcome per the 168 null pattern). PASS ≤ ctrl − 0.005 AND
+    clears the two-ctrl rule. DRIFT > +0.01. See
+    `autoresearch/ideas/186-v-carry-block/idea.md` /
+    `plan.md`.
+    """
+    use_v_carry_block: bool = True
+

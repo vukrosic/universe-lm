@@ -311,6 +311,12 @@ class MinimalLLM(nn.Module):
         # the no-flag baseline. Default off ⇒ baseline path bit-
         # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
         self.use_mqa_gated = getattr(config, "use_mqa_gated", False)
+        # 185 — Static per-head learned K-rotation. Per-head angle
+        # `θ_{h,i}` init 0 ⇒ `R_h = I_{d_k}` exactly in fp32 ⇒
+        # step-0 forward is bit-identical to the no-flag baseline.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        self.use_static_k_rotation = getattr(config, "use_static_k_rotation", False)
         # 182 — Per-head learnable attention window. Init
         # `head_window_logit = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈
         # T − 0.00005·T > T − 1 = max|t − s|` ⇒ penalty identically 0
@@ -400,6 +406,15 @@ class MinimalLLM(nn.Module):
         # identical. See
         # `autoresearch/ideas/168-av-output-carry/plan.md`.
         self.use_av_output_carry = getattr(config, "use_av_output_carry", False)
+        # 186 — Within-Block V-Carry (per-head learnable V
+        # recurrence). Local to each block — no cross-block stash or
+        # `q_carry=`/`av_carry=`-style plumbing; the recurrence runs
+        # causally within a single block. Per-block per-head
+        # `v_carry_alphas = nn.Parameter(torch.zeros(n_heads))` lives
+        # on each MHA; tanh-bounded, init 0 ⇒ step-0 ≡ baseline.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/186-v-carry-block/plan.md`.
+        self.use_v_carry_block = getattr(config, "use_v_carry_block", False)
         # 163 — Post-Attention V-Mix Depthwise Conv (Hyena-style
         # residual conv on V before the O projection). Default off
         # → baseline path bit-identical. See
@@ -713,6 +728,11 @@ class MinimalLLM(nn.Module):
                         # path bit-identical. See
                         # `autoresearch/ideas/178-mqa-gated/idea.md`.
                         use_mqa_gated=self.use_mqa_gated,
+                        # 185 — Static per-head learned K-rotation
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+                        use_static_k_rotation=self.use_static_k_rotation,
                         # 182 — Per-head learnable attention window
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -785,6 +805,10 @@ class MinimalLLM(nn.Module):
                         # off → baseline path bit-identical. See
                         # `autoresearch/ideas/168-av-output-carry/plan.md`.
                         use_av_output_carry=self.use_av_output_carry,
+                        # 186 — Within-Block V-Carry pass-through.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+                        use_v_carry_block=self.use_v_carry_block,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -1027,6 +1051,11 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/178-mqa-gated/idea.md`.
                         use_mqa_gated=self.use_mqa_gated,
+                        # 185 — Static per-head learned K-rotation
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+                        use_static_k_rotation=self.use_static_k_rotation,
                         # 182 — Per-head learnable attention window
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -1103,6 +1132,10 @@ class MinimalLLM(nn.Module):
                         # off → baseline path bit-identical. See
                         # `autoresearch/ideas/168-av-output-carry/plan.md`.
                         use_av_output_carry=self.use_av_output_carry,
+                        # 186 — Within-Block V-Carry pass-through.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+                        use_v_carry_block=self.use_v_carry_block,
                         # 163 — Post-Attention V-Mix Depthwise Conv
                         # pass-through. Default off → baseline path
                         # bit-identical. See

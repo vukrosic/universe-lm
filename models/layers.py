@@ -969,6 +969,31 @@ class MultiHeadAttention(nn.Module):
         # gates. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/168-av-output-carry/plan.md`.
         use_av_output_carry: bool = False,
+        # 186 — Within-Block V-Carry (per-head learnable V
+        # recurrence). A learnable per-head scalar
+        # `α_h = tanh(v_carry_alphas_h)` (init `v_carry_alphas_h = 0`
+        # ⇒ `α_h = 0` exactly) drives a left-to-right recurrence
+        # along the time axis of V at the post-W_V / post-GQA /
+        # post-transpose site (V is `[B, n_heads, T, d_k]`):
+        # `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for
+        # `t ≥ 1`. Closed form: `V_new[t] = Σ_{k=0}^{t} α_h^k · V[t-k]`
+        # (a 1-pole IIR low-pass on V, equivalent to the linear-
+        # attention recurrence without the K side). Implemented via
+        # a vectorized depthwise `F.conv1d` along T with kernel
+        # `α_h^0, α_h^1, …, α_h^{T-1}` per head (matches 134-Mega's
+        # depthwise conv1d pattern; ~0.5 GFLOPs/layer — the Python
+        # for-loop alternative is ~2k sequential ops/head, too slow
+        # at GPU scale). The tanh parameterization keeps `|α_h| < 1`
+        # strictly so the geometric sum stays bounded even at T=2048.
+        # α=0 init ⇒ kernel is `[1, 0, 0, …, 0]` (post-flip) ⇒ conv1d
+        # output is `V` exactly ⇒ forward is bit-identical to the
+        # no-flag baseline at step 0 (no RNG consumed in the
+        # construction beyond the empty `nn.Parameter(zeros(n_heads))`).
+        # Local to each block (no cross-block stash, no `q_carry=`/
+        # `av_carry=`-style plumbing) — the recurrence runs causally
+        # within a single block. Cost: H × n_layers = 48 scalars
+        # (+0.005% of 0.94M). See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        use_v_carry_block: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution. When on,
         # `forward()` applies `F.conv1d(attn_output.transpose(1,2),
         # self.v_mix_conv_weight, padding=k//2, groups=d_model)` AFTER
@@ -1208,6 +1233,19 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/154-rebased-attn/idea.md`.
         use_rebased_attn: bool = False,
         rebase_stride: int = 8,
+        # 185 — Static per-head learned K-rotation (learned
+        # orthogonal rebase of K only, position-independent). Each
+        # head has its own `R_h ∈ R^{d_k × d_k}` orthogonal matrix
+        # applied as `K_h = R_h @ K_h` post-GQA-repeat, pre-RoPE /
+        # pre-qk_norm. `R_h` is a product of `d_k/2 = 8` 2D rotations
+        # on disjoint `(2i, 2i+1)` planes, parametrized by `n_heads
+        # × d_k/2 = 32` angles per block (init 0 ⇒ identity ⇒ step-0
+        # bit-identical to baseline). `R_h` orthogonal preserves norms
+        # and dot products ⇒ QK^T magnitudes are unchanged (no softmax
+        # temperature shift). Default off ⇒ no Parameter registered,
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        use_static_k_rotation: bool = False,
         # 156 — Mixture-of-Attentions (MoA). Run `E` parallel
         # attention computations per layer with SEPARATE K_e, V_e
         # projections (Q is shared across experts, so the routing is
@@ -1565,6 +1603,21 @@ class MultiHeadAttention(nn.Module):
             # `self.use_av_output_carry` so these are never consumed.
             self.alpha_av = None
             self._av_carry = None
+        # 186 — Within-Block V-Carry. Per-head learnable scalar
+        # `α_h = tanh(v_carry_alphas_h)` (init `v_carry_alphas_h = 0`
+        # ⇒ `α_h = 0` exactly ⇒ recurrence collapses to identity at
+        # step 0). One parameter per head (H=4 at tiny1m3m). Stored on
+        # `self.v_carry_alphas`; the forward branch is gated on
+        # `self.use_v_carry_block` so the parameter is never consumed
+        # when the flag is off.
+        self.use_v_carry_block = use_v_carry_block
+        if self.use_v_carry_block:
+            self.v_carry_alphas = nn.Parameter(torch.zeros(n_heads))
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_v_carry_block` so this is never consumed.
+            self.v_carry_alphas = None
         # 169 — Depth-Conditional QK-Norm. Per-block scalar `α_l =
         # nn.Parameter(torch.ones(()))` (init 1.0 ⇒ `Q ← Q · 1 = Q`
         # and `K ← K · 1 = K` exactly in fp32 ⇒ step-0 forward is
@@ -2126,6 +2179,30 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/154-rebased-attn/idea.md`.
         self.use_rebased_attn = use_rebased_attn
         self.rebase_stride = max(1, int(rebase_stride))
+
+        # 185 — Static per-head learned K-rotation. Stored on self;
+        # the rotation block in `forward()` applies a per-head
+        # orthogonal matrix `R_h` to K (built from the angle
+        # parameter) post-GQA-repeat, pre-RoPE / pre-qk_norm. The
+        # angles are shape `[n_heads, d_k//2]` and init 0 ⇒
+        # `R_h = I_{d_k}` exactly ⇒ K is bit-identical to the input
+        # at step 0. When `use_static_k_rotation=False` (default)
+        # the parameter is NOT built (no extra memory on the baseline
+        # path) and the forward branch is never taken — baseline
+        # forward graph is bit-identical to no-flag. Cost when on:
+        # n_heads × d_k//2 = 4 × 8 = 32 params/layer, 384 total at
+        # tiny1m3m (+0.041% of the 0.94M model). See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        self.use_static_k_rotation = use_static_k_rotation
+        if use_static_k_rotation:
+            assert self.d_k % 2 == 0, (
+                "use_static_k_rotation=True requires even d_k "
+                "(per-plane 2D rotations pair dims 2i, 2i+1); "
+                f"got d_k={self.d_k}"
+            )
+            self.k_rotation_angles = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k // 2)
+            )
 
         # 156 — Mixture-of-Attentions (MoA). Stored on self; the
         # MoA branch in `forward()` runs E parallel attention
@@ -3034,6 +3111,39 @@ class MultiHeadAttention(nn.Module):
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
             if not self.use_mega:
                 V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
+        # 185 — Static per-head learned K-rotation. Applied AFTER the
+        # GQA repeat_interleave so K is in `[B, T, n_heads, d_k]` and
+        # the per-head rotation angle broadcasts cleanly to the
+        # post-repeat head count. Site is pre-RoPE / pre-qk_norm so
+        # the rotation acts as a static basis change on the raw K
+        # stream; orthogonal `R_h` preserves norms and dot products
+        # so QK^T magnitudes are unchanged (no softmax temperature
+        # shift). Init `θ_{h,i} = 0` ⇒ `cos(0) = 1`, `sin(0) = 0` in
+        # fp32 ⇒ K_a_new = K_a and K_b_new = K_b exactly ⇒ K
+        # unchanged at step 0 ⇒ baseline forward is bit-identical
+        # when the flag is OFF. When OFF the branch is never taken,
+        # the parameter is never built, and the forward graph is
+        # bit-identical to no-flag. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        if self.use_static_k_rotation:
+            cos_a = self.k_rotation_angles.cos()  # [H, d_k/2]
+            sin_a = self.k_rotation_angles.sin()  # [H, d_k/2]
+            # Reshape K to [B, T, H, d_k/2, 2] for the per-plane
+            # (2i, 2i+1) 2D rotation. R_h is a product of d_k/2
+            # block-diagonal 2D rotations on disjoint planes —
+            # block-diagonal ⇒ orthogonal.
+            K_pairs = K.reshape(
+                batch_size, seq_len, self.n_heads, self.d_k // 2, 2
+            )
+            K_a = K_pairs[..., 0]  # [B, T, H, d_k/2]
+            K_b = K_pairs[..., 1]  # [B, T, H, d_k/2]
+            cos_b = cos_a.view(1, 1, self.n_heads, self.d_k // 2)
+            sin_b = sin_a.view(1, 1, self.n_heads, self.d_k // 2)
+            K_a_new = K_a * cos_b - K_b * sin_b
+            K_b_new = K_a * sin_b + K_b * cos_b
+            K = torch.stack([K_a_new, K_b_new], dim=-1).reshape(
+                batch_size, seq_len, self.n_heads, self.d_k
+            )
         if self.use_k_gain:
             K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
         # 174 — xPos exponential decay on K (Sun et al. 2022,
@@ -3256,6 +3366,80 @@ class MultiHeadAttention(nn.Module):
                 self._v_residual = V.detach()
             else:
                 V = (1.0 - self.lambda_v) * V + self.lambda_v * v_residual
+
+        # 186 — Within-Block V-Carry. Per-head learnable scalar
+        # `α_h = tanh(v_carry_alphas_h)` drives a left-to-right
+        # recurrence along the time axis of V:
+        #   `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for `t ≥ 1`.
+        # Closed form: `V_new[t] = Σ_{k=0}^{t} α_h^k · V[t-k]`
+        # (a 1-pole IIR low-pass on V; equivalent to the linear-
+        # attention recurrence without the K side, à la Katharopoulos
+        # et al. 2020 arXiv:2006.16236). Implemented as a vectorized
+        # depthwise `F.conv1d` along T with kernel `[α_h^0, α_h^1,
+        # …, α_h^{T-1}]` per head — matches 134-Mega's depthwise
+        # EMA conv1d pattern (lines 2823-2834) and is ~0.5 GFLOPs/
+        # layer at tiny1m3m, vs ~2k sequential ops/head for the
+        # Python for-loop alternative (too slow on GPU).
+        #
+        # **Derivation (kernel flip + left-pad for F.conv1d
+        # cross-correlation).** We want `V_new[t] = Σ_{k=0}^{t}
+        # α_h^k V[t-k]`. `F.conv1d` computes cross-correlation
+        # `out[t] = Σ_k w[k] · x[t+k]` (no kernel flip). Pad `x` on
+        # the left by `T-1` zeros (so `x_padded[t+k] = V[t+k-T+1]`
+        # when `t+k ≥ T-1` else 0). Set `w[k] = α_h^{T-1-k}`
+        # (the un-flipped kernel reversed): then
+        #   `out[t] = Σ_{k=0}^{T-1} α_h^{T-1-k} · V[t+k-T+1]`
+        #         `= Σ_{j=0}^{t} α_h^{t-j} · V[j]`  (let `j = t+k-T+1`)
+        # which matches `V_new[t]`. α=0 init ⇒ `α_h^{T-1-k}` is
+        # `[0, …, 0, 1]` ⇒ conv1d output is `V` exactly ⇒ forward
+        # is bit-identical to baseline at step 0. The tanh parameter-
+        # ization keeps `|α_h| < 1` strictly so the geometric sum
+        # stays bounded at T=2048.
+        #
+        # **Layout.** Each (B, h, j) channel of V is processed
+        # independently along T with its head's kernel. We reshape
+        # V from `[B, H, T, d_k]` to `[B, H·d_k, T]` and use
+        # `groups=H·d_k` depthwise conv1d (each group is one
+        # channel with kernel length T; same FLOPs as 134-Mega's
+        # depthwise conv1d, ~0.5 GFLOPs/layer here). Sits
+        # AFTER the `use_value_residual` stash/blend and BEFORE the
+        # v_norm / v_rmsnorm / value_channel_gate / kda_channel_gate
+        # sites — composes cleanly with every preceding V-modifying
+        # lever (the recurrence is along T, the others are along
+        # d_k; order doesn't matter for downstream matmul blending).
+        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        if self.use_v_carry_block:
+            alpha = torch.tanh(self.v_carry_alphas)  # [H], |alpha| < 1
+            B, H, T, d_k = V.shape
+            # Build kernel [H, T], then FLIP for F.conv1d cross-
+            # correlation. arange in fp32 for stability when α_h is
+            # near ±1 (T=2048 ⇒ α^2048 underflows/overflows fp16 —
+            # keep the whole kernel in fp32 and downcast at the end).
+            arange = torch.arange(T, device=V.device, dtype=V.dtype)
+            alpha_pow = alpha.unsqueeze(1).pow(arange.unsqueeze(0))  # [H, T]
+            kernel = alpha_pow.flip(1)                              # [H, T]
+            # Depthwise conv1d: each (B, h, j) channel processed with
+            # its head's kernel. Reshape V from [B, H, T, d_k] to
+            # [B, H·d_k, T] (permute d_k before T so the conv axis
+            # is the last).
+            V_flat = (
+                V.permute(0, 1, 3, 2).contiguous().reshape(B, H * d_k, T)
+            )                                                       # [B, H·d_k, T]
+            V_padded = F.pad(V_flat, (T - 1, 0))                   # [B, H·d_k, 2T-1]
+            # weight [H·d_k, 1, T]: per-channel kernel, all d_k
+            # channels of head h share the same kernel.
+            weight = (
+                kernel.unsqueeze(1)
+                .expand(H, d_k, T)
+                .reshape(H * d_k, 1, T)
+                .contiguous()
+            )
+            V_out = F.conv1d(V_padded, weight, groups=H * d_k)
+            V = (
+                V_out.reshape(B, H, d_k, T)
+                .permute(0, 1, 3, 2)
+                .contiguous()
+            )                                                       # [B, H, T, d_k]
 
         # #92 Robust V-norm: normalize the value vectors per head before they
         # are mixed by attention (last dim = d_k).
@@ -4256,6 +4440,11 @@ class TransformerBlock(nn.Module):
         # the no-flag baseline. Default off → baseline path bit-
         # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
         use_mqa_gated: bool = False,
+        # 185 — Static per-head learned K-rotation pass-through to
+        # the inner MHA. Init θ=0 ⇒ step-0 forward bit-identical to
+        # baseline. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        use_static_k_rotation: bool = False,
         # 182 — Per-head learnable attention window pass-through.
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/182-per-head-window/idea.md`.
@@ -4473,6 +4662,11 @@ class TransformerBlock(nn.Module):
         # (see MHA.use_av_output_carry for the mechanism). Default
         # off → baseline path bit-identical.
         use_av_output_carry: bool = False,
+        # 186 — Within-Block V-Carry pass-through to
+        # MultiHeadAttention (see MHA.use_v_carry_block for the
+        # mechanism). Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        use_v_carry_block: bool = False,
         # 163 — Post-Attention V-Mix Depthwise Convolution (Poli et
         # al. "Hyena", 2023, arXiv:2302.10866). After the attention
         # output is computed (post-SDPA, post-reshape, pre-W_O
@@ -4749,6 +4943,10 @@ class TransformerBlock(nn.Module):
             # off → baseline path bit-identical. See
             # `autoresearch/ideas/178-mqa-gated/idea.md`.
             use_mqa_gated=use_mqa_gated,
+            # 185 — Static per-head learned K-rotation pass-through
+            # to the inner MHA. Default off → baseline path bit-
+            # identical. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+            use_static_k_rotation=use_static_k_rotation,
             # 182 — Per-head learnable attention window pass-through.
             # Default off → baseline path bit-identical. See
             # `autoresearch/ideas/182-per-head-window/idea.md`.
@@ -4787,6 +4985,11 @@ class TransformerBlock(nn.Module):
             # off → baseline path bit-identical. See
             # `autoresearch/ideas/168-av-output-carry/plan.md`.
             use_av_output_carry=use_av_output_carry,
+            # 186 — Within-Block V-Carry pass-through to
+            # MultiHeadAttention (see MHA.use_v_carry_block for the
+            # mechanism). Default off → baseline path bit-identical.
+            # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+            use_v_carry_block=use_v_carry_block,
             # 163 — Pass-through to MultiHeadAttention.
             use_v_mix_conv=use_v_mix_conv,
             v_mix_conv_kernel=v_mix_conv_kernel,
