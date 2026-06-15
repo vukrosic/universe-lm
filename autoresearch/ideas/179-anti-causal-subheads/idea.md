@@ -50,3 +50,36 @@ A second lever axis (orthogonal): per-head *learned mask pattern*, e.g., a learn
 
 ## Why it's worth a slot
 The bet, in one sharp sentence: **per-head learnable bidirectional access during training is a fresh axis (the closed multiscale-heads lever mixes at layer level; 179 mixes at head level within a layer) and could give the model richer structural features without committing the whole layer to bidirectional (which the closed arch sweep already tried and failed at).** A null at 0.94M would close the per-head causal-mixing axis and confirm that the decoder-only binding constraint is "future-context leakage doesn't transfer to causal inference"; a win would unlock the hybrid head family for Phase-2 ≥135M where per-head gradient signal is larger and the bidirectional-vs-causal mix can develop meaningfully.
+
+## Pass/fail bar at tiny1m3m (seed 42)
+
+**Cache reference (box-keyed):** `autoresearch/baseline-cache.json` box `5b8a7fea8963` (RTX 3060) gives `val_mean = 6.3988`, `noise_band = 0.04` over `n_measurements = 3` runs (6.4112 / 6.3934 / 6.3919). This is the authoritative reference for the WIN/NULL verdict — the cache is box-keyed and any per-box drift > 0.01 from `LEADERBOARD.md` triggers a box-bad alert and the run stays `needs-run`.
+
+**Pre-test priors (per the r1 reviewer):**
+- The per-head-attention-shape trio closed null at 0.94M/12L/4H: `152-attn-logit-bias` (Δ=+0.0131, INSIDE band), `155-per-head-temp` (Δ=−0.0063, INSIDE band), `166-t5-rpe` (Δ=+0.0106, INSIDE band). Three structurally different per-head logit-shape levers all sat inside the ±0.04 cache band at 0.94M.
+- The closed per-head QK-norm attribution: `016-qk-norm` (WIN, joint), `162-q-only-norm` (NULL), `165-k-only-norm` (NULL). WIN requires QK symmetry — single-axis per-head changes do not replicate the joint lever.
+- The closed cross-block residual mixing dual: `021-value-residual` (WIN), `164-q-carry` (NULL). V is special; Q-side doesn't bind at 0.94M.
+- All four nulls sit in the `[−0.02, +0.02]` Δ range against the cache mean — the *empirical envelope* of per-head-shape levers at this tier.
+
+**Expected Δ-val range (a priori):** `Δ ∈ [−0.02, +0.005]`. The right-edge of +0.005 is the most likely single-seed sign (per-head bidirectional access during training is *training-time leakage*; decoder-only eval has no future context, so the trained head either re-routes around the mask at inference or doesn't help). A modest negative (right-sign) of ≤ −0.01 would be a *surprise*, requiring either the per-head mix to develop meaningfully across 92 update steps at d_model=64 / 12L / 4H or the soft structural-prior story to compound unexpectedly.
+
+**Numeric bars (single seed = 42):**
+- **WIN**: `trt_val ≤ ctrl_val_mean − 0.01` *AND* the trt beats both same-session ctrls by ≥ the two-ctrl gap. `ctrl_val_mean = 6.3988` ⇒ WIN iff `trt_val ≤ 6.3888`. (Per `PIPELINE.md` §2 two-ctrl rule — a single seed whose trt beats the cache but loses to one of two same-session ctrls fails the two-ctrl rule and is treated as NULL.)
+- **NULL** (the modal outcome at this tier, given the 152/155/162/165/166 priors): `|trt_val − ctrl_val_mean| ≤ 0.01` ⇒ `trt_val ∈ [6.3888, 6.4088]`. NULL is the hypothesis-confirming outcome: it confirms that per-head causal mixing (like per-head logit-shape and per-head QK-norm) doesn't bind at 0.94M/12L/4H; re-evaluate at Phase-2 ≥135M where per-head gradient signal is ~140× larger per token.
+- **DRIFT (regression)**: `trt_val > ctrl_val_mean + 0.01` ⇒ `trt_val > 6.4088`. DRIFT in the wrong direction means the optimizer is *pushing γ_h positive against the eval-time γ flip* (see next section) and producing a model that mis-allocates capacity; equivalent severity to the 159-emb-layernorm DRIFT pattern.
+- **Inside-band ambiguity** (`|Δ| ≤ 0.01`): logged NULL with `cache_authoritative: true` per `BASELINE-CACHE-DESIGN.md`. The cache verdict (box-keyed) supersedes any in-session delta that's within the noise band.
+
+**Train/inference γ flip inside the bar:** see next section for the explicit choice. The bars above assume the chosen schedule (recommended: keep γ_h as trained at eval).
+
+## Inference schedule (the train/eval distribution shift)
+
+**Choice:** keep γ_h as trained at **both** train time and eval time. The optimizer's choice of γ_h at training-end IS the eval-time mask shape.
+
+**Rationale:** the model has no future context at inference — that's the entire decoder-only constraint. Trained γ_h > 0 means a head attends (with attenuated strength) to future positions *even at eval time*. This is a *train/inference distribution shift* no other closed lever in the recent batch has, but it is also the *actual deployment behavior* of the lever. Two consequences:
+
+1. The WIN/NULL verdict above measures the *real* deployment cost/benefit of training-time bidirectional heads — not a contrived "force γ_h = 0 at eval" override that hides the cost.
+2. The wrong-sign null is *informative*: if the optimizer pushes γ_h positive and the model gets worse, we know the trained per-head bidirectional mix doesn't transfer to causal-flavored inference even on the head's own terms.
+
+**Alternative schedule (if the implementer prefers the conservative override):** force γ_h = 0 at eval time (i.e. `_ac_subhead_gate_override_zero = True` flag, set inside the eval branch). This *adds* a paired sanity run: a `Tiny1M3MAntiCausalSubHeadsConfigFrozen` variant with `ac_subhead_gate` frozen at -10 (γ_h ≡ 0) throughout training, to disambiguate "train-time leakage helps" from "the trained head can re-route around the mask at eval." If both the primary run (γ_h trained, γ_h trained at eval) and the sanity run (γ_h trained, γ_h = 0 at eval) show Δ > 0 vs ctrl, the bar is met. **Recommended:** ship the primary run only; the sanity run is a *post-hoc* follow-up if the primary run shows an interesting-but-ambiguous signal.
+
+**Documented risk:** at a true Phase-2 deployment, γ_h > 0 at eval would be a no-go for strict causal-LM service (the model would peek at the future at inference). A winning run at 0.94M would NOT be promoted as-is; it would need a γ_h = 0 inference override in the production config. The runner/eval pipeline already supports this via the existing `_ac_subhead_gate_override_zero` flag (if added) — the override is a 2-line eval branch, well within the 200 LoC cap.
