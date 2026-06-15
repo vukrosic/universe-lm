@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T12:05:05Z","agent":"reviewer","idea":"198-z-loss-on-residual","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:05:41Z","agent":"reviewer","idea":"198-z-loss-on-residual","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T12:13:39Z","agent":"code-impl","idea":"198-z-loss-on-residual","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:19:19Z","agent":"code-impl","idea":"198-z-loss-on-residual","from":"planning","to":"needs-run","round":1,"note":"plan+code done; flag use_residual_zloss+zloss_coef; stash on _run_post_embed; trainer reads via getattr; build-smoke OK"}

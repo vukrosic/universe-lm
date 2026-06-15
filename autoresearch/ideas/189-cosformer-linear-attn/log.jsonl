@@ -13,3 +13,4 @@
 {"ts":"2026-06-15T12:03:59Z","agent":"reviewer","idea":"189-cosformer-linear-attn","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T12:05:02Z","agent":"reviewer","idea":"189-cosformer-linear-attn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T12:12:14Z","agent":"code-impl","idea":"189-cosformer-linear-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:20:09Z","agent":"orchestrator","idea":"189-cosformer-linear-attn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}

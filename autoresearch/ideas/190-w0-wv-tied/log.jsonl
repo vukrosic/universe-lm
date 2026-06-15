@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T12:11:11Z","agent":"orchestrator","idea":"190-w0-wv-tied","from":"reviewing","to":"needs-review","round":1,"note":"reclaim stale reviewing lock (10m)"}
 {"ts":"2026-06-15T12:12:09Z","agent":"auto-implement","idea":"190-w0-wv-tied","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
 {"ts":"2026-06-15T12:16:41Z","agent":"reviewer","idea":"190-w0-wv-tied","from":"rejected","to":"needs-revision","round":1,"note":"verdict: revise — GQA shape-compat (n_kv_heads=2 means W_V is [32,64] not [64,64] — neither direct-tied nor transpose-tied fits; use GQA-aware shared M ∈ R^{d_model×d_model} with W_V=M[:,:kv_size] and W_O=M); param-savings is 2048/0.22% not 4096/0.43%; norm-preservation intuition needs GQA-aware reframe; 4 more findings in review.md"}
+{"ts":"2026-06-15T12:19:14Z","agent":"reviser","idea":"190-w0-wv-tied","from":"needs-revision","to":"revising","round":1,"note":"claimed"}

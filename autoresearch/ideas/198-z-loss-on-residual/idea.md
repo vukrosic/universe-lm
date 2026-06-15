@@ -1,8 +1,8 @@
 ---
 id: 198-z-loss-on-residual
-status: planning
+status: needs-run
 round: 1
-updated: 2026-06-15T12:13:39Z
+updated: 2026-06-15T12:19:19Z
 transfer-risk: low
 plain: Add a small penalty that prevents the residual stream's magnitude from exploding (z-loss on the L2 norm of the residual) — a stability regularizer that targets a different layer than logit z-loss.
 ---

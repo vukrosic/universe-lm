@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T08:50:20Z","agent":"code-impl","idea":"195-qk-clamp-min-max","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:57:47Z","agent":"orchestrator","idea":"195-qk-clamp-min-max","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
 {"ts":"2026-06-15T12:02:28Z","agent":"code-impl","idea":"195-qk-clamp-min-max","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:19:29Z","agent":"code-impl","idea":"195-qk-clamp-min-max","from":"planning","to":"needs-run","round":1,"note":"plan+code done; build-smoke SMOKE_OK; off-path bit-identical to baseline (forward diff=0.0); treatment path exercises clamp at step 0 (forward diff=0.0047, expected active-regularizer behavior)"}
