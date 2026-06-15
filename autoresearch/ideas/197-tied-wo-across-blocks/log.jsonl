@@ -18,3 +18,4 @@
 {"ts":"2026-06-15T16:48:45Z","agent":"code-impl","idea":"197-tied-wo-across-blocks","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:48:57Z","agent":"code-impl","idea":"197-tied-wo-across-blocks","from":"planning","to":"needs-run","round":1,"note":"plan+code done; param delta 4108 wired; build-smoke green; tied_wo use_gau check reordered (use_gau read after use_tied_wo_across_blocks)"}
 {"ts":"2026-06-15T16:50:08Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T16:52:23Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
