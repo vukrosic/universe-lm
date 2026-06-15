@@ -1,8 +1,8 @@
 ---
 id: 173-entmax-15
-status: implementing
+status: tasting
 round: 1
-updated: 2026-06-15T01:45:10Z
+updated: 2026-06-15T01:46:31Z
 transfer-risk: med
 plain: Replace softmax attention with a learnable sparse-attention operator that smoothly interpolates between dense softmax and hard sparsemax, starting exactly at softmax so step-0 is byte-identical.
 ---
