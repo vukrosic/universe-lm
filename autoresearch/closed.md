@@ -29,6 +29,8 @@ The code-implementer never closes — if blocked it bounces the idea back to
 - 162-q-only-norm — null: trt=6.4303 vs fresh baseline 6.4346±0.0458 (Δ=-0.0043, inside band; pass bar -0.005 missed by 0.0007) at tiny1m3m; train_loss 6.4129 (between ctrls 6.3893/6.3782/6.4391), val_acc 0.1456 (between ctrls 0.1441/0.1448/0.1425); +192 params (+0.020%, 12 RMSNorm(d_k=16) weights × 12 blocks, no bias), Q-only RMSNorm pre-softmax leaves K raw; attribution insight: 016-qk-norm WIN was carried by K-side or symmetry, NOT Q-side (with 165-k-only-norm as orthogonal K-side ablation); closes the Q-side of the QK-norm-attribution axis at 0.94M — 2026-06-14
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 209-canon-conv-alibi — null: trt=6.2519 vs champion alibi 6.2403±0.04 (Δ=+0.0116, inside variance) at tiny1m3m — 2026-06-15 [corrected: daemon first logged a FALSE WIN vs the per-box base control 6.3988; canon-conv does not beat alibi]
+- 208-value-residual-alibi — null: Δ=0.0191 at tiny1m3m (inside variance) — 2026-06-15
 - 191-token-attn-gain — null: Δ=0.0278 at tiny1m3m (inside variance) — 2026-06-15
 - 196-block-residual-ema — taste-reject: cross-block residual-mixing axis closed at 0.94M; 164-q-carry null (Δ=+0.0360 wrong-sign, 3.6× plan bar) is direct empirical prior against the same detach-and-learnable-scalar-gate structure; 150-xlayer-feedback reject + 116-hyper-connections null + 017-sub-LN null all on the same family; 021-value-residual WIN is V-only and narrower; null info value low (5th null in family), EMA framing is a different knob on the same closed axis — 2026-06-15
 - 185-static-per-head-k-rotation — reject: exhausted 3 recode rounds (MAX_RECODE_ROUNDS=3), axis abandoned — 2026-06-15
