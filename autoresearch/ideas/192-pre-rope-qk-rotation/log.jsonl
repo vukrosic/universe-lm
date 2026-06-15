@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T12:18:58Z","agent":"code-impl","idea":"192-pre-rope-qk-rotation","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:28:10Z","agent":"orchestrator","idea":"192-pre-rope-qk-rotation","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (9m)"}
 {"ts":"2026-06-15T16:34:51Z","agent":"code-impl","idea":"192-pre-rope-qk-rotation","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:45:11Z","agent":"code-impl","idea":"192-pre-rope-qk-rotation","from":"planning","to":"needs-run","round":1,"note":"plan+code done; +384 params, byte-identical step-0"}

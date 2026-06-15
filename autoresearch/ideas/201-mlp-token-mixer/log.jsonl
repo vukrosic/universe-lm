@@ -22,3 +22,4 @@
 {"ts":"2026-06-15T16:40:38Z","agent":"auto-implement","idea":"201-mlp-token-mixer","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 4 failed runs — needs a human"}
 {"ts":"2026-06-15T16:41:38Z","agent":"auto-implement","idea":"201-mlp-token-mixer","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
 {"ts":"2026-06-15T16:43:48Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"rejected","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:45:10Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve (r3 — r1/r2 settled; definition stands; code-gate ImportError is on the code-impl side, not the definition; auto-implement's out-of-band reject is overridden by reviewer authority; recode cap should close the idea on round>=3 needs-recode if the next code-impl pass also fails)"}

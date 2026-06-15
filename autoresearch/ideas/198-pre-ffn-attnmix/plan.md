@@ -1,5 +1,19 @@
 # Plan — 198 Pre-FFN Attention Mixing
 
+## Recode r2 (2026-06-16) — root cause: transient build-smoke race
+
+The r1 build-smoke failed with `ImportError: cannot import name 'Tiny1M3MPreFFNAttnMixConfig'`. The class was present in the local `configs/llm_config.py` (line 2927) but the daemon's remote `git pull` had not yet brought the class to the box at the moment the smoke ran (the daemon auto-sync landed ~2 s after the smoke at commit `74cd9fd 2026-06-15T12:36:23Z`). The local CPU build-smoke reproduces cleanly now:
+
+- `from configs.llm_config import Tiny1M3MPreFFNAttnMixConfig as C` → OK
+- `MinimalLLM(C())` → 949,068 params (correct tiny1m3m)
+- `MinimalLLM(C())` forward (seed 42, batch=1, T=16) vs `MinimalLLM(Tiny1M3MConfig())` forward under same seed → max-abs-diff `9.499e-07` (well below the `1e-5` fp32-noise target)
+- 12 `pre_ffn_attn_mix_gamma_raw` parameters, all at `-10.0` (one per block; `sigmoid(-10) ≈ 4.54e-5`)
+- 12 forward branches taken (one per block in the pre-norm path)
+
+**No code change required** for r2 — the artifact (`_arq_198-pre-ffn-attnmix.py`, `run.json`, the class, the `TransformerBlock` wiring) is the r1 artifact and is bit-identical to the original. The flip to `needs-run` simply re-queues the run; the daemon's next pull will pick up the class and the build-smoke will pass.
+
+
+
 ## Flag
 - `use_pre_ffn_attn_mix: bool = False` and `pre_ffn_attn_mix_init: float = -10.0` on `LLMConfig` (in `configs/llm_config.py`, right after `use_mish_glu` at line 373, before `use_conv_ffn`). Default OFF ⇒ baseline path bit-identical (no `nn.Parameter` registered, no forward branch taken, `MinimalLLM.__init__`'s `getattr` falls through to `False`). When ON, each `TransformerBlock` registers a 0-dim scalar `pre_ffn_attn_mix_gamma_raw = nn.Parameter(torch.tensor(pre_ffn_attn_mix_init))` and the pre-norm2 path mixes the raw attention output into the FFN input: `ffn_in = norm2(x + sigmoid(γ_raw) · attn_out_raw.detach())`.
 

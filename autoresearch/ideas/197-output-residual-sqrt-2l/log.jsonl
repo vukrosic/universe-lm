@@ -4,3 +4,5 @@
 {"ts":"2026-06-15T16:26:25Z","agent":"reviewer","idea":"197-output-residual-sqrt-2l","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T16:28:30Z","agent":"code-impl","idea":"197-output-residual-sqrt-2l","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:35:40Z","agent":"orchestrator","idea":"197-output-residual-sqrt-2l","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
+{"ts":"2026-06-15T16:45:09Z","agent":"code-impl","idea":"197-output-residual-sqrt-2l","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:45:12Z","agent":"code-impl","idea":"197-output-residual-sqrt-2l","from":"planning","to":"needs-run","round":1,"note":"plan + code done — fixed α = 1/√(2L) wired in 5 residual-add sites; build-smoke OK"}
