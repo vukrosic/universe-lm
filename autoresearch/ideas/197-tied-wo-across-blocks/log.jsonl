@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T08:33:22Z","agent":"reviewer","idea":"197-tied-wo-across-blocks","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise"}
 {"ts":"2026-06-15T08:49:48Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:57:48Z","agent":"orchestrator","idea":"197-tied-wo-across-blocks","from":"revising","to":"needs-revision","round":1,"note":"reclaim stale revising lock (7m)"}
+{"ts":"2026-06-15T12:01:06Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"needs-revision","to":"revising","round":1,"note":"claimed"}

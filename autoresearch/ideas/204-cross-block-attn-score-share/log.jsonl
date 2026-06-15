@@ -4,3 +4,4 @@
 {"ts":"2026-06-15T08:28:35Z","agent":"reviewer","idea":"204-cross-block-attn-score-share","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T08:32:46Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:51:50Z","agent":"orchestrator","idea":"204-cross-block-attn-score-share","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (18m)"}
+{"ts":"2026-06-15T12:01:07Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
