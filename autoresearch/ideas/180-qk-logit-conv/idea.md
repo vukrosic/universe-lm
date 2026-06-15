@@ -1,8 +1,8 @@
 ---
 id: 180-qk-logit-conv
-status: needs-plan
+status: planning
 round: 1
-updated: 2026-06-15T05:53:50Z
+updated: 2026-06-15T05:55:47Z
 transfer-risk: med
 plain: Smooth the attention map with a tiny learnable depthwise convolution along the time axis (a soft "look locally" prior), starting with a delta-function filter so step-0 is byte-identical.
 ---
