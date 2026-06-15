@@ -66,3 +66,24 @@ The bet, in one sharp sentence: **at 0.94M with 92 update steps, the LM head's l
 - 170-swiglu-ffn (null), 153-relu2-ffn (null) — FFN-shape levers; 184 is at the output, not the FFN. Different placement.
 - 142-layerscale (null) — per-channel diagonal gain on the residual stream. 184 is a single global scalar on the logits, not per-channel. Different placement and shape.
 - No prior lever in the repo is a "learned global logit temperature". Fresh axis.
+
+## Plan
+
+- **Champion baseline**: `autoresearch/champion.json` ⇒ `Tiny1M3MAlibiConfig` (`val 6.2403`). The new treatment config `C` **subclasses** `Tiny1M3MAlibiConfig` (so the lever stacks on top of the current champion stack).
+- **Files to change**:
+  1. `configs/llm_config.py`
+     - Add `use_logit_scale: bool = False` to `LLMConfig` (default off; off ⇒ byte-identical).
+     - Add `class Tiny1M3MLogitScaleConfig(Tiny1M3MAlibiConfig): use_logit_scale: bool = True`.
+  2. `models/llm.py`
+     - In `MinimalLLM.__init__` (next to the existing `use_output_temp` block, ~line 1304): read `self.use_logit_scale = getattr(config, "use_logit_scale", False)`. If on, allocate `self.logit_scale_param = nn.Parameter(torch.zeros(()))` (a 0-D scalar; init 0 ⇒ `exp(0) = 1` exactly in IEEE 754 ⇒ exact no-op at step 0).
+     - In the logits branch of `forward` (the `compute_logits` / tail of `forward`, right after the existing `use_output_temp` and `use_vocab_bias` hooks, ~line 1846): apply `if self.use_logit_scale: logits = logits * self.logit_scale_param.exp()`. With `use_logit_scale=False`, the if-branch is dead and the path is bit-identical to the champion.
+  3. `_arq_184-logit-scale.py` — stub `class C(Tiny1M3MLogitScaleConfig): pass` (matches the 175 stub style). Run via `train_llm.py` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
+- **Param count**: 1 scalar (+0.0001% of 0.94M). 1-D tensor, routes to AdamW under the existing rule.
+- **Step-0 byte-identity**: `logit_scale_param = 0` init ⇒ `exp(0) = 1.0` exactly in fp32 ⇒ `logits * 1.0 = logits` exactly ⇒ loss, gradient, predictions bit-identical to the champion baseline. The flag is off by default; with `use_logit_scale=False` the if-branch is never entered and the forward graph is byte-identical to champion.
+- **Run command** (runnable, do not necessarily run here):
+  ```bash
+  cd /root/universe-lm   # adjust to the runner's cwd
+  /venv/main/bin/python _arq_184-logit-scale.py
+  ```
+  (the stub re-`sys.argv`s `train_llm.main()` with `--config_class __main__.C --seed 42 --warmup false`, matching the 175-alibi-slopes stub convention.)
+- **Reading the result**: `val_mean` in the runner's print / the `records.jsonl` entry. Compare to champion `val = 6.2403` (cache reference in `autoresearch/baseline-cache.json`, re-pull on run day). Pass: `trt_val ≤ 6.2403 − 0.005` AND clears the two-ctrl rule. Null: `|trt_val − 6.2403| < 0.01`. Drift: `trt_val > 6.2403 + 0.01`. Sub-noise is inconclusive per one-seed-only rule.

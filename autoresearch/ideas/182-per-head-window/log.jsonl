@@ -27,3 +27,6 @@
 {"ts":"2026-06-15T07:08:06Z","agent":"reviewer","idea":"182-per-head-window","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve — re-approve after second auto-implement doer-protocol violation; spec unchanged from r3, code committed locally, byte-identical math holds; reset round to 1"}
 {"ts":"2026-06-15T07:10:52Z","agent":"code-impl","idea":"182-per-head-window","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:12:02Z","agent":"code-impl","idea":"182-per-head-window","from":"planning","to":"needs-run","round":1,"note":"plan+code done; SMOKE_OK; step-0 max_abs_diff=3.166e-08; cache val_mean=6.2403"}
+{"ts":"2026-06-15T07:16:08Z","agent":"daemon","idea":"182-per-head-window","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T07:16:15Z","agent":"daemon","idea":"182-per-head-window","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MPerHeadWindowConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T07:16:25Z","agent":"auto-implement","idea":"182-per-head-window","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 5 failed runs — needs a human"}
