@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T06:09:24Z","agent":"auto-implement","idea":"181-cross-head-rmsnorm","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
 {"ts":"2026-06-15T06:10:31Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"rejected","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T06:10:35Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T06:12:00Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
