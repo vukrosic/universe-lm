@@ -308,6 +308,18 @@ append_closed_null() {  # append_closed_null <idea> <delta>
     && mv "$CLOSED.tmp" "$CLOSED"
 }
 
+# A suspected leak (val collapsed far below the baseline — see the leak guard in
+# finalize_one) is logged distinctly so it never reads as a record or a clean null.
+append_closed_leak() {  # append_closed_leak <idea> <val> <mean>
+  local idea="$1" val="$2" mean="$3" line marker
+  marker='<!-- reviewer/evidence step appends one line per close here -->'
+  line="- $idea — LEAK (rejected): val=$val implausibly below baseline $mean at tiny1m3m — likely broken causal mask / label leak, NOT a win — $(date -u +%F)"
+  [ -f "$CLOSED" ] || return 0
+  grep -qF -- "$idea — LEAK" "$CLOSED" && return 0
+  awk -v m="$marker" -v l="$line" '{print} index($0,m)&&!d{print l; d=1}' "$CLOSED" > "$CLOSED.tmp" \
+    && mv "$CLOSED.tmp" "$CLOSED"
+}
+
 # A win is a record — append it to closed.md too, in the same shape the records
 # board parses (slug — WIN: trt=<val> … (Δ<delta>) … <date>). Without this, a
 # daemon-judged win flips to done but never reaches the record timeline.
@@ -445,6 +457,24 @@ finalize_one() {  # finalize_one <idea> <val> <rdir>
   # refresh mean/band from the cache for this box (works for CACHED + post-measure).
   # Defaults above keep `set -u` from tripping if `check` yields fewer fields.
   read -r _tag mean band _key < <("$BASELINE" check "$rdir/results.json" 2>/dev/null || echo "X 0 0 0") || true
+  # Guarantee mean/band are bound + numeric no matter what `read` did — a bash 3.2
+  # process-substitution hiccup once left `mean` effectively unset and `set -u`
+  # killed the whole loop at the verdict print. `:=` pins a default in place.
+  : "${mean:=0}" "${band:=0}"
+  # ── leak guard (runs BEFORE the verdict) ─────────────────────────────────
+  # A val far below the baseline neighborhood is never a win — it's a broken
+  # eval. A treatment that leaks future tokens past the causal mask collapses the
+  # loss toward 0 (180-qk-logit-conv: val 0.984 / acc 0.878 vs baseline 6.24,
+  # auto-promoted to champion before this guard existed). No legitimate single
+  # lever halves the loss at fixed scale/data, so any val below HALF the baseline
+  # mean is a suspected leak: reject it, and crucially never promote_champion.
+  if awk -v v="$val" -v m="$mean" 'BEGIN{exit !(m>0 && v>0 && v < m*0.5)}'; then
+    write_evidence "$idea" LEAK "$val" "0" "$mean" "$band" "$rdir"
+    flip "$idea" rejected daemon "LEAK: val=$val implausibly below baseline $mean (likely broken causal mask / label leak) — not a win, not promoted"
+    [ "$DRY" = 1 ] || append_closed_leak "$idea" "$val" "$mean"
+    log "$idea — LEAK val=$val << baseline $mean (rejected, NOT promoted)"
+    return 0
+  fi
   out="$("$BASELINE" verdict "$rdir/results.json" "$val" 2>/dev/null || echo "NO-BASELINE 0")"
   verdict="${out%% *}"; delta="$(echo "$out" | awk '{print $2}')"
   case "$verdict" in
@@ -658,7 +688,11 @@ fi
 
 if [ "$MODE" = "loop" ]; then
   log "loop mode, every ${LOOP_SECS}s (ctrl-c to stop)"
-  while true; do tick; sleep "$LOOP_SECS"; done
+  # Isolate each tick in a subshell: `set -uo pipefail` makes any single unbound
+  # var / pipe failure fatal, and without this guard ONE bad tick kills the whole
+  # drainer (which then silently stops draining the GPU). The subshell contains
+  # the blast radius — a failed tick just logs and the loop carries on next cycle.
+  while true; do ( tick ) || log "tick failed (rc $?) — continuing next cycle"; sleep "$LOOP_SECS"; done
 else
   tick
 fi

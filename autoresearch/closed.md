@@ -29,6 +29,12 @@ The code-implementer never closes — if blocked it bounces the idea back to
 - 162-q-only-norm — null: trt=6.4303 vs fresh baseline 6.4346±0.0458 (Δ=-0.0043, inside band; pass bar -0.005 missed by 0.0007) at tiny1m3m; train_loss 6.4129 (between ctrls 6.3893/6.3782/6.4391), val_acc 0.1456 (between ctrls 0.1441/0.1448/0.1425); +192 params (+0.020%, 12 RMSNorm(d_k=16) weights × 12 blocks, no bias), Q-only RMSNorm pre-softmax leaves K raw; attribution insight: 016-qk-norm WIN was carried by K-side or symmetry, NOT Q-side (with 165-k-only-norm as orthogonal K-side ablation); closes the Q-side of the QK-norm-attribution axis at 0.94M — 2026-06-14
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 183-pre-lm-head-rmsnorm — null: Δ=0.0138 at tiny1m3m (inside variance) — 2026-06-15
+- 182-per-head-window — null: trt=6.4228 vs baseline 6.2403±0.04 (Δ=+0.1825, above band) at tiny1m3m — 2026-06-15 [corrected: was misjudged vs the bogus 0.984 champion]
+- 181-cross-head-rmsnorm — null: trt=6.4125 vs baseline 6.2403±0.04 (Δ=+0.1722, above band) at tiny1m3m — 2026-06-15 [corrected: was misjudged vs the bogus 0.984 champion]
+- 180-qk-logit-conv — LEAK (rejected): val=0.9840/acc=0.8784 vs baseline 6.2403 at tiny1m3m — broken causal mask leaks future tokens, NOT a win; champion reverted to 175-alibi — 2026-06-15
+- 179-anti-causal-subheads — null: Δ=0.1825 at tiny1m3m (inside variance) — 2026-06-15
+- 178-mqa-gated — null: Δ=0.1647 at tiny1m3m (inside variance) — 2026-06-15
 - 180-qk-logit-conv — reject: exhausted 3 recode rounds (MAX_RECODE_ROUNDS=3), axis abandoned — 2026-06-15
 - 177-talking-heads — null: Δ=+0.9509 at tiny1m3m (24× noise band, massive DRIFT; talking-heads H×H mixing overpowers softmax at d_k=16) — 2026-06-15
 - 173-entmax-15 — reject: exhausted 3 recode rounds (MAX_RECODE_ROUNDS=3), axis abandoned — 2026-06-15
