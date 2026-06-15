@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T06:10:31Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"rejected","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T06:10:35Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T06:12:00Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T06:23:34Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
