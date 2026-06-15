@@ -85,10 +85,11 @@ forward path is exactly the baseline.
     `trt < cached_val_mean − noise_band`. Re-pull from
     `autoresearch/baseline-cache.json` on run day — the cache has moved
     multiple times across the last week (6.4394 → 6.4504 → 6.4447 →
-    6.4346 → 6.4455 → 6.3988). **As of 2026-06-15** (r1 self-pull):
-    `cached_val_mean = 6.3988`, `val_std = 0.0088`,
+    6.4346 → 6.4455 → 6.3988 → 6.2403). **As of 2026-06-15** (re-pull
+    during this code-impl pass, after the 175-alibi WIN reset the
+    cache): `cached_val_mean = 6.2403`, `val_std = 0.0088`,
     `noise_band = max(0.04, 2·0.0088) = 0.04` ⇒ WIN iff
-    `trt < 6.3588`. **The plan-mirror numbers in the spec are the source
+    `trt < 6.2003`. **The plan-mirror numbers in the spec are the source
     of truth on run day** — `evidence.md` cites whichever version of the
     cache was current when the run was judged.
   - **Two-ctrl rule** (when running live, not cached): the WIN must
