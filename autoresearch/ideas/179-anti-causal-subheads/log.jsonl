@@ -1,3 +1,5 @@
 {"ts":"2026-06-15T05:46:31Z","agent":"implement-button","idea":"179-anti-causal-subheads","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-15T05:47:27Z","agent":"taste","idea":"179-anti-causal-subheads","from":"implementing","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T05:47:43Z","agent":"taste","idea":"179-anti-causal-subheads","from":"tasting","to":"needs-review","round":1,"note":"accept: per-head mask-mix is fresh vs closed layer-level batch; clean byte-identical step-0, +48 params, null is also informative. Train/inference gamma flip is a definition-gate concern, not taste."}
+{"ts":"2026-06-15T05:50:06Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T05:50:09Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"reviewing","to":"needs-revision","round":2,"note":"verdict: revise"}
