@@ -1,8 +1,8 @@
 ---
 id: 202-grouped-value-projection
-status: needs-review
+status: reviewing
 round: 1
-updated: 2026-06-15T08:33:28Z
+updated: 2026-06-15T08:47:30Z
 transfer-risk: med
 plain: Probe that isolates the V-axis from the K-axis in MQA/GQA sharing: V-only soft-blend with per-head sigmoid(α_h) gate; reads out α_h trajectory to test the bet that V-redundancy is the binding axis and K-redundancy is not.
 ---
