@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T19:46:15Z","agent":"implement-button","idea":"141-adabelief","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T19:48:34Z","agent":"implement-button","idea":"141-adabelief","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T19:50:34Z","agent":"runner","idea":"141-adabelief","from":"needs-run","to":"running","round":1,"note":"claimed: queued in arq tmux"}
-{"ts":"2026-06-13T20:01:58Z","agent":"runner","idea":"141-adabelief","from":"running","to":"done","round":1,"note":"NULL: trt=6.4653 vs ctrls 6.4509/6.4194 (Δ +0.0144/+0.0459 wrong-sign, above 0.01 null band; does NOT beat either ctrl) at tiny1m3m; AdaBelief variance-of-residual ≈ variance-of-gradient at batch=2 single-batch-noise regime"}

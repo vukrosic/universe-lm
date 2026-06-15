@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T22:24:21Z","agent":"implement-button","idea":"152-attn-logit-bias","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T22:33:33Z","agent":"implement-button","idea":"152-attn-logit-bias","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-14T00:21:09Z","agent":"runner","idea":"152-attn-logit-bias","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (CACHED path, box 5b8a7fea8963 baseline 6.4394±0.04)"}
-{"ts":"2026-06-14T00:28:30Z","agent":"runner","idea":"152-attn-logit-bias","from":"running","to":"done","round":1,"note":"NULL: trt=6.4525 vs cached baseline 6.4394±0.04 (Δ=+0.0131 inside band, predicted mathematical null)"}

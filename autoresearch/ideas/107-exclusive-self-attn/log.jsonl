@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T06:28:24Z","agent":"implement-button","idea":"107-exclusive-self-attn","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T06:33:47Z","agent":"implement-button","idea":"107-exclusive-self-attn","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T07:03:06Z","agent":"run-button","idea":"107-exclusive-self-attn","from":"needs-run","to":"running","round":1,"note":"claimed by Run-next"}
-{"ts":"2026-06-13T07:37:12Z","agent":"run-button","idea":"107-exclusive-self-attn","from":"running","to":"done","round":1,"note":"Δ=-0.0116; NULL"}

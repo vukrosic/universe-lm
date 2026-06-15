@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T09:55:24Z","agent":"implement-button","idea":"111-drop-path","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T10:00:23Z","agent":"implement-button","idea":"111-drop-path","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T10:04:38Z","agent":"run-button","idea":"111-drop-path","from":"needs-run","to":"running","round":1,"note":"claimed by Run-next"}
-{"ts":"2026-06-13T10:26:26Z","agent":"run-button","idea":"111-drop-path","from":"running","to":"done","round":1,"note":"DRIFT: trt=6.4422 vs ctrls 6.3887/6.3953 (delta +0.0535/+0.0469; ctrl-gap 0.0066; well past DRIFT band +0.005)"}

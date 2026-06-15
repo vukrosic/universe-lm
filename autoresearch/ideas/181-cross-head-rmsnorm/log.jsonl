@@ -4,3 +4,4 @@
 {"ts":"2026-06-15T05:55:41Z","agent":"reviser","idea":"181-cross-head-rmsnorm","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-15T05:59:32Z","agent":"reviser","idea":"181-cross-head-rmsnorm","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings: gate-α canonicalized, param count 816 (+0.087%), Plan section added, Pass/fail bar added"}
 {"ts":"2026-06-15T06:01:08Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-15T06:08:55Z","agent":"orchestrator","idea":"181-cross-head-rmsnorm","from":"reviewing","to":"needs-review","round":2,"note":"reclaim stale reviewing lock (7m)"}

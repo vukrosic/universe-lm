@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T11:59:24Z","agent":"implement-button","idea":"118-mixture-of-depths","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T12:07:57Z","agent":"implement-button","idea":"118-mixture-of-depths","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"118-mixture-of-depths","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
-{"ts":"2026-06-13T14:31:10Z","agent":"runner","idea":"118-mixture-of-depths","from":"running","to":"done","round":1,"note":"NULL: trt=6.5278 vs ctrl 6.4272 (Δ=+0.1006 wrong-sign, ~10× the 0.01 noise band); MoD per-token router overhead > FLOP-savings at tiny1m3m; this is a compute lever invisible at 0.94M — re-evaluate at >=135M Phase-2"}

@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T13:25:33Z","agent":"implement-button","idea":"135-adan","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T13:30:13Z","agent":"implement-button","idea":"135-adan","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"135-adan","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
-{"ts":"2026-06-13T15:15:45Z","agent":"runner","idea":"135-adan","from":"running","to":"done","round":1,"note":"NULL: trt=6.4819 vs ctrls 6.4272/6.4419 (Δ=+0.0547/+0.0400 wrong-sign, ~5× the 0.01 null band) at tiny1m3m; Adan N=4 variance lookback queue only ~4% full at 92 update steps; same horizon-scaling null pattern as 110-ema, 122-tiger, 124-radam, 134-mega-ema"}

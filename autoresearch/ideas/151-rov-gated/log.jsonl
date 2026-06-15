@@ -1,5 +1,0 @@
-{"ts":"2026-06-13T21:28:12Z","agent":"implement-button","idea":"151-rov-gated","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T21:39:08Z","agent":"implement-button","idea":"151-rov-gated","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T21:44:01Z","agent":"runner","idea":"151-rov-gated","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
-{"ts":"2026-06-13T21:59:31Z","agent":"reset-button","idea":"151-rov-gated","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
-{"ts":"2026-06-13T22:01:09Z","agent":"runner","idea":"151-rov-gated","from":"needs-run","to":"done","round":1,"note":"NULL: trt=6.4416 inside baseline 6.4302±0.04 (Δ=+0.0114)"}

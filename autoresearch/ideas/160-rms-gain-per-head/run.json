@@ -1,5 +1,0 @@
-{
-  "name": "160-rms-gain-per-head",
-  "arq_file": "_arq_160-rms-gain-per-head.py",
-  "job_timeout": "12m"
-}

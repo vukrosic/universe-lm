@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T11:42:40Z","agent":"implement-button","idea":"114-mars","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T11:53:36Z","agent":"implement-button","idea":"114-mars","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"114-mars","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
-{"ts":"2026-06-13T14:23:27Z","agent":"runner","idea":"114-mars","from":"running","to":"done","round":1,"note":"NULL: trt=6.4297 vs ctrl 6.4272 (Δ +0.0025, inside |Δ|<0.01 null band); MARS variance-reduction makes no detectable difference at 92-step tiny1m3m"}

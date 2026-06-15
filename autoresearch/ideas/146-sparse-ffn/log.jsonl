@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T19:58:09Z","agent":"implement-button","idea":"146-sparse-ffn","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T20:09:56Z","agent":"implement-button","idea":"146-sparse-ffn","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T20:23:26Z","agent":"runner","idea":"146-sparse-ffn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (ctrl + 146 + 148 + ctrl2)"}
-{"ts":"2026-06-13T20:32:25Z","agent":"runner","idea":"146-sparse-ffn","from":"running","to":"done","round":1,"note":"NULL: trt=6.4466 vs ctrl=6.4409 Δ=+0.0057 inside |Δ|<0.01 null band; train_loss trt 6.4033 < ctrl 6.4242 right sign but val did not transfer (mild overfit from 4× FFN capacity at 92 update steps); closes MoE axis at 0.94M after 117-soft-moe + 118-MoD"}

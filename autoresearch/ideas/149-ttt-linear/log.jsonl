@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T21:09:49Z","agent":"implement-button","idea":"149-ttt-linear","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T21:27:50Z","agent":"implement-button","idea":"149-ttt-linear","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T21:44:01Z","agent":"runner","idea":"149-ttt-linear","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
-{"ts":"2026-06-13T21:59:30Z","agent":"runner","idea":"149-ttt-linear","from":"running","to":"done","round":1,"note":"NULL: trt=6.4303 inside baseline 6.4302±0.04 (Δ=+0.0001)"}

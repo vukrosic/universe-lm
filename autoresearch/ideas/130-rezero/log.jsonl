@@ -1,4 +1,0 @@
-{"ts":"2026-06-13T12:54:12Z","agent":"implement-button","idea":"130-rezero","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
-{"ts":"2026-06-13T12:58:34Z","agent":"implement-button","idea":"130-rezero","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
-{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"130-rezero","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
-{"ts":"2026-06-13T15:01:39Z","agent":"runner","idea":"130-rezero","from":"running","to":"done","round":1,"note":"NULL: trt=6.4313 vs ctrl 6.4272 (Δ +0.0041 inside |Δ|<0.01 null band, wrong sign) at tiny1m3m; ReZero α=0 identity-at-step-0 lever is a no-op at 12L (depth not binding); re-eval at >=135M Phase-2 with L=24+ — 2026-06-13"}
