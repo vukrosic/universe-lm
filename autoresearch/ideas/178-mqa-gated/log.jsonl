@@ -20,3 +20,4 @@
 {"ts":"2026-06-15T07:06:50Z","agent":"reviewer","idea":"178-mqa-gated","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T07:07:48Z","agent":"reviewer","idea":"178-mqa-gated","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T07:09:52Z","agent":"code-impl","idea":"178-mqa-gated","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:10:26Z","agent":"code-impl","idea":"178-mqa-gated","from":"planning","to":"needs-run","round":1,"note":"plan+code done; use_mqa_gated flag wired through MHA/TransformerBlock/MinimalLLM with per-KV-head zero-init beta and zero-init W_{K,V}_shared; step-0 max-abs-diff=0.0 vs baseline; CPU build smoke OK; _arq_178-mqa-gated.py + run.json emitted"}
