@@ -22,3 +22,4 @@
 {"ts":"2026-06-15T07:05:36Z","agent":"daemon","idea":"182-per-head-window","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T07:05:45Z","agent":"daemon","idea":"182-per-head-window","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MPerHeadWindowConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
 {"ts":"2026-06-15T07:05:49Z","agent":"auto-implement","idea":"182-per-head-window","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 4 failed runs — needs a human"}
+{"ts":"2026-06-15T07:05:54Z","agent":"auto-implement","idea":"182-per-head-window","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 4x with no path forward (see log)"}
