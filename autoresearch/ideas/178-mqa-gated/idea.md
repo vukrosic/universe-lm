@@ -1,8 +1,8 @@
 ---
 id: 178-mqa-gated
-status: needs-taste
+status: implementing
 round: 1
-updated: 2026-06-15T05:45:08Z
+updated: 2026-06-15T05:46:20Z
 transfer-risk: low
 plain: Make every attention head share one set of key/value projections, but let each head learn how much of its own key/value to keep vs. borrow from the shared pool, starting with full per-head keys/values so step-0 is byte-identical.
 ---
