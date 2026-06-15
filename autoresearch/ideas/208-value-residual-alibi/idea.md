@@ -2,7 +2,7 @@
 id: 208-value-residual-alibi
 status: running
 round: 1
-updated: 2026-06-15T10:20:54Z
+updated: 2026-06-15T10:30:03Z
 transfer-risk: low
 plain: Take the value-residual trick that already won on its own (each attention layer blends in a shortcut to the very first layer's "value" stream, starting at zero so step-0 is byte-identical) and stack it on the new ALiBi champion. The two knobs touch different parts of attention, so they should add up into a new record rather than cancel out.
 ---
