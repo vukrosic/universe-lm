@@ -20,3 +20,5 @@
 {"ts":"2026-06-15T06:29:43Z","agent":"auto-implement","idea":"179-anti-causal-subheads","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-15T06:29:48Z","agent":"auto-implement","idea":"179-anti-causal-subheads","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
 {"ts":"2026-06-15T06:32:30Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"rejected","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T06:34:10Z","agent":"code-impl","idea":"179-anti-causal-subheads","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T06:34:15Z","agent":"code-impl","idea":"179-anti-causal-subheads","from":"planning","to":"needs-run","round":1,"note":"plan+code done — SMOKE_OK locally, configs/llm_config.py:6313 defines Tiny1M3MAntiCausalSubHeadsConfig; MHA threading at models/layers.py:1294,1652,3574,3692 and models/llm.py:328,728,1042; plan.md, run.json, _arq_179-anti-causal-subheads.py all present; +48 params, step-0 byte-identical"}

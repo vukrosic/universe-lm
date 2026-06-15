@@ -66,3 +66,19 @@ CPU build smoke runs `MinimalLLM(C())` with `seed=42` and a `(1, 16)` integer in
 **Outstanding (for the user, not the recode agent):** the new commit lives only on the local `orchestrate-codex-fallback` branch. Until the user pushes, the box's `git pull --ff-only` will keep seeing no new commits at origin and the daemon will keep bouncing this idea back to `needs-recode` with the same `ImportError`. Per the recode protocol ("no auto-push"), the recode agent commits and releases; pushing is human-reviewed.
 
 **Round bumped to 2.** The mechanism, the artifact, and the plan are unchanged from r1; only the box-sync plumbing was fixed.
+
+## r3 — needs-recode (root cause unchanged; box still cannot see the local commits)
+
+**Cause (daemon log 2026-06-15T06:29:42Z):** `SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMQAGatedConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)`. **Same ImportError as r2** — origin's HEAD is still at `3a449a2` (the r2 commit `0653bfc` and stub `cbb3968` are local-only). Local repo is now 70 commits ahead of origin (the user's push is still pending). The daemon tick at 06:29:42 claimed 178 plus four sibling ideas (179/180/181/182 — all attention-axis) and all five hit the same ImportError pattern.
+
+**Fix attempted at r3:**
+- Verified `0653bfc` (configs/layers/llm wiring) and `cbb3968` (run stub) are committed locally.
+- Verified `_arq_178-mqa-gated.py` defines top-level `C(Tiny1M3MMQAGatedConfig)` and dispatches `train_llm.main()` per RUN-CONTRACT.
+- Re-ran `PYTHONPATH=. python3 autoresearch/bin/_box_smoke.py _arq_178-mqa-gated.py` → `SMOKE_OK` (local).
+- **No code changes** — the implementation is correct and the smoke passes. The blocker is purely box-side: the box's `git pull --ff-only` from origin brings in no new commits because origin hasn't been pushed to.
+
+**Why I did not patch the stub at runtime to bypass the box-stale `configs/llm_config.py`:** a runtime monkey-patch on `models.layers.MultiHeadAttention` would let the smoke pass, but the box's `Tiny1M3MConfig` does not have `use_mqa_gated` as a field, so `getattr(cfg, "use_mqa_gated", False)` returns False throughout the run — the gate branch never activates, and the treatment degenerates to a baseline-shaped run that would record a spurious null. The probe's primary signal (per-KV-head β trajectory) requires the gate branch to actually run, which requires the box to have the model changes, which requires a push. No patch from the recode agent can substitute for the missing push.
+
+**Release:** bumping round 2 → 3 per the recode protocol. The daemon's recode-budget cap (`MAX_RECODE_ROUNDS=3`) will auto-close this idea to `rejected` on the next bounce if the user does not push in time. That is the documented terminal state for an axis that cannot stabilize, and it is the correct outcome here — the implementation is sound, the block is human-side, and the cap mechanism handles the timeout cleanly.
+
+**Human action:** `git push origin orchestrate-codex-fallback`. After the push lands, the daemon's next tick will pass smoke and run the treatment.

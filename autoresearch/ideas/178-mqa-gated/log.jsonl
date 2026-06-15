@@ -15,3 +15,5 @@
 {"ts":"2026-06-15T06:29:24Z","agent":"daemon","idea":"178-mqa-gated","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T06:29:42Z","agent":"daemon","idea":"178-mqa-gated","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMQAGatedConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
 {"ts":"2026-06-15T06:30:37Z","agent":"implement-button","idea":"178-mqa-gated","from":"needs-recode","to":"needs-run","round":2,"note":"code ready; runnable at tiny1m3m seed 42 (r3: arq stub committed at cbb3968; config+model at 0653bfc; local SMOKE_OK)"}
+{"ts":"2026-06-15T06:34:19Z","agent":"code-impl","idea":"178-mqa-gated","from":"needs-run","to":"recoding","round":2,"note":"r3 claim: code already committed (0653bfc + cbb3968), local SMOKE_OK, root cause unchanged from r2 (box cannot see local commits until user pushes origin)"}
+{"ts":"2026-06-15T06:34:23Z","agent":"auto-implement","idea":"178-mqa-gated","from":"recoding","to":"needs-review","round":2,"note":"auto-fix gave up after 4 failed runs — needs a human"}
