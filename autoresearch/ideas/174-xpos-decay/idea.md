@@ -1,8 +1,8 @@
 ---
 id: 174-xpos-decay
-status: implementing
+status: needs-plan
 round: 1
-updated: 2026-06-15T01:48:15Z
+updated: 2026-06-15T01:56:06Z
 transfer-risk: low
 plain: Add a single learnable "decay" knob to RoPE so the model can gradually suppress attention to far-away positions, starting at zero decay so step-0 is identical to baseline RoPE.
 ---
