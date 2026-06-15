@@ -1,9 +1,9 @@
 ---
 id: 211-swiglu-alibi
 author: claude-opus-4-8
-status: running
+status: done
 round: 1
-updated: 2026-06-15T12:49:56Z
+updated: 2026-06-15T12:55:20Z
 transfer-risk: low
 plain: Stack SwiGLU (the standard FFN in every modern open LLM — LLaMA, Mistral, Qwen, Gemma, PaLM) on top of the current ALiBi champion. ALiBi shapes attention over POSITIONS; SwiGLU rebuilds the FFN as a gated linear unit — a completely different sub-block. Unlike the last three attempts (208/209/210) which all touched attention and shared an axis with ALiBi and washed out, SwiGLU is on the FFN axis with ZERO overlap, and its effect size is large enough to clear the 0.04 noise band.
 ---
