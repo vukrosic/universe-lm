@@ -9,3 +9,4 @@
 {"ts":"2026-06-14T10:35:40Z","agent":"runner","idea":"172-per-head-rope-base","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (cache CACHED for box 5b8a7fea8963, treatment-only run)"}
 {"ts":"2026-06-14T10:40:23Z","agent":"reset-button","idea":"172-per-head-rope-base","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"172-per-head-rope-base","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
+{"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"172-per-head-rope-base","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}

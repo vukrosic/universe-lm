@@ -1,8 +1,8 @@
 ---
 id: 175-alibi-slopes
-status: running
+status: needs-run
 round: 1
-updated: 2026-06-15T04:59:49Z
+updated: 2026-06-15T05:03:02Z
 transfer-risk: low
 plain: Add learnable per-head linear-distance bias to attention scores (each head learns its own "how local is local" slope), starting at zero slope so step-0 is byte-identical.
 ---

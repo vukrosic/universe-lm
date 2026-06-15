@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T02:02:40Z","agent":"implement-button","idea":"174-xpos-decay","from":"planning","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
 {"ts":"2026-06-15T02:03:52Z","agent":"code-impl","idea":"174-xpos-decay","from":"needs-run","to":"needs-run","round":1,"note":"plan+code done; use_xpos wired MHA+Block+YOCO+Config; +12 scalars at tiny1m3m; build-smoke OK; step-0 bit-identical to baseline (max-abs-diff=0.0); treatment with gamma=0.1 diverges from gamma=0 (0.0645 max-abs-diff)"}
 {"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"174-xpos-decay","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
+{"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"174-xpos-decay","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}

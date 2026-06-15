@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T03:15:24Z","agent":"code-impl","idea":"176-v-pre-av-norm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T03:23:12Z","agent":"code-impl","idea":"176-v-pre-av-norm","from":"planning","to":"needs-run","round":1,"note":"plan+code done; daemon build-smoke MinimalLLM(C()) = 949872 params; step-0 max-abs-diff = 0.0; treatment path exercised (alpha=0.5,gain=1.5 diff=0.047); mutual-exclusion asserts fire"}
 {"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"176-v-pre-av-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
+{"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"176-v-pre-av-norm","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}
