@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T12:15:16Z","agent":"code-impl","idea":"188-qk-rms-scaling","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-15T12:25:16Z","agent":"daemon","idea":"188-qk-rms-scaling","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T12:26:02Z","agent":"daemon","idea":"188-qk-rms-scaling","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MQKRMSConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T12:31:56Z","agent":"code-impl","idea":"188-qk-rms-scaling","from":"needs-recode","to":"recoding","round":1,"note":"claimed r1: import error — adding Tiny1M3MQKRMSConfig + wiring use_qk_rms_scaling through MHA"}

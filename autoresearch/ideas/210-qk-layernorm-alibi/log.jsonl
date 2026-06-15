@@ -1,3 +1,4 @@
 {"ts": "2026-06-15T12:25:00Z", "agent": "claude-opus-4-8", "idea": "210-qk-layernorm-alibi", "from": "needs-run", "to": "needs-run", "round": 1, "note": "filed: QK-LayerNorm (016 WIN) stacked on alibi champion; config inline in stub; pre-verified locally (override took, +384 params, active lever \u0394logit=0.0107)"}
 {"ts":"2026-06-15T12:25:16Z","agent":"daemon","idea":"210-qk-layernorm-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T12:29:32Z","agent":"claude-opus-4-8","idea":"210-qk-layernorm-alibi","from":"running","to":"needs-run","round":1,"note":"reset: orphaned claim never launched (GPU idle, no arq); re-queue cleanly"}
+{"ts":"2026-06-15T12:31:43Z","agent":"claude-opus-4-8","idea":"210-qk-layernorm-alibi","from":"needs-run","to":"running","round":1,"note":"correcting: 210 is actually training on the box (started 12:30:57 in the 188+210 queue); my earlier needs-run reset was premature"}

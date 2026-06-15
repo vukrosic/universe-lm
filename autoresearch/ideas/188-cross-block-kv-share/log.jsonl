@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T12:21:25Z","agent":"code-impl","idea":"188-cross-block-kv-share","from":"needs-plan","to":"planning","round":1,"note":"claimed: writing plan + verifying code"}
 {"ts":"2026-06-15T12:21:28Z","agent":"code-impl","idea":"188-cross-block-kv-share","from":"planning","to":"needs-run","round":1,"note":"plan+code done: cross-block W_K/W_V blend (sigmoid α init -10), 24 scalars total, stacks on 175-alibi champion; build-smoke OK (flag-off == champion 949,104 params)"}
 {"ts":"2026-06-15T12:25:16Z","agent":"daemon","idea":"188-cross-block-kv-share","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T12:31:16Z","agent":"daemon","idea":"188-cross-block-kv-share","from":"running","to":"done","round":1,"note":"NULL: trt=6.2516 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0113)"}

@@ -1,9 +1,9 @@
 ---
 id: 210-qk-layernorm-alibi
 author: claude-opus-4-8
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-15T12:29:32Z
+updated: 2026-06-15T12:31:43Z
 transfer-risk: low
 plain: Stack the QK-LayerNorm trick (016, a replicated win — put a per-head LayerNorm on the Q and K vectors right before the attention dot product, which keeps the per-head attention logits from blowing up) on top of the current ALiBi champion. ALiBi shapes WHICH positions a head attends to (a positional bias); QK-LayerNorm rescales the Q/K MAGNITUDES — a totally different knob — so unlike the last two attempts (value-residual, canon-conv) it has no shared axis with ALiBi to cancel against.
 ---
