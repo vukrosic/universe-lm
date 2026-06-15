@@ -3016,6 +3016,41 @@ class MultiHeadAttention(nn.Module):
                 torch.zeros(self.d_k // 2)
             )
 
+        # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+        # (orthogonal-rebase axis, Q+K-side, pre-RoPE placement).
+        # Stored on self; the rotation block in `forward()` applies
+        # a per-head block-diagonal orthogonal matrix `R_h` to
+        # BOTH Q and K (built from the angle parameter) BEFORE
+        # RoPE — i.e., post-Q/K split, pre-RoPE / pre-qk_norm.
+        # The angles are shape `[n_heads, d_k//2]` (a per-head ×
+        # per-pair grid — IDEA explicitly names 4 × 8 × 12 = 384
+        # scalars at tiny1m3m). At GQA-active configs (n_kv_heads
+        # < n_heads, e.g. 2 vs 4 at tiny1m3m) K's pre-RoPE
+        # rotation uses only the first `n_kv_heads` rows of the
+        # parameter (a clean per-KV-head projection of the
+        # per-head angle grid). Init `φ_{h,i} = 0` ⇒ `cos(0)=1,
+        # sin(0)=0` in fp32 ⇒ `R_h = I_{d_k}` exactly ⇒
+        # `Q = R_h @ Q = Q` and `K = R_h @ K = K` exactly ⇒
+        # step-0 forward is bit-identical to the no-flag
+        # baseline. When `use_pre_rope_rotation=False` (default)
+        # the parameter is NOT built (no extra memory on the
+        # baseline path) and the forward branch is never taken —
+        # baseline forward graph is bit-identical to no-flag.
+        # Cost when on: n_heads × d_k//2 × n_layers = 4 × 8 × 12
+        # = 384 params total at tiny1m3m (+0.041% of 0.94M —
+        # negligible). See
+        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+        self.use_pre_rope_rotation = use_pre_rope_rotation
+        if use_pre_rope_rotation:
+            assert self.d_k % 2 == 0, (
+                "use_pre_rope_rotation=True requires even d_k "
+                "(per-plane 2D rotations pair dims 2i, 2i+1); "
+                f"got d_k={self.d_k}"
+            )
+            self.pre_rope_rotation_angles = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k // 2)
+            )
+
         # 156 — Mixture-of-Attentions (MoA). Stored on self; the
         # MoA branch in `forward()` runs E parallel attention
         # computations and mixes them by a per-token router. The
@@ -3747,6 +3782,33 @@ class MultiHeadAttention(nn.Module):
             else:
                 Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
+        # 194 — W_V Low-Rank Residual Correction. In the standard
+        # QKV-split path (no YOCO/shared-kv, no tied-QK, no MLA —
+        # those branches re-project V via distinct matrices and
+        # skip this gate), recompute V through a corrected W_V:
+        #   `W_V_eff = W_V + σ(α) · (W_V_A @ W_V_B)`
+        #   `V = F.linear(x, W_V_eff)`
+        # At step 0 `W_V_B = 0` ⇒ `W_V_A @ W_V_B = 0` exactly ⇒
+        # `W_V_eff = W_V` ⇒ `V = F.linear(x, W_V)` bit-identical
+        # to the no-flag baseline. Sits BEFORE any downstream V-
+        # side lever (use_v_norm, use_v_rmsnorm, use_rov,
+        # v_residual, cross-block-KV-share) so those branches read
+        # the rank-corrected V. Composes with 207-W_O_LowRank
+        # (different projection; orthogonal axes). Default off →
+        # branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+        if (
+            self.use_lowrank_wv
+            and not self.use_shared_kv
+            and not self.use_tied_qk
+            and not self.use_mla
+        ):
+            alpha = torch.sigmoid(self.wv_lowrank_alpha)
+            W_V = self.qkvo_proj[
+                self.qkv_size - self.kv_size:self.qkv_size
+            ]
+            W_V_eff = W_V + alpha * (self.wv_a @ self.wv_b)
+            V = F.linear(x, W_V_eff)
 
         # 188 — Cross-Block K/V Projection Sharing. After the
         # standard QKV split, on layers l ≥ 1, recompute K and V

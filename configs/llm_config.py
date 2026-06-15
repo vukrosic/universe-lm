@@ -8573,3 +8573,71 @@ class Tiny1M3MWOSpectralCapConfig(Tiny1M3MConfig):
     use_wo_spectral_cap: bool = True
     wo_spectral_cap_pi_iters: int = 1
 
+
+@dataclass
+class Tiny1M3MLowRankWOConfig(Tiny1M3MConfig):
+    """207 — Tiny1M3M with a learnable rank-r residual correction
+    on W_O (LoRA-style factorization, Hu et al. 2021
+    arXiv:2106.09685, trained from scratch — distinct from the
+    LoRA *adaptation* setting where the base W_O is frozen).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.40 ± 0.04 cached for this box, see
+    `autoresearch/baseline-cache.json`). Replaces the per-block
+    W_O slot with
+        `W_O_eff = W_O + σ(α) · (W_O_A @ W_O_B)`
+    where `W_O_A ∈ R^{d_model × r}` is normal-init std=0.02
+    (matches the existing `qkvo_proj` O-slice init), `W_O_B ∈
+    R^{r × d_model}` is zero-init, and `α` is a per-MHA 0-dim
+    learnable scalar (init `wo_lowrank_alpha_init = -10.0` ⇒
+    `σ(−10) ≈ 4.54e-5`). At step 0 `W_O_B = 0` ⇒
+    `W_O_A @ W_O_B = 0` exactly ⇒ `W_O_eff == W_O` byte-identical
+    to the no-flag baseline (max-abs-diff = 0.0 across the full
+    forward, no parameter modified). The σ(α) gate is a soft
+    on/off; the dominant silence comes from `W_O_B = 0`, not from
+    `σ(α)` being tiny.
+
+    The `α` scalar is a free parameter of each MHA
+    (`nn.Parameter(torch.full((), wo_lowrank_alpha_init))`);
+    `α = σ(α_raw)` is computed inside `MHA.forward()` via
+    `torch.sigmoid(self.wo_lowrank_alpha)`. Standard AdamW on
+    `α_raw` and on `W_O_A` / `W_O_B` is fine; no special
+    optimizer, no LR warmup, no α-schedule. `r = wo_rank` is
+    fixed at 16 for this run (25% of d_model=64) — r=16 absolute
+    is a meaningful prior at tiny1m3m; the relative-rank
+    framing for 135M (d_model≈768, equivalent r ≈ 16·√(768/64)
+    ≈ 56) is a separate scale-up question, not in this slot.
+
+    Composes with 171-DropConnect (the 171 mask runs first on
+    `w_o`; 207 adds the rank-r correction AFTER) and 199-
+    Spectral-Norm (the 199 cap runs first; 207 adds after).
+    Distinct from 197-tied-wo (sharing axis), 199-spectral-norm
+    (Lipschitz axis), 160-rms-gain-per-head (post-AV magnitude
+    gain, closed null), 142-layerscale (per-channel diagonal
+    gain, closed null), 171-dropconnect-wo (per-weight Bernoulli
+    regularizer, closed null +0.0478 wrong-sign). 207 is the
+    **rank** axis on W_O — the bet is W_O has intrinsic rank ≤
+    16 at 0.94M, so a learned rank-r correction exploits this
+    redundancy.
+
+    Cost: +2,048 trainable params per block (W_O_A 64×16 + W_O_B
+    16×64) + 1 scalar per block = 2,049 × 12 blocks = **24,588
+    extra trainable params** (+2.6% of 0.94M). One extra matmul
+    of shape `[d_model, wo_rank] @ [wo_rank, d_model]` per block
+    per forward (~65K mul-adds at d_model=64) — sub-noise
+    compute. Optimizer state +196 KB (AdamW: 2 momentum buffers
+    per parameter). Sub-noise on every axis.
+
+    NULL band |Δ| < 0.01. DRIFT > +0.01. PASS ≤ −0.01. The
+    baseline cache (val 6.2403 ± 0.04) is the active reference.
+    See `autoresearch/ideas/207-wo-lowrank-bottleneck/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_lowrank_wo` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_lowrank_wo: bool = True
+    wo_rank: int = 16
+    wo_lowrank_alpha_init: float = -10.0
+

@@ -295,6 +295,33 @@ class MinimalLLM(nn.Module):
         self.wo_lowrank_alpha_init = float(
             getattr(config, "wo_lowrank_alpha_init", -10.0)
         )
+        # 194 — W_V Low-Rank Residual Correction. Learnable rank-r
+        # residual correction `W_V_eff = W_V + σ(α)·(W_V_A @ W_V_B)`
+        # with W_V_B zero-init and α init −10 ⇒ step-0 bit-identical
+        # to baseline. Pass-through to each block's MHA. Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+        self.use_lowrank_wv = getattr(config, "use_lowrank_wv", False)
+        self.wv_rank = int(getattr(config, "wv_rank", 8))
+        self.wv_lowrank_alpha_init = float(
+            getattr(config, "wv_lowrank_alpha_init", -10.0)
+        )
+        # 199 — Spectral-Norm-Bounded W_O Projection. When on,
+        # each block's MHA allocates one learnable scalar `γ_l`
+        # (init 0) and a power-iteration Buffer `u_l` for
+        # tracking σ_max(W_O). At step 0 `γ_l = 0` and the cap
+        # factor is exactly 1 ⇒ `W_O_eff == W_O` byte-identical
+        # to the no-flag baseline. Pass-through to each block's
+        # MHA. Default off → no Parameter, no Buffer, baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/199-spectral-attn-output/idea.md` /
+        # `plan.md`.
+        self.use_wo_spectral_cap = getattr(
+            config, "use_wo_spectral_cap", False
+        )
+        self.wo_spectral_cap_pi_iters = int(
+            getattr(config, "wo_spectral_cap_pi_iters", 1)
+        )
         # 151 — RoV (Rotary Value Embeddings, gated). When on, the
         # block's MHA applies the same rotary to V as to Q,K and
         # mixes via a per-block scalar `rov_gate` (init 0 ⇒
@@ -927,6 +954,17 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wo=self.use_lowrank_wo,
                         wo_rank=self.wo_rank,
                         wo_lowrank_alpha_init=self.wo_lowrank_alpha_init,
+                        # 199 — Spectral-Norm-Bounded W_O Projection
+                        # pass-through to the MHA. Per-block
+                        # learnable scalar `γ_l` (init 0) and
+                        # power-iteration Buffer `u_l` are
+                        # allocated in MHA.__init__ when this flag
+                        # is on. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/199-spectral-attn-output/
+                        # idea.md` / `plan.md`.
+                        use_wo_spectral_cap=self.use_wo_spectral_cap,
+                        wo_spectral_cap_pi_iters=self.wo_spectral_cap_pi_iters,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
@@ -1342,6 +1380,17 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wo=self.use_lowrank_wo,
                         wo_rank=self.wo_rank,
                         wo_lowrank_alpha_init=self.wo_lowrank_alpha_init,
+                        # 199 — Spectral-Norm-Bounded W_O Projection
+                        # pass-through to the MHA. Per-block
+                        # learnable scalar `γ_l` (init 0) and
+                        # power-iteration Buffer `u_l` are
+                        # allocated in MHA.__init__ when this flag
+                        # is on. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/199-spectral-attn-output/
+                        # idea.md` / `plan.md`.
+                        use_wo_spectral_cap=self.use_wo_spectral_cap,
+                        wo_spectral_cap_pi_iters=self.wo_spectral_cap_pi_iters,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
@@ -2267,6 +2316,18 @@ class MinimalLLM(nn.Module):
                     # 168's `av_carry=...` / 188's `prev_W_K=` /
                     # `prev_W_V=` plumbing on the same call.
                     prev_block_scores=prev_block_scores,
+                    # 189 — CosFormer-style linear attention: pass
+                    # the per-block γ scalar to the block. `None`
+                    # when the lever is off → the block's
+                    # `cosformer_gamma=` kwarg is a no-op and the
+                    # baseline attention path is bit-identical.
+                    # Mirrors 021's `v_residual=...` / 164's
+                    # `q_carry=...` / 168's `av_carry=...` plumbing
+                    # on the same call. See
+                    # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+                    cosformer_gamma=(
+                        self.cosformer_gammas[i] if self.use_cosformer else None
+                    ),
                     # 206 — Cross-Block W_up / W_down
                     # Projection Sharing: forward-pass-local stash
                     # from the previous block's W_up, W_down slices
