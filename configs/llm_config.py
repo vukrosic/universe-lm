@@ -8115,6 +8115,90 @@ class Tiny1M3MTokenAttnGainConfig(Tiny1M3MAlibiConfig):
     use_token_attn_gain: bool = True
 
 
+@dataclass
+class Tiny1M3MFFNShareConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with Cross-Block W_up / W_down Projection Sharing (206,
+    Universal-Transformers-style learnable parameter sharing across
+    depth, narrowed to the two largest FFN matrices only — Dehghani
+    et al. ICLR 2019 arXiv:1807.03819 / Lan et al. ALBERT 2020
+    arXiv:1909.11942).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.2403 ± 0.04, band 0.04) so the lever stacks on top of the
+    175-alibi win. With `use_cross_block_ffn_share=False` this
+    class reduces to the champion — step-0 forward is bit-
+    identical to `Tiny1M3MAlibiConfig` (max-abs-diff = 0.0;
+    verified in the build smoke by toggling the flag and
+    comparing `MinimalLLM(C(use_cross_block_ffn_share=False)).
+    forward(...)` logits against the champion). With
+    `use_cross_block_ffn_share=True` (default), each block's FFN
+    registers two 0-dim learnable scalars
+    `ffn_share_alpha_up` / `ffn_share_alpha_down` (init -10.0
+    ⇒ `σ(-10) ≈ 4.5e-5` at step 0) and a forward-pass-local
+    stash of the previous block's W_up, W_down slices
+    (`.detach()`-ed). The forward applies a learnable convex
+    blend on the FFN's up- and down-projections:
+
+      `W_up_eff   = (1 - α_up)   · W_up_self   + α_up   · W_up_prev.detach()`
+      `W_down_eff = (1 - α_down) · W_down_self + α_down · W_down_prev.detach()`
+      `α_up   = σ(ffn_share_alpha_up)`
+      `α_down = σ(ffn_share_alpha_down)`
+
+    At step 0 `α ≈ 4.5e-5` ⇒ `W_eff ≈ W_self` bit-identical to
+    the champion's FFN within fp32 noise of one extra multiply-
+    add. As training proceeds the optimizer can grow α_up and
+    α_down (each bounded in [0, 1] by the sigmoid) to soft-share
+    the FFN's expansion / compression subspace across adjacent
+    blocks — a learnable form of Universal-Transformer
+    parameter tying on W_up, W_down only (W_gate left per-block).
+
+    Distinct from the existing cross-block / tying family at
+    this tier:
+      - 021-value-residual (WIN, Δ=−0.034): carries V *across
+        blocks via the residual stream* (post-AV). 206 carries
+        W_up / W_down *projections across blocks* (pre-FFN).
+        Different placement (FFN projection vs residual stream),
+        different mechanism (parameter sharing vs carry).
+      - 188-cross-block-kv-share (in-repo implementing): the
+        *attention-side* analog. 206 is the FFN-side analog on
+        the two largest FFN matrices. Different matrix, same
+        blend discipline.
+      - 197-tied-wo-across-blocks (in-repo): W_O tying across
+        blocks. 206 ties W_up, W_down (the two largest FFN
+        matrices) — narrower scope than Universal Transformer
+        (which shares everything), narrower scope than 197
+        which shares one MHA projection.
+      - 204-cross-block-attn-score-share (in-repo): cross-block
+        pre-softmax score sharing. 206 is on the FFN
+        projection, not the attention score.
+      - closed `layer tying` (Universal Transformers-style
+        full-layer sharing): 206 is narrower (only W_up, W_down
+        per block; W_gate and all Q/K/V/O stay per-block).
+
+    Param cost: 2 scalars/block × 12 blocks = 24 params
+    (+0.003% of 0.94M — negligible). Compute: per block, one
+    extra `F.linear` per side when α > 0 (negligible at step 0
+    where α ≈ 0). At inference, the blend is two extra
+    matmuls per block (acceptable at this tier).
+
+    @dataclass-decorated so `use_cross_block_ffn_share`
+    default is properly overridden (the dataclass-inheritance
+    pitfall documented in `_arq_161-dyt-temp.py` and
+    `_arq_163-v-mix-conv.py`).
+
+    NULL band |Δ| < 0.01 (a-priori most likely per the closed
+    full-layer-tying null + 188's open question). DRIFT >
+    +0.01 closes the FFN-tying axis. PASS ≤ ctrl − 0.01 AND
+    clears the two-ctrl rule. Sub-classify NULL by α dump at
+    end of training: α stays at 0 across all 24 scalars ⇒
+    *clean axis null* (generalizes the closed full-layer-tying
+    null to the FFN subset); α moves off zero ⇒ *steered NULL*
+    (binding regime the optimizer explored, just not a win).
+    See `autoresearch/ideas/206-cross-block-ffn-share/idea.md`
+    / `plan.md`.
+    """
+    use_cross_block_ffn_share: bool = True
+    ffn_share_alpha_init: float = -10.0
 
 
 @dataclass
