@@ -596,6 +596,17 @@ class MinimalLLM(nn.Module):
         # runs, baseline FFN path bit-identical. See
         # `autoresearch/ideas/196-ffn-glu-mish/idea.md`.
         self.use_mish_glu = getattr(config, "use_mish_glu", False)
+        # 189 — CosFormer-style linear attention (Qin et al. NeurIPS
+        # 2022, arXiv:2202.08791). Default off → standard attention
+        # path runs, baseline path bit-identical. The per-block γ
+        # scalar lives on the model as `self.cosformer_gammas`
+        # (single `nn.Parameter` of size `n_layers`, init 0), so the
+        # optimizer sees ONE param group not 12. See
+        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+        self.use_cosformer = getattr(config, "use_cosformer", False)
+        self.cosformer_gamma_init = float(
+            getattr(config, "cosformer_gamma_init", 0.0)
+        )
         # 198 — Pre-FFN Attention Mixing. Default off → no Parameter
         # registered per block, no forward branch taken, baseline
         # path bit-identical. See

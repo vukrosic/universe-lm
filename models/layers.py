@@ -1583,6 +1583,29 @@ class MultiHeadAttention(nn.Module):
         # bit-identical. See
         # `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
         use_per_layer_k_rotation: bool = False,
+        # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+        # (Su et al. 2024 RoFormer / RoPE, arXiv:2104.09864,
+        # position-dependent rotation context). Per head h and per
+        # pair i (d_k/2 = 8 planes), one learnable scalar angle
+        # `φ_{h,i} ∈ R` applied to BOTH Q and K as a static
+        # (position-independent) 2D rotation on disjoint `(2i,
+        # 2i+1)` planes BEFORE RoPE's position-dependent rotation.
+        # The block-diagonal `R_h` (product of d_k/2 2D rotations)
+        # is orthogonal. Applied to both Q and K the static
+        # rotation acts as a basis change on the (Q, K) features
+        # before position is mixed in by RoPE — the pre-RoPE
+        # placement is the fresh axis (185 rotates K post-RoPE,
+        # 200 rotates K post-RoPE with shared angles, 154 uses a
+        # fixed rebase on K, V pre-softmax — 192 is the only
+        # learned QK rotation that lives *before* the position
+        # mix). Init `φ_{h,i} = 0` ⇒ `cos(0)=1, sin(0)=0` in fp32
+        # ⇒ `R_h = I_{d_k}` exactly ⇒ `Q = R_h @ Q = Q` and
+        # `K = R_h @ K = K` exactly ⇒ step-0 forward is bit-
+        # identical to the no-flag baseline. Default off ⇒ no
+        # Parameter registered, no branch taken, baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+        use_pre_rope_rotation: bool = False,
         # 156 — Mixture-of-Attentions (MoA). Run `E` parallel
         # attention computations per layer with SEPARATE K_e, V_e
         # projections (Q is shared across experts, so the routing is
@@ -5506,6 +5529,72 @@ class MultiHeadAttention(nn.Module):
         # the same input as the un-masked W_O would. See
         # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
         w_o = self.qkvo_proj[self.qkv_size:]
+        # 199 — Spectral-Norm-Bounded W_O Projection. Per-block
+        # learnable Lipschitz cap on the O-slice weight. Track
+        # `σ_max(W_O)` via power iteration on a per-block Buffer
+        # vector `u ∈ R^{d_model}`; on the FIRST forward, seed
+        # `u` from a fresh random unit vector and snapshot
+        # `σ_max_init = ||w_o · u||₂ / ||u||₂` (Rayleigh quotient —
+        # equals `||w_o||₂` to within PI convergence error).
+        # Subsequent forwards run `wo_spectral_cap_pi_iters` PI
+        # steps and read the current `σ_max` from the same
+        # Rayleigh quotient on the *current* `w_o`. The cap is
+        # applied BEFORE the 197 blend (and therefore BEFORE the
+        # 171-DropConnect mask and 207-LowRank addition) so the
+        # cap operates on the per-block W_O weight itself, and
+        # the blend / mask / lowrank still operate on a valid
+        # `[d_model, d_model]` O-slice tensor.
+        #
+        # At step 0: `γ_l = 0` ⇒ `exp(γ_l) = 1`; `σ_max = σ_max_init`
+        # (snapshot on the same forward) ⇒ the cap factor
+        # `min(1, σ_max_init · exp(γ_l) / σ_max) = min(1, 1) = 1`
+        # ⇒ `w_o_eff = w_o` byte-identical to the no-flag baseline
+        # (the lever is dormant). As training proceeds, `σ_max(W_O)`
+        # typically grows under SGD; the optimizer can push `γ_l < 0`
+        # to tighten the cap and bind the Lipschitz constant on the
+        # projection. The cap is asymmetric (clip-only) — `γ_l > 0`
+        # is wasted optimizer signal because the clip never fires.
+        #
+        # PI implementation: right-side power iteration
+        # `u ← w_o · u / ||·||₂` (one matmul + norm per step);
+        # `||w_o · u||₂ / ||u||₂` is the spectral-norm estimate.
+        # At PI=1 with a converged `u` this is exact; at PI=1 with
+        # an unconverged `u` it underestimates σ_max — producing
+        # a slightly TIGHTER cap than σ_max truly warrants, which
+        # is safe (always ≤ true Lipschitz bound) and γ_l can
+        # compensate. PI state is updated under `no_grad` (does
+        # NOT consume backward graph) but the cap factor on the
+        # CURRENT `w_o` IS in the autograd graph (because `w_o` is
+        # a leaf Parameter slice — gradient flows through
+        # `w_o * cap_factor` to `w_o`).
+        if self.use_wo_spectral_cap:
+            if not self._wo_pi_initialized:
+                with torch.no_grad():
+                    new_u = torch.randn(
+                        self.d_model, device=w_o.device, dtype=w_o.dtype
+                    )
+                    new_u = new_u / (new_u.norm() + 1e-12)
+                    self._wo_pi_u.copy_(new_u)
+                    wu = w_o @ new_u
+                    self._wo_pi_sigma_max_init.copy_(
+                        wu.norm() / (new_u.norm() + 1e-12)
+                    )
+                    self._wo_pi_initialized = True
+            with torch.no_grad():
+                u = self._wo_pi_u
+                for _ in range(self.wo_spectral_cap_pi_iters):
+                    wu = w_o @ u
+                    u = wu / (wu.norm() + 1e-12)
+                self._wo_pi_u.copy_(u)
+                wu_final = w_o @ u
+                sigma_max_now = (wu_final.norm() / (u.norm() + 1e-12)).detach()
+            sigma_max_init = self._wo_pi_sigma_max_init
+            cap_factor = torch.minimum(
+                torch.ones_like(sigma_max_init),
+                (sigma_max_init * torch.exp(self.wo_spectral_cap_gamma))
+                / (sigma_max_now + 1e-12),
+            )
+            w_o = w_o * cap_factor
         # 197 — Tied W_O Across Blocks. Soft-blend the per-block
         # W_O slice with the model-wide shared `W_O_shared`
         # parameter, gated by a per-block sigmoid-bounded α. Sits
@@ -5755,6 +5844,13 @@ class TransformerBlock(nn.Module):
         # baseline. Default off → baseline path bit-identical.
         # See `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
         use_per_layer_k_rotation: bool = False,
+        # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+        # pass-through to the inner MHA (orthogonal-rebase axis,
+        # Q+K-side, pre-RoPE placement). Init φ=0 ⇒ `R_h = I_{d_k}`
+        # exactly in fp32 ⇒ step-0 forward bit-identical to
+        # baseline. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+        use_pre_rope_rotation: bool = False,
         # 182 — Per-head learnable attention window pass-through.
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/182-per-head-window/idea.md`.
@@ -7313,7 +7409,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(self.norm1(x))
             else:
-                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
+                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores, cosformer_gamma=cosformer_gamma)
             # 198 — Pre-FFN Attention Mixing. Capture the *raw*
             # attention output (post-`self.attention(...)`, before any
             # layerscale / sub_ln / rezero / dropout wrapping). The
