@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T08:29:04Z","agent":"taste","idea":"197-tied-wo-across-blocks","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
 {"ts":"2026-06-15T08:29:46Z","agent":"taste","idea":"197-tied-wo-across-blocks","from":"tasting","to":"needs-review","round":1,"note":"accept: all 5 r1 findings closed — soft blend only, +4108 params (sub-noise), discriminator vs 171 (regularizer) + closed-tying (full) on different failure modes; sharp tying-attribution bet"}
 {"ts":"2026-06-15T08:33:22Z","agent":"reviewer","idea":"197-tied-wo-across-blocks","from":"needs-review","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-15T08:49:48Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
