@@ -1,8 +1,8 @@
 ---
 id: 188-qk-rms-scaling
-status: repitching
+status: needs-taste
 round: 2
-updated: 2026-06-15T08:25:00Z
+updated: 2026-06-15T08:33:02Z
 transfer-risk: low
 plain: On top of the WIN 016-qk-norm, add one learnable per-block scalar on pre-softmax scores (init 1, exp-parameterized), so the optimizer can compensate for any sub-optimal sharpness that the symmetric QK norm induces.
 ---

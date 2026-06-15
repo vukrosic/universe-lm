@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T08:29:35Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"tasting","to":"needs-repitch","round":1,"note":"revise: c=8 makes lever bit-identical to closed softcap; re-pitch as either tight-clamp (c≈2) active bet OR explicit family-close null — see taste.md r1"}
 {"ts":"2026-06-15T08:30:55Z","agent":"miner","idea":"195-qk-clamp-min-max","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:32:03Z","agent":"miner","idea":"195-qk-clamp-min-max","from":"repitching","to":"needs-taste","round":2,"note":"applied 1 finding: switched c=8 -> c=2.0 so lever is active at step 0 and discontinuous-derivative claim is testable"}
+{"ts":"2026-06-15T08:33:13Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}

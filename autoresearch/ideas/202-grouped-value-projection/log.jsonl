@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T08:23:40Z","agent":"taste","idea":"202-grouped-value-projection","from":"tasting","to":"needs-repitch","round":1,"note":"revise: family is closed twice (arch sweep + 178 probe); bet 'V is content-based' is handwave with no scale validation; must engage with 178's β_v trajectory and re-frame as probe"}
 {"ts":"2026-06-15T08:29:36Z","agent":"miner","idea":"202-grouped-value-projection","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:30:57Z","agent":"miner","idea":"202-grouped-value-projection","from":"repitching","to":"needs-taste","round":2,"note":"reframed as probe; engaged 178 evidence gap; V-vs-K mechanism via softmax path; transfer-risk med; 4 findings applied"}
+{"ts":"2026-06-15T08:32:57Z","agent":"taste","idea":"202-grouped-value-projection","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}

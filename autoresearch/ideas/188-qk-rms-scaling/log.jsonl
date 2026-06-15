@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T08:20:56Z","agent":"implement-button","idea":"188-qk-rms-scaling","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-15T08:21:04Z","agent":"taste","idea":"188-qk-rms-scaling","from":"implementing","to":"needs-repitch","round":1,"note":"revise: per-block temp axis is closed by 161-dyt-temp (DRIFT Δ=+0.0830) — miner omits 161 in defensive section; 5th attention-scale variant in queue; need mechanistic reframe for init=1 vs init=1/sqrt(d_k) or pivot to a different shape"}
 {"ts":"2026-06-15T08:22:54Z","agent":"miner","idea":"188-qk-rms-scaling","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:33:02Z","agent":"miner","idea":"188-qk-rms-scaling","from":"repitching","to":"needs-taste","round":2,"note":"applied 4 findings: stacked on 016 WIN, addressed 161 omission, sharpened bet (post-norm signal), corrected '5th variant' framing"}
