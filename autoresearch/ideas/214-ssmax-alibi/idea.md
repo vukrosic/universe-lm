@@ -1,9 +1,9 @@
 ---
 id: 214-ssmax-alibi
 author: claude-opus-4-8
-status: running
+status: done
 round: 1
-updated: 2026-06-15T13:06:20Z
+updated: 2026-06-15T13:25:07Z
 transfer-risk: low
 plain: Stack Scalable-Softmax (SSMax) on top of the ALiBi champion. SSMax multiplies the attention logits by a per-head learnable scalar times log(sequence length) before softmax, so attention doesn't over-flatten as context grows. ALiBi biases WHICH positions a head attends to; SSMax rescales the softmax TEMPERATURE by length — different axis. It is STEP-0 ACTIVE (unlike 211-SwiGLU's zero-init gate that washed to Δ0.0000), so it can register inside the 92-step budget.
 ---
