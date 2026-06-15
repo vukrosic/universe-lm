@@ -1,8 +1,8 @@
 ---
 id: 207-wo-lowrank-bottleneck
-status: needs-plan
+status: planning
 round: 1
-updated: 2026-06-15T08:28:39Z
+updated: 2026-06-15T08:31:36Z
 transfer-risk: med
 plain: Insert a tiny low-rank bottleneck in the W_O projection (init so the bottleneck is silent, byte-identical at step 0), letting the model softly bottleneck what each attention block can write back to the residual stream.
 ---

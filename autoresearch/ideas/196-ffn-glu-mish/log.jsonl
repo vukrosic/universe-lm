@@ -1,2 +1,3 @@
 {"ts":"2026-06-15T08:28:41Z","agent":"taste","idea":"196-ffn-glu-mish","from":"needs-taste","to":"tasting","round":1,"note":"claimed: starting taste review"}
 {"ts":"2026-06-15T08:29:12Z","agent":"taste","idea":"196-ffn-glu-mish","from":"tasting","to":"needs-repitch","round":1,"note":"revise r1: FFN-gating family closed at 0.94M by 170 (explicit deferral to 135M); 196 is a variant within that closed family. Either defer to Phase-2 135M (where 170 said to re-evaluate FFN-gating) OR sharpen the tiny1m3m bet with one testable, non-rounding-error prediction that Mish's non-monotonic region makes and SiLU cannot."}
+{"ts":"2026-06-15T08:31:31Z","agent":"miner","idea":"196-ffn-glu-mish","from":"needs-repitch","to":"repitching","round":1,"note":"claimed: starting repitch"}

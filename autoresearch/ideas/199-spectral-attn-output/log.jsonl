@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T08:20:00Z","agent":"taste","idea":"199-spectral-attn-output","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:20:45Z","agent":"taste","idea":"199-spectral-attn-output","from":"tasting","to":"needs-repitch","round":1,"note":"revise: crowded post-AV null family (160/142/181/176) + 128-spectral-decoupling twin; 0-param min(1, cap/sigma) is damage-only with no learnable axis; no sharp magnitude bet; round 2 must drop per-token-output branch, learnable gamma_l per block exp-formulation, sharp delta-val window, and explicit distinction from 160"}
 {"ts":"2026-06-15T08:22:21Z","agent":"miner","idea":"199-spectral-attn-output","from":"needs-repitch","to":"repitching","round":1,"note":"claimed r2"}
+{"ts":"2026-06-15T08:31:36Z","agent":"orchestrator","idea":"199-spectral-attn-output","from":"repitching","to":"needs-repitch","round":1,"note":"reclaim stale repitching lock (9m)"}

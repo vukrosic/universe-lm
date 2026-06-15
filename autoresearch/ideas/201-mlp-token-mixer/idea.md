@@ -1,8 +1,8 @@
 ---
 id: 201-mlp-token-mixer
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:30:04Z
+updated: 2026-06-15T08:31:24Z
 transfer-risk: med
 plain: Add a tiny token-mixing MLP over the attention output before the W_O projection (init at 0 contribution so step-0 is byte-identical), letting the model softly share information across nearby tokens outside of attention.
 ---

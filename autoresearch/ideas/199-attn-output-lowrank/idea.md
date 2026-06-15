@@ -1,8 +1,8 @@
 ---
 id: 199-attn-output-lowrank
-status: tasting
+status: needs-repitch
 round: 1
-updated: 2026-06-15T08:30:35Z
+updated: 2026-06-15T08:31:24Z
 transfer-risk: med
 plain: Replace the W_O output projection with a low-rank factorization (W_O = A·B with rank r < d_model) — fewer parameters, forces a structured output, and acts as a soft bottleneck.
 ---
