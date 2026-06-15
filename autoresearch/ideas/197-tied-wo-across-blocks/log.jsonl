@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T12:03:58Z","agent":"reviewer","idea":"197-tied-wo-across-blocks","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T12:10:11Z","agent":"reviewer","idea":"197-tied-wo-across-blocks","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T16:21:31Z","agent":"code-impl","idea":"197-tied-wo-across-blocks","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:30:41Z","agent":"orchestrator","idea":"197-tied-wo-across-blocks","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (9m)"}
