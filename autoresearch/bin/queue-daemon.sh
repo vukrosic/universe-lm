@@ -71,6 +71,12 @@ PY
   { read -r HOST; read -r PORT; read -r SSHUSER; read -r REMOTE_REPO; read -r REMOTE_VENV; } <<<"$vals"
   [ -n "$HOST" ] && [ -n "$PORT" ] || { log "NO BOX: host/port empty in remote-box.json"; return 1; }
   CTL_PATH="/tmp/lab-arq-ctl-${SSHUSER}-${HOST}-${PORT}"   # shared multiplex socket
+  # Build the multiplex opts now that CTL_PATH is known (at script-parse time it
+  # was empty -> `-o ControlPath=` with no argument). Every SSH/SCP/master call
+  # below shares this one socket.
+  MUX_OPTS=(-o ControlMaster=auto -o "ControlPath=$CTL_PATH" -o "ControlPersist=$MASTER_PERSIST"
+            -o ServerAliveInterval=20 -o ServerAliveCountMax=5
+            -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15)
   return 0
 }
 
@@ -84,22 +90,47 @@ PY
 # new box gets a fresh socket; ControlPersist outlives one tick so back-to-back
 # ssh calls reuse the master. Shared with orchestrate.sh's arq probe.
 CTL_PATH=""   # set by load_box (needs host/port)
+
+# Shared multiplex opts. The single biggest throttle fix is ControlPersist >
+# the loop interval: with the old 120s persist but a 300s loop, the master died
+# between ticks, so EVERY tick re-handshaked — and any stray bare `ssh` landing
+# in the same window made it a burst that Vast.ai auth-throttles ("too many ssh
+# connections" -> "Connection closed by remote host"). MASTER_PERSIST keeps one
+# warm master for the whole daemon run; ServerAlive keeps it from going half-dead.
+MASTER_PERSIST="${MASTER_PERSIST:-3600}"
+THROTTLE_RE='Connection closed|Connection reset|too many|kex_exchange_identification'
+MUX_OPTS=()   # built by load_box once CTL_PATH (host/port) is known
+
+# Proactively bring up ONE persistent background master (idempotent: -O check is
+# a no-op if it's already alive). All SSH/SCP below then ride this single TCP
+# session — zero new handshakes per tick once it's up. Retries on the throttle
+# message itself with backoff, since the handshake is the only call that can hit
+# it. Returns 0 once a master is confirmed live, non-zero if the box is truly down.
+master_alive() { ssh -O check "${MUX_OPTS[@]}" -p "$PORT" "$SSHUSER@$HOST" 2>/dev/null; }
+ensure_master() {
+  master_alive && return 0
+  local t=0 out
+  while [ "$t" -le 4 ]; do
+    out="$(ssh -fNM "${MUX_OPTS[@]}" -p "$PORT" "$SSHUSER@$HOST" 2>&1)"
+    master_alive && return 0
+    echo "$out" | grep -qE "$THROTTLE_RE" || { [ -n "$out" ] && log "master: $out"; }
+    t=$((t+1)); log "master handshake throttled/failed, backoff ${t}x"; sleep $((t*6))
+  done
+  return 1
+}
+
 # -n (stdin from /dev/null) is REQUIRED: SSH() is called inside `while read`
-# loops fed by `<<<"$batch"` (e.g. sync_and_smoke). Without -n, ssh inherits and
-# drains the loop's stdin, so only the FIRST idea is ever processed. No SSH()
-# caller pipes data in, so -n is always safe here.
-SSH() { ssh -n -o ControlMaster=auto -o "ControlPath=$CTL_PATH" -o ControlPersist=120 \
-            -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=12 \
-            -p "$PORT" "$SSHUSER@$HOST" "$@"; }
-SCP_TO() { scp -o ControlMaster=auto -o "ControlPath=$CTL_PATH" -o ControlPersist=120 \
-               -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=12 \
-               -P "$PORT" "$1" "$SSHUSER@$HOST:$2"; }
-SCP_FROM() { scp -o ControlMaster=auto -o "ControlPath=$CTL_PATH" -o ControlPersist=120 \
-                 -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=12 \
-                 -P "$PORT" "$SSHUSER@$HOST:$1" "$2"; }
+# loops fed by `<<<"$batch"`. Without -n, ssh inherits and drains the loop's
+# stdin, so only the FIRST idea is processed. No SSH() caller pipes data in.
+SSH() { ssh -n "${MUX_OPTS[@]}" -p "$PORT" "$SSHUSER@$HOST" "$@"; }
+SCP_TO() { scp "${MUX_OPTS[@]}" -P "$PORT" "$1" "$SSHUSER@$HOST:$2"; }
+SCP_FROM() { scp "${MUX_OPTS[@]}" -P "$PORT" "$SSHUSER@$HOST:$1" "$2"; }
+# Batch-copy many local files into one remote dir in a SINGLE scp (one channel,
+# reuses the master) instead of one scp per file.
+SCP_MANY_TO() { local dst="${!#}"; scp "${MUX_OPTS[@]}" -P "$PORT" "${@:1:$#-1}" "$SSHUSER@$HOST:$dst"; }
 
 arq_live() { SSH "tmux has-session -t $REMOTE_TMUX 2>/dev/null"; }
-box_reachable() { SSH "true" >/dev/null 2>&1; }
+box_reachable() { ensure_master; }
 
 iso_to_epoch() { date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || echo 0; }
 field() { awk -F': *' -v k="$2" '$1==k{print $2; exit}' "$1"; }            # field <file> <key>
@@ -290,9 +321,10 @@ finalize() {
 
 # judge one finished treatment via baseline.sh verdict (mean ± band)
 finalize_one() {  # finalize_one <idea> <val> <rdir>
-  local idea="$1" val="$2" rdir="$3" out verdict delta mean band
-  # refresh mean/band from the cache for this box (works for CACHED + post-measure)
-  read -r _tag mean band _key < <("$BASELINE" check "$rdir/results.json" 2>/dev/null || echo "X 0 0 0")
+  local idea="$1" val="$2" rdir="$3" out verdict delta mean=0 band=0 _tag=X _key=
+  # refresh mean/band from the cache for this box (works for CACHED + post-measure).
+  # Defaults above keep `set -u` from tripping if `check` yields fewer fields.
+  read -r _tag mean band _key < <("$BASELINE" check "$rdir/results.json" 2>/dev/null || echo "X 0 0 0") || true
   out="$("$BASELINE" verdict "$rdir/results.json" "$val" 2>/dev/null || echo "NO-BASELINE 0")"
   verdict="${out%% *}"; delta="$(echo "$out" | awk '{print $2}')"
   case "$verdict" in
@@ -327,25 +359,41 @@ reclaim() {
   done
 }
 
-# ── 3b. sync + CPU build-smoke each claimed arq on the box ───────────────────
-# echoes the subset of "<idea> <arq> <to>" lines that passed smoke
+# ── 3b. sync + CPU build-smoke every claimed arq on the box (BATCHED) ────────
+# echoes the subset of "<idea> <arq> <to>" lines that passed smoke. The whole
+# step is 3 connections regardless of batch size — git pull, one batched scp of
+# all stubs, one ssh that smokes them in a remote loop — instead of the old
+# 2N+1 (an scp + an ssh PER idea), which is what bursts Vast's ssh throttle.
 sync_and_smoke() {
   local batch="$1" pass="" idea arq to
-  # git pull committed code; scp helper + each arq (idea-local, uncommitted-friendly)
-  SSH "cd $REMOTE_REPO && git pull --ff-only 2>&1 | tail -1" >&2 || log "git pull warned (continuing)"
-  SCP_TO "$ROOT/autoresearch/bin/_box_smoke.py" "$REMOTE_REPO/_box_smoke.py" 2>/dev/null || true
+  ensure_master
+  local ideas=() arqs=() tos=() srcs=()
   while read -r idea arq to; do
     [ -n "$idea" ] || continue
-    SCP_TO "$ROOT/$arq" "$REMOTE_REPO/$arq" 2>/dev/null || { log "scp $arq failed"; flip "$idea" needs-recode daemon "scp arq_file failed"; continue; }
-    local sm
-    sm="$(SSH "cd $REMOTE_REPO && export PATH=$REMOTE_VENV/bin:\$PATH TORCHDYNAMO_DISABLE=1 && python _box_smoke.py '$arq' 2>&1 | tail -3")"
-    if echo "$sm" | grep -q "SMOKE_OK"; then
-      pass+="$idea $arq $to"$'\n'
-    else
-      log "smoke FAIL $idea: $(echo "$sm" | tail -1)"
-      flip "$idea" needs-recode daemon "build-smoke failed: $(echo "$sm" | tail -1 | cut -c1-160)"
-    fi
+    ideas+=("$idea"); arqs+=("$arq"); tos+=("$to"); srcs+=("$ROOT/$arq")
   done <<<"$batch"
+  [ "${#arqs[@]}" -gt 0 ] || return 0
+
+  SSH "cd $REMOTE_REPO && git pull --ff-only 2>&1 | tail -1" >&2 || log "git pull warned (continuing)"
+  # one batched scp: the smoke helper + every stub, all into the repo root
+  SCP_MANY_TO "$ROOT/autoresearch/bin/_box_smoke.py" "${srcs[@]}" "$REMOTE_REPO/" 2>/dev/null \
+    || log "batch scp warned (continuing; missing stubs will smoke-FAIL)"
+  # one ssh: smoke every stub remotely, one result line each: "SMOKE <arq> <msg>"
+  local results
+  results="$(SSH "cd $REMOTE_REPO && export PATH=$REMOTE_VENV/bin:\$PATH TORCHDYNAMO_DISABLE=1
+    for a in ${arqs[*]}; do echo \"SMOKE \$a \$(python _box_smoke.py \"\$a\" 2>&1 | tail -1)\"; done")"
+
+  local i line msg
+  for i in "${!arqs[@]}"; do
+    line="$(printf '%s\n' "$results" | grep -m1 "^SMOKE ${arqs[$i]} ")"
+    if printf '%s' "$line" | grep -q SMOKE_OK; then
+      pass+="${ideas[$i]} ${arqs[$i]} ${tos[$i]}"$'\n'
+    else
+      msg="$(printf '%s' "${line:-SMOKE ${arqs[$i]} no smoke output (scp/connection failed)}" | sed "s#^SMOKE ${arqs[$i]} ##" | cut -c1-160)"
+      log "smoke FAIL ${ideas[$i]}: $msg"
+      flip "${ideas[$i]}" needs-recode daemon "build-smoke failed: $msg"
+    fi
+  done
   printf '%s' "$pass"
 }
 
