@@ -1,8 +1,8 @@
 ---
 id: 191-token-attn-gain
-status: done
+status: needs-run
 round: 1
-updated: 2026-06-15T09:11:15Z
+updated: 2026-06-15T09:12:34Z
 transfer-risk: low
 plain: Multiply each token's attention output by a learnable per-token scalar (init 1, byte-identical at step 0), so the model can softly up- or down-weight its own attention — a token-level gate on top of the residual stream.
 ---

@@ -10,3 +10,4 @@
 {"ts":"2026-06-15T08:59:24Z","agent":"reset-button","idea":"191-token-attn-gain","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-15T09:03:47Z","agent":"daemon","idea":"191-token-attn-gain","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T09:11:15Z","agent":"daemon","idea":"191-token-attn-gain","from":"running","to":"done","round":1,"note":"NULL: trt=6.2681 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0278)"}
+{"ts":"2026-06-15T09:12:34Z","agent":"reset-button","idea":"191-token-attn-gain","from":"done","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
