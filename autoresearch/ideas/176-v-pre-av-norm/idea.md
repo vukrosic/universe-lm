@@ -1,8 +1,8 @@
 ---
 id: 176-v-pre-av-norm
-status: needs-revision
+status: revising
 round: 1
-updated: 2026-06-15T01:58:26Z
+updated: 2026-06-15T01:59:50Z
 transfer-risk: med
 plain: Apply RMSNorm to the value vectors (V) before they get multiplied by attention weights, with learnable gain starting at 1.0 so step-0 is identical to the baseline.
 ---
