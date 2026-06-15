@@ -13,3 +13,4 @@
 {"ts":"2026-06-15T10:35:12Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T11:19:52Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29692039m)"}
 {"ts":"2026-06-15T11:19:57Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T11:42:44Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"done","round":1,"note":"NULL: trt=6.2594 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0191)"}
