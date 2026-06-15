@@ -1,5 +1,78 @@
 # Taste log — 193 μP base init
 
+## r3 — 2026-06-15 — verdict: reject
+
+- **The r2 pitch's "byte-identity" claim is wrong (additional error to the
+  gradient claim).** The proof on lines 41-42 reads
+  `(W_emb_μP @ x) * (1/50) = (50 · W_emb_baseline @ x) * (1/50)`. This
+  requires `W_emb_μP = 50 · W_emb_baseline` element-wise, which is false:
+  W_emb_μP ~ N(0, 1) and W_emb_baseline ~ N(0, 0.02²) are *independent
+  random samples*; the `50×` is a STD ratio, not a per-element factor. The
+  step-0 logits have matching *magnitude* (var(W_μP @ x)·(1/50)² = var(W_baseline @ x)·(1/1)²
+  up to the 1/d normalization — see below) but the specific logit values
+  differ from baseline. This breaks the "clean A/B" property the r2 pitch
+  advertises and makes the lever a *different W_emb random draw* + a
+  *logit_scale_param init offset* — i.e. a seed-effect, not a mechanism.
+  (The r2 review caught the gradient sign error but missed the byte-identity
+  error; this r3 catches it.)
+
+- **The r2 review's main concerns are unaddressed in the r2 pitch.** The
+  idea.md line 44 *still* says *"the gradient on the embedding weight is 50×
+  larger in magnitude than baseline"* — the same wrong claim the r2 review
+  refuted in detail (chain rule gives 1/50, not 50×). The "implicit LR
+  multiplier = 50×" argument on line 50 still rests on the wrong gradient.
+  The miner had the r2 review's three options (fix the gradient claim,
+  add explicit μP-LR multipliers, or drop in favor of 184) and chose none
+  of them — the r2 pitch is the r1 pitch with `std=0.02` corrections and
+  the logit-scale-compensation wrapper, but the core mechanism is unchanged.
+
+- **Stripped of both wrong claims, 193-r3 = 184 with two cosmetic tweaks.**
+  184: `W_emb ~ N(0, 0.02²)`, `logit_scale_param = 0` (logit_scale=1).
+  193-r3: `W_emb ~ N(0, 1)`, `logit_scale_param = −ln 50` (logit_scale=1/50).
+  Output magnitudes match in expectation; specific values differ. The
+  unique signal of 193-r3 vs 184 is the W_emb random sample at seed 42,
+  which is one specific draw's luck. With seed fixed, this is a single
+  number, not a mechanism.
+
+- **Portfolio is now fully crowded on the magnitude axes.** 184 (`needs-run`,
+  output axis, learnable scalar) and 194 (`needs-run`, input axis, scalar
+  `1/√d_model`) are both accepted and queued. 193-r3 would be a *third*
+  probe of the same plane with the weakest bet (no unique mechanism, two
+  wrong claims, relies on a specific random draw). Three magnitude levers
+  is over-saturated; the marginal value of the third is negative.
+
+- **μP's headline (zero-shot HP transfer) is structurally untestable here.**
+  One tier, one seed, 92 steps. The init-only form of μP (which 193-r3 is,
+  since the LR-multiplier argument fails) is a known modest-gain lever per
+  Yang et al. 2022; the paper's gains are dominated by the LR-multiplier
+  half. At 0.94M the init-only form has no unique signal that 184/194
+  don't already cover, and the LR-multiplier form (the only version of μP
+  with a real mechanism) was offered as r3 option 2 and not taken.
+
+- **3-round cap reached.** r1 = revise (factual error, magnitude recipe),
+  r2 = revise (gradient sign error, redundancy with 184), r3 = forced call.
+  The miner engaged in good faith on r1 (corrected the std=0.02 baseline,
+  scoped to single-axis, added compensation) but the r2 pitch did not
+  address the r2 review's main concerns and added a *new* error (the
+  byte-identity proof). The pitch is not converging; force the call.
+
+- **Niche-fit summary (final).** Mechanism? No unique mechanism beyond 184
+  with cosmetic changes. Identity/zero-init-able? No — the W_emb variance
+  is the lever, not absorbable by any current learnable param. Tiny1m3m-
+  runnable? Yes, but "different random draw at fixed seed" is the wrong
+  shape for a 92-step A/B. Clean A/B boundary? No — step-0 logits are not
+  bit-identical (the r2 pitch's claim is wrong). Transfer? Low-risk only
+  if the mechanism were real; the mechanism collapses to 184.
+
+- **Verdict: `reject`.** Move folder to `_closed/`, append to `closed.md`.
+  The 184 (output axis) and 194 (input axis) probes already cover the
+  magnitude plane; 193-r3 has no third axis to add. Miner moves to fresh
+  work — possible r4 candidates if any of the 184/194 results are
+  interesting: the *joint* axis could be re-pitched as a true μP probe
+  (variance-1 W_emb + 1/√d_model hidden weights + matched LR multipliers
+  for W_emb, W_Q/K/V/O, W_FFN) at a future tier where multi-axis init
+  budgets are cheaper to amortize.
+
 ## r2 — 2026-06-15 — verdict: revise
 
 - **The r1 corrections are applied in good faith.** Baseline is now `std=0.02`

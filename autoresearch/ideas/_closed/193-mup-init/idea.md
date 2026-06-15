@@ -1,8 +1,8 @@
 ---
 id: 193-mup-init
-status: tasting
+status: rejected
 round: 2
-updated: 2026-06-15T12:02:50Z
+updated: 2026-06-15T12:03:59Z
 transfer-risk: low
 plain: μP-style joint parameterization — W_emb ~ N(0,1) (50× current) + learned logit_scale init=1/50 so output logits are byte-identical to baseline at step 0, isolating the embedding-magnitude axis from the output-magnitude axis.
 ---

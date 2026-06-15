@@ -5,3 +5,5 @@
 {"ts":"2026-06-15T08:32:46Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:51:50Z","agent":"orchestrator","idea":"204-cross-block-attn-score-share","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (18m)"}
 {"ts":"2026-06-15T12:01:07Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:04:20Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-15T12:04:42Z","agent":"daemon","idea":"204-cross-block-attn-score-share","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}

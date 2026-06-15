@@ -1,8 +1,8 @@
 ---
 id: 189-cosformer-linear-attn
-status: needs-review
+status: reviewing
 round: 2
-updated: 2026-06-15T12:01:56Z
+updated: 2026-06-15T12:03:59Z
 transfer-risk: med
 plain: Replace softmax attention with a linear-time cosine-reparameterized attention (a different, much faster mathematical form of "soft" attention), designed to behave identically at step 0.
 ---

@@ -1427,6 +1427,23 @@ class MinimalLLM(nn.Module):
         self.use_logit_scale = getattr(config, "use_logit_scale", False)
         if self.use_logit_scale:
             self.logit_scale_param = nn.Parameter(torch.zeros(()))
+        # 193 — μP Joint Init (Tensor Programs V, Yang et al. 2022,
+        # arXiv:2203.03466). When on, the token embedding (and tied
+        # `lm_head`) is re-initialized to `normal_(std = 1.0)` after
+        # the global `_init_weights` runs (vs the baseline `std =
+        # 0.02`, i.e. 50× larger magnitude), AND a 0-D learnable
+        # scalar `logit_scale_param` (init `-log 50` so
+        # `exp(-log 50) = 1/50` exactly) is applied to the output
+        # logits. The two changes compose to a step-0 byte-identical
+        # output: `(50 · W_emb_baseline @ x) · (1/50) = W_emb_baseline @ x`
+        # exactly in fp32. Default off → baseline path byte-identical
+        # (no parameter created, no forward-graph branch). See
+        # `autoresearch/ideas/193-mup-init/idea.md`.
+        self.use_mup_joint_init = getattr(config, "use_mup_joint_init", False)
+        if self.use_mup_joint_init:
+            self.logit_scale_param = nn.Parameter(
+                torch.tensor(-math.log(50.0))
+            )
         # 183 — Pre-LM-Head RMSNorm (Gemma 2 / LLaMA 3 / Qwen 2.5
         # / OLMo 2 final-norm pattern). When on, the model registers
         # an `nn.RMSNorm(d_model)` (default `weight=1, bias=0` —
@@ -1511,6 +1528,24 @@ class MinimalLLM(nn.Module):
             )
 
         self.apply(self._init_weights)
+
+        # 193 — μP Joint Init: AFTER the global `_init_weights`
+        # sets `W_emb ~ N(0, 0.02²)`, override the token embedding
+        # to `N(0, 1.0)` (the μP variance-1 form, 50× larger
+        # magnitude). The 50× inflation propagates automatically to
+        # the tied `lm_head` (since `lm_head.weight =
+        # token_embedding.weight` at lines 1499). The downstream
+        # `1/50` logit scale (applied in `compute_logits`)
+        # cancels the inflation exactly, so the step-0 output is
+        # byte-identical to the champion baseline:
+        # `(50 · W_emb_baseline @ x) · (1/50) = W_emb_baseline @ x`
+        # in fp32. Default off → baseline path untouched. See
+        # `autoresearch/ideas/193-mup-init/idea.md`.
+        if self.use_mup_joint_init:
+            with torch.no_grad():
+                torch.nn.init.normal_(
+                    self.token_embedding.weight, mean=0.0, std=1.0
+                )
 
         # 159 — Embedding pre-LayerNorm: `_init_weights` leaves
         # `nn.LayerNorm` at its default `weight=1, bias=0` (the
@@ -1729,6 +1764,21 @@ class MinimalLLM(nn.Module):
         # safe no-op.
         prev_W_K = None
         prev_W_V = None
+        # 204 — Cross-Block Attention Score Sharing: stash the
+        # layer-0 MHA pre-softmax scores (detached) on
+        # `block.attention._prev_block_scores`; read them back
+        # after the layer-0 block and pass as `prev_block_scores=`
+        # to every layer l ≥ 1. None ⇒ MHA's `use_cross_block_
+        # score_share` branch is the stash branch (layer 0) or the
+        # lever is off altogether. Mirrors 021's `v_residual=...`
+        # / 164's `q_carry=...` / 168's `av_carry=...` / 188's
+        # `prev_W_K=` / `prev_W_V=` plumbing. GAU/YOCO are
+        # mutually exclusive with the lever (the stash reads the
+        # previous block's pre-softmax scores, which don't exist
+        # in the fused GAUBlock / YOCOLlamaBlock) — guarded with
+        # the same `not self.use_gau` check as the other cross-
+        # block carries.
+        prev_block_scores = None
         # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
         # across all upper-half blocks. Computed ONCE on the lower
         # half's final residual stream after the last lower-half
@@ -1826,6 +1876,18 @@ class MinimalLLM(nn.Module):
                     # 168's `av_carry=...` plumbing on the same call.
                     prev_W_K=prev_W_K,
                     prev_W_V=prev_W_V,
+                    # 204 — Cross-Block Attention Score Sharing:
+                    # forward-pass-local stash from the previous
+                    # block's pre-softmax scores (detached at the
+                    # MHA call site, shape `[B, H, T, T]`).
+                    # `None` on layer 0 (or when the lever is off)
+                    # → the block's `prev_block_scores=` kwarg is
+                    # a no-op and the baseline pre-softmax score
+                    # path is bit-identical. Mirrors 021's
+                    # `v_residual=...` / 164's `q_carry=...` /
+                    # 168's `av_carry=...` / 188's `prev_W_K=` /
+                    # `prev_W_V=` plumbing on the same call.
+                    prev_block_scores=prev_block_scores,
                     # 150 — Cross-Layer Feedback: forward-pass-local
                     # list of pre-FFN x from the previous K blocks.
                     # The block reads from it and appends its own
@@ -1889,6 +1951,24 @@ class MinimalLLM(nn.Module):
                 if not self.use_gau:
                     prev_W_K = block.attention._prev_W_K
                     prev_W_V = block.attention._prev_W_V
+            if self.use_cross_block_score_share and i == 0:
+                # After layer-0 MHA forward, the post-base-scores
+                # tensor (shape `[B, H, T, T]`, post `/sqrt(d_k)`,
+                # pre-softmax / pre-mask) is stashed at
+                # `block.attention._prev_block_scores`
+                # (`.detach()`-ed inside MHA.forward). Capture for
+                # layers 1..N-1. Same `not self.use_gau` guard as
+                # v_residual / q_carry / av_carry / prev_W_K /
+                # prev_W_V — GAUBlock has no `.attention`
+                # attribute and a fused MHA+FFN operator doesn't
+                # compose with the score blend (the blend reads the
+                # previous block's pre-softmax scores, which don't
+                # exist in the fused operator). YOCO: the MHA's
+                # score-blend branch is dead on the upper-half
+                # blocks (shared K, V path skips the per-block
+                # pre-softmax stash); the capture is a safe no-op.
+                if not self.use_gau:
+                    prev_block_scores = block.attention._prev_block_scores
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary
@@ -2052,6 +2132,16 @@ class MinimalLLM(nn.Module):
         # positive without a clamp. See
         # `autoresearch/ideas/184-logit-scale/idea.md`.
         if self.use_logit_scale:
+            logits = logits * self.logit_scale_param.exp()
+        # 193 — μP Joint Init: `logits *= exp(logit_scale_param)`.
+        # Init `-log 50` ⇒ exp(-log 50) = 1/50 exactly in fp32. The
+        # 50×-inflated embedding (re-init to `std = 1.0` above) is
+        # cancelled exactly by the `1/50` scale, so the step-0 output
+        # is byte-identical to the champion baseline:
+        # `(50 · W_emb_baseline @ x) · (1/50) = W_emb_baseline @ x`.
+        # Default off → baseline path byte-identical. See
+        # `autoresearch/ideas/193-mup-init/idea.md`.
+        if self.use_mup_joint_init:
             logits = logits * self.logit_scale_param.exp()
 
         return logits

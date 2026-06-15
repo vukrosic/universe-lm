@@ -173,6 +173,25 @@ class LLMConfig:
     # bit-identical. See `autoresearch/ideas/188-qk-rms-scaling/
     # idea.md`.
     use_qk_rms_scaling: bool = False
+    # 195 — Tight hard QK logit clamp (min/max bound on pre-softmax
+    # QK^T). Apply `torch.clamp(scores, min=-c, max=+c)` after the
+    # standard `Q·K^T / sqrt(d_k)` so no single logit can dominate
+    # softmax. Default off → baseline path bit-identical (the
+    # `if self.use_qk_clamp:` branch is never taken). When on, the
+    # lever is intentionally NOT bit-identical at step 0 — at
+    # Kaiming init, QK^T entries are O(1) Gaussian and a tight
+    # c (default 2.0) actively clips ~5% of the 2-sigma tail at
+    # step 0, so the regularizer effect is exercised immediately
+    # and the gradient at the boundary is discontinuous (exactly
+    # 0 outside the clamp). Forces the manual attention path so
+    # SDPA's flash kernel doesn't fuse QK^T+softmax+AV (the
+    # pre-softmax logit must be exposed for clamping). Distinct
+    # from the closed `logit softcap` axis (smooth tanh at c=8
+    # — inactive at step 0 at tiny1m3m; here it's a *hard* clip
+    # at c=2.0 — *active* at step 0). See
+    # `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+    use_qk_clamp: bool = False
+    qk_clamp_c: float = 2.0
     # 160 — Per-head RMS gain on the attention output (Gemma 2 /
     # Qwen 2.5). After the AV product and softmax aggregation, multiply
     # each head's output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable
@@ -663,6 +682,22 @@ class LLMConfig:
     # AdamW. Default off → baseline path bit-identical. See
     # `autoresearch/ideas/184-logit-scale/idea.md`.
     use_logit_scale: bool = False
+    # 193 — μP Joint Init (Tensor Programs V, Yang et al. 2022,
+    # arXiv:2203.03466). When on, the embedding is re-initialized to
+    # `std = 1.0` (vs the GPT-2 baseline `std = 0.02`; i.e. 50× larger
+    # magnitude) AND a learned scalar `logit_scale_param` (init
+    # `-log(50)` so `exp(...) = 1/50` at step 0) is applied to the
+    # output logits. The two changes compose to a step-0
+    # byte-identical output: `(50 · W_emb_baseline @ x) · (1/50) =
+    # W_emb_baseline @ x` exactly in fp32. The optimizer then sees a
+    # 50×-larger gradient on the embedding (because
+    # `∂L/∂W_emb = 50 · ∂L/∂W_emb_baseline`) and a normal-scale gradient
+    # on the logit scale, matching the spirit of μP's
+    # `lr_emb = lr_base · d_model` rule (the 50× is `1/0.02 = 50`).
+    # Default off → baseline path byte-identical (no flag, no
+    # param, no forward-graph branch). See
+    # `autoresearch/ideas/193-mup-init/idea.md`.
+    use_mup_joint_init: bool = False
     # 183 — Pre-LM-Head RMSNorm (Gemma 2 §2, LLaMA 3 §3.1, Qwen 2.5
     # §2.3, OLMo 2 §2.2: a final RMSNorm right before the tied LM
     # head). When on, the model builds an `nn.RMSNorm(d_model)` plus
@@ -2709,6 +2744,65 @@ class Tiny1M3MLogitScaleConfig(Tiny1M3MAlibiConfig):
     WIN ≤ ctrl − 0.005. NULL |Δ| < 0.01. DRIFT > ctrl + 0.01.
     """
     use_logit_scale: bool = True
+
+
+@dataclass
+class Tiny1M3MMuPJointInitConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M stacked on the 175-alibi champion with μP joint
+    parameterization (Tensor Programs V, Yang et al. 2022,
+    arXiv:2203.03466; μ-Transfer Llama 3.1 405B, Microsoft 2024).
+
+    Subclasses `Tiny1M3MAlibiConfig` so the lever stacks on top of
+    the current champion (val 6.2403, band 0.04, seed 42). The
+    joint parameterization is two coupled changes:
+
+    1. The token embedding (and tied `lm_head`) is re-initialized to
+       `normal_(std = 1.0)` after the global `_init_weights` runs
+       (which sets it to `normal_(std = 0.02)`). The 50× larger
+       magnitude is the "μP variance-1" form — variance-1 inputs to
+       the residual stream rather than the GPT-2 small-input baseline.
+    2. A 0-D learnable scalar `logit_scale_param` (init `-log 50` so
+       `exp(-log 50) = 1/50` exactly) is applied to the output logits
+       via `logits = logits * logit_scale_param.exp()` right before
+       the loss.
+
+    The two compose to a **byte-identical step-0 output**: the
+    50×-inflated embedding's contribution to the logits is exactly
+    cancelled by the `1/50` logit scale, so
+    `(50 · W_emb_baseline @ x) · (1/50) = W_emb_baseline @ x` exactly
+    in fp32. The optimizer then sees:
+      - a 50× larger gradient on `W_emb` (because
+        `∂L/∂W_emb_new = 50 · ∂L/∂W_emb_baseline`), so the embedding
+        magnitude gets re-fit aggressively early in training;
+      - a normal-magnitude gradient on the logit scale, so the
+        output logit magnitude is held at baseline.
+    This matches the spirit of μP's `lr_emb = lr_base · d_model`
+    rule (the 50× is `1/0.02 = 50`, the same scaling).
+
+    Cost: 1 scalar (+0.0001% of 0.94M, 0-D param, routes to AdamW).
+    The embedding change is init-only — no extra params.
+
+    Distinct from 184-logit-scale (ACCEPTED, `needs-run`): 184 tests
+    the *output-magnitude axis at fixed input magnitude* (W_emb ~ 0.02²
+    unchanged, logit scale init 1.0). 193 tests the *joint axis*
+    (W_emb ~ 1.0, logit scale init 1/50). The two stack
+    orthogonally and together probe the residual-stream-magnitude
+    hypothesis: 184 says "is the output scale trainable?", 193 says
+    "is the *ratio* (input/output) trainable?".
+
+    A/B vs the 175-alibi champion (val 6.2403, seed 42). The
+    theoretical case is μP's headline property of zero-shot HP
+    transfer across widths, validated at 40M-405B; at 0.94M the
+    expected Δval ∈ [−0.005, +0.005] (similar magnitude to 184's
+    output-axis null — the 0.94M form is too narrow for either
+    lever to dominate the binding constraint, but the joint form
+    tests a structurally different hypothesis). WIN ≤ ctrl − 0.005.
+    NULL |Δ| < 0.01. DRIFT > ctrl + 0.01. Sub-noise inconclusive
+    per one-seed-only rule.
+
+    See `autoresearch/ideas/193-mup-init/idea.md`.
+    """
+    use_mup_joint_init: bool = True
 
 
 @dataclass
@@ -6612,6 +6706,38 @@ class Tiny1M3MEntmaxConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/173-entmax-15/{idea,plan}.md`.
     """
     use_entmax: bool = True
+
+
+@dataclass
+class Tiny1M3MQKClampConfig(Tiny1M3MConfig):
+    """Tiny1M3M with a tight hard QK logit clamp (195).
+
+    Applies `torch.clamp(scores, min=-c, max=+c)` to the pre-softmax
+    attention logits `Q·K^T / sqrt(d_k)` so no single logit can
+    dominate the softmax. Distinct from the closed `logit softcap`
+    axis (smooth tanh at c=8, inactive at step 0): this is a
+    *hard* clip at `c = 2.0`, which is *active* at step 0 (~5% of
+    Kaiming-init QK^T entries hit the 2-sigma boundary) and has
+    a *discontinuous* gradient at the boundary (exactly 0 outside
+    the clamp range). The bet is whether the combined
+    "active + discontinuous" regularizer effect of hard QK
+    clamping lowers val loss at this tier; a null closes the
+    hard-clamp sub-axis of the logit-bounding family.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`).
+    0 new params (the clamp is a fixed config constant `c`,
+    not a learnable parameter). The lever is explicitly NOT
+    bit-identical at step 0 — the clamp fires on ~5% of init
+    logits and the gradient is discontinuous at the boundary.
+    Forces the manual attention path so SDPA's flash kernel
+    doesn't fuse QK^T+softmax+AV (the pre-softmax logit must
+    be exposed for clamping).
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.01. DRIFT > +0.01.
+    See `autoresearch/ideas/195-qk-clamp-min-max/{idea,plan}.md`.
+    """
+    use_qk_clamp: bool = True
+    qk_clamp_c: float = 2.0
 
 
 @dataclass

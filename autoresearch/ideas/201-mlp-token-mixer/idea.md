@@ -1,8 +1,8 @@
 ---
 id: 201-mlp-token-mixer
-status: tasting
-round: 2
-updated: 2026-06-15T12:01:48Z
+status: needs-review
+round: 1
+updated: 2026-06-15T12:03:58Z
 transfer-risk: med
 plain: gMLP-style spatial gating unit (SGU) added alongside attention on the attention output, in 4 of 12 blocks (stochastic); α=sigmoid(α_raw) init -10 ⇒ bit-identical baseline at step 0; tests whether global per-channel post-attn mixing binds at 0.94M once 163's local-conv result is in.
 ---
