@@ -1429,6 +1429,42 @@ class MultiHeadAttention(nn.Module):
         use_lowrank_wv: bool = False,
         wv_rank: int = 8,
         wv_lowrank_alpha_init: float = -10.0,
+        # 199 — Spectral-Norm-Bounded W_O Projection (per-block
+        # learnable Lipschitz cap on the attention output
+        # projection, Miyato et al. 2018 "Spectral Normalization
+        # for GANs" ICLR 2018, arXiv:1802.05957 + Gouk et al.
+        # 2021 arXiv:1804.04368). Per block *l*, apply an
+        # *asymmetric* (clip-only) Lipschitz cap on W_O's
+        # spectral norm:
+        #   cap_l       = σ_max(W_O_init^[l]) · exp(γ_l)
+        #   W_O_eff^[l] = W_O^[l] · min(1, cap_l / σ_max(W_O^[l]))
+        # `γ_l` is a per-MHA 0-dim learnable scalar (init 0 ⇒
+        # `exp(γ_l)=1`). `σ_max_init^[l]` is captured on the FIRST
+        # forward (frozen; never recomputed from a perturbed W_O
+        # — this is the byte-identity guarantee). `σ_max(W_O)` is
+        # tracked via power iteration on the O-slice weight with a
+        # per-block Buffer `u ∈ R^{d_model}` (initialized on first
+        # forward from a random direction, then updated as
+        # `u ← W_O · u / ||·||₂` and `σ_max ≈ u^T · W_O · u /
+        # (u^T · u)`). `wo_spectral_cap_pi_iters` controls how
+        # many PI steps run per forward (default 1 — the σ_max
+        # drift is slow at 0.94M/12L so a single PI step tracks
+        # it). At step 0 `γ_l = 0` and `σ_max_current = σ_max_init`
+        # ⇒ the factor is exactly 1 ⇒ `W_O_eff == W_O` byte-
+        # identical to baseline. The optimizer can push `γ_l < 0`
+        # to tighten the cap and bind the Lipschitz constant on
+        # the projection; `γ_l > 0` is wasted optimizer signal
+        # (the clip never fires because σ_max_current <
+        # σ_max_init · exp(γ_l)). `γ_l` is a free Parameter
+        # (init 0); the power-iteration state `u` and the captured
+        # `σ_max_init` are Buffers (not Parameters — they survive
+        # optimizer state serialization but do not consume an
+        # optimizer slot). Default off → no Parameter, no Buffer,
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/199-spectral-attn-output/idea.md` /
+        # `plan.md`.
+        use_wo_spectral_cap: bool = False,
+        wo_spectral_cap_pi_iters: int = 1,
         # 197 — Tied W_O Across Blocks (soft blend, Universal-
         # Transformer-style learnable parameter sharing restricted
         # to the attention output projection, Dehghani et al. ICLR
@@ -2241,6 +2277,75 @@ class MultiHeadAttention(nn.Module):
         else:
             self.tied_wo_shared = None
             self.tied_wo_alpha_raw = None
+        # 199 — Spectral-Norm-Bounded W_O Projection. Per-block
+        # learnable scalar `γ_l ∈ R` (init 0 ⇒ `exp(γ_l)=1`) and a
+        # power-iteration Buffer `u ∈ R^{d_model}` for tracking
+        # σ_max(W_O). `σ_max_init` is captured on the FIRST
+        # forward (frozen — never recomputed from a perturbed W_O,
+        # which is the byte-identity guarantee). The forward
+        # computes, after extracting the O-slice weight
+        # `w_o = self.qkvo_proj[self.qkv_size:]`:
+        #   1. Run `wo_spectral_cap_pi_iters` power-iteration steps
+        #      updating `u ← w_o @ u / ||·||₂` and the Rayleigh
+        #      quotient `σ = (u^T · w_o · u) / (u^T · u)` (≈ the
+        #      largest singular value of `w_o` after convergence).
+        #   2. On the first forward, snapshot
+        #      `σ_max_init = σ.detach()` and seed `u` from a fresh
+        #      random direction (so the FIRST forward's σ_max
+        #      estimate matches the captured σ_max_init ⇒ the cap
+        #      factor is exactly 1 ⇒ `w_o_eff == w_o` byte-
+        #      identical to baseline).
+        #   3. Apply the cap:
+        #      `w_o_eff = w_o · min(1, σ_max_init · exp(γ_l) / σ)`.
+        # At step 0 `γ_l = 0` and `σ = σ_max_init` ⇒ factor = 1
+        # ⇒ `w_o_eff == w_o` byte-identical to the no-flag
+        # baseline. The optimizer can push `γ_l < 0` to tighten
+        # the cap (the informative direction — σ_max(W_O) typically
+        # grows under SGD). All state (γ_l scalar, power-iteration
+        # vector u, captured σ_max_init) is allocated ONLY when
+        # `use_wo_spectral_cap=True`. γ_l is a Parameter; u and
+        # σ_max_init are Buffers (so they survive `.to(device)`
+        # and optimizer state serialization but do not consume an
+        # optimizer slot). The cap is applied at the W_O
+        # application site — BEFORE the 171-DropConnect mask and
+        # 207-W_O-LowRank addition so it composes uniformly with
+        # all preceding output-side levers (the mask and the
+        # lowrank correction still operate on a valid
+        # `[d_model, d_model]` tensor). Default off → no
+        # Parameter, no Buffer, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/199-spectral-attn-output/idea.md` /
+        # `plan.md`.
+        self.use_wo_spectral_cap = use_wo_spectral_cap
+        self.wo_spectral_cap_pi_iters = int(wo_spectral_cap_pi_iters)
+        if self.use_wo_spectral_cap:
+            self.wo_spectral_cap_gamma = nn.Parameter(
+                torch.zeros(())
+            )
+            # Power-iteration vector — initialized lazily on the
+            # first forward to a fresh random unit vector so the
+            # first σ_max estimate and the captured σ_max_init
+            # are exactly equal (the byte-identity guarantee).
+            # Registered as a Buffer (not a Parameter) so it
+            # does not consume an optimizer slot.
+            self.register_buffer(
+                "_wo_pi_u", torch.zeros(self.d_model), persistent=False
+            )
+            # Captured initial spectral norm — also a Buffer,
+            # populated on the first forward.
+            self.register_buffer(
+                "_wo_pi_sigma_max_init",
+                torch.zeros(()),
+                persistent=False,
+            )
+            # Forward-pass flag: True once the first forward has
+            # captured σ_max_init and seeded `u`.
+            self._wo_pi_initialized = False
+        else:
+            self.wo_spectral_cap_gamma = None
+            self._wo_pi_u = None
+            self._wo_pi_sigma_max_init = None
+            self._wo_pi_initialized = False
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
@@ -6433,6 +6538,13 @@ class TransformerBlock(nn.Module):
             attention_dilation=attention_dilation,
             use_layernorm=use_layernorm,
             use_linear_attn=use_linear_attn,
+            # 189 — CosFormer-style linear attention pass-through
+            # to the inner MHA. See `MultiHeadAttention.use_cosformer`
+            # for the mechanism. Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+            use_cosformer=use_cosformer,
+            cosformer_gamma_init=cosformer_gamma_init,
             use_diff_attn=use_diff_attn,
             use_nsa_global=use_nsa_global,
             nsa_block=nsa_block,
@@ -7024,7 +7136,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None, prev_W_up=None, prev_W_down=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None, prev_W_up=None, prev_W_down=None, cosformer_gamma=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -7128,7 +7240,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(n)
             else:
-                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
+                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores, cosformer_gamma=cosformer_gamma)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -7163,7 +7275,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(x)
             else:
-                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
+                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores, cosformer_gamma=cosformer_gamma)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
