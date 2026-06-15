@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T01:57:31Z","agent":"implement-button","idea":"173-entmax-15","from":"needs-review","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
 {"ts":"2026-06-15T01:59:37Z","agent":"reviewer","idea":"173-entmax-15","from":"needs-run","to":"reviewing","round":1,"note":"claimed for r1 review (status was needs-run; implement-button skipped review)"}
 {"ts":"2026-06-15T02:01:52Z","agent":"reviewer","idea":"173-entmax-15","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T03:15:56Z","agent":"code-impl","idea":"173-entmax-15","from":"needs-plan","to":"needs-run","round":1,"note":"plan+code done"}
