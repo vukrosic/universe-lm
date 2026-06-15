@@ -1,1 +1,2 @@
 {"ts":"2026-06-15T10:09:33Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:12:33Z","agent":"reset-button","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
