@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T01:45:10Z","agent":"implement-button","idea":"173-entmax-15","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-15T01:46:31Z","agent":"taste","idea":"173-entmax-15","from":"implementing","to":"tasting","round":1,"note":"claimed for r1 taste review"}
 {"ts":"2026-06-15T01:46:56Z","agent":"taste","idea":"173-entmax-15","from":"tasting","to":"needs-repitch","round":1,"note":"revise: bet is soft, predict inside null band 60% of expected range; 8 prior soft siblings (148,156,152,155,160,162,165,166) + closed.md 'NSA/diff-attn/hybrid heads' axis already weakly-answer softmax-replacement at 0.94M; r2 must add a sharp mechanistic sentence, commit Δ≤-0.015 or re-pitch as a milder-sparsity variant, and explicitly differentiate from the closed family"}
+{"ts":"2026-06-15T01:49:12Z","agent":"miner","idea":"173-entmax-15","from":"needs-repitch","to":"repitching","round":1,"note":"claimed for r2 repitch"}
