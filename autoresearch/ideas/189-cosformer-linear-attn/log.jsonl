@@ -1,0 +1,2 @@
+{"ts":"2026-06-15T08:18:00Z","agent":"taste","idea":"189-cosformer-linear-attn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:18:26Z","agent":"taste","idea":"189-cosformer-linear-attn","from":"tasting","to":"needs-repitch","round":1,"note":"revise: bet is a vibe (no sharp 'we expect X because Y'); bit-identity claim suspect (gamma=0 gives uniform attention, not softmax); null info value low vs 148-focal-mod close; needs mechanism-level prediction + step-0 numerical check + tighter pass-bar"}

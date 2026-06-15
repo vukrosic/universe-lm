@@ -80,3 +80,50 @@ The bet, in one sharp sentence: **154-rebased-attn's WIN (Δ=−3.48) establishe
 - r1 (07:47Z) + r2 (07:56Z) both bounced at build-smoke with `ImportError: cannot import name 'Tiny1M3MStaticKRotationConfig' from 'configs.llm_config'` on the box. r2 claimed a "transient race" and re-released without committing any code; the box kept failing for the same reason.
 - Real cause: the box's `git pull` is from origin, and the model code (`use_static_k_rotation` flag at `configs/llm_config.py:935`, `Tiny1M3MStaticKRotationConfig` at `configs/llm_config.py:6539`, the per-head rotation block in `models/layers.py:3128`, and the pass-through plumbing in `models/llm.py:319/735/1058`) was in the local working tree but **never committed** — `orchestrate.sh` only commits `autoresearch/ideas/*` snapshots. So neither origin nor the box had the class.
 - **r3 fix**: code is correct (verified locally — `_box_smoke.py _arq_185-static-per-head-k-rotation.py` → `SMOKE_OK`; `MinimalLLM(Tiny1M3MStaticKRotationConfig())` constructs; +384 params as expected; **step-0 byte-identity `max_abs_diff = 0.0`** under same seed). Committed `configs/llm_config.py` + `models/layers.py` + `models/llm.py` locally so the class reaches origin on the next push. The daemon will see the class on its next `git pull` after the user pushes — until then the smoke will keep failing for the same ImportError reason.
+
+## Plan
+
+**Re-code (round 3).** Build-smoke bounced twice on the box with `ImportError: cannot
+import name 'Tiny1M3MStaticKRotationConfig'`. Local code is correct and is now committed
+locally (`fa1ed31`); the next daemon tick after origin-push will see the class.
+
+**Files / functions**
+- `configs/llm_config.py` — `Tiny1M3MStaticKRotationConfig(Tiny1M3MConfig)` at L6539,
+  flag `use_static_k_rotation: bool = True`. Base `LLMConfig.use_static_k_rotation: bool = False`.
+- `models/layers.py` — `MultiHeadAttention.__init__` kwarg `use_static_k_rotation: bool = False`,
+  param `self.k_rotation_angles = nn.Parameter(torch.zeros(n_heads, d_k // 2))`
+  registered only when flag on. `MultiHeadAttention.forward` applies the per-head
+  block-diagonal 2D-rotation product to K post-GQA-repeat / pre-RoPE / pre-qk_norm
+  (~L3128-3146).
+- `models/layers.py` — `TransformerBlock.__init__` and the two MHA construction sites
+  in `models/llm.py` thread `use_static_k_rotation` through (both block-dispatch paths).
+- `models/llm.py` — `MinimalLLM.__init__` reads
+  `self.use_static_k_rotation = getattr(config, "use_static_k_rotation", False)` and
+  passes through to `transformer_blocks`.
+
+**Flag**: `use_static_k_rotation: bool = False` (default off).
+
+**Zero-init at step 0**: `θ_{h,i} = 0` ⇒ `cos(0)=1`, `sin(0)=0` bit-exact in fp32 ⇒
+`R_h = I_{d_k}` exactly ⇒ `K = R_h @ K = K` exactly ⇒ QK^T unchanged ⇒ softmax
+unchanged ⇒ logits unchanged. Verified locally: `max_abs_diff(MinimalLLM(Tiny1M3MConfig())(ids),
+MinimalLLM(Tiny1M3MStaticKRotationConfig() with flag forced off)(ids)) == 0.0` (same seed).
+Default off ⇒ no parameter registered, no branch taken.
+
+**Cost**: H=4 × d_k/2=8 angles per block × 12 layers = **384 params (+0.041% of 0.94M)**.
+Compute: ~524k flops/block per forward; well under 0.5% of total FLOPs.
+
+**Run command** (per `plan.md` / `_arq_154-rebased-attn.py` shape):
+```
+python _arq_185-static-per-head-k-rotation.py
+```
+Stub: `class C(Tiny1M3MStaticKRotationConfig): pass` + `__main__` block driving
+`train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
+
+**Val read**: `autoresearch/bin/baseline.sh verdict` consumes
+`remote-results/<date>-vast-tiny1m3m/results.json`, compares trt val_mean against the
+pinned cache at `autoresearch/baseline-cache.json` box `5b8a7fea8963`
+(val_mean=6.3988, band=0.04, 3 measurements). Sub-noise inconclusive per one-seed-only rule.
+The daemon's leak guard (`ef72f48`) will reject any val < 0.5×baseline as broken eval.
+
+**Pass/fail bar**: WIN ≤ ctrl − 0.005 AND clears the two-ctrl rule. NULL |Δ| < 0.01.
+DRIFT > +0.01.

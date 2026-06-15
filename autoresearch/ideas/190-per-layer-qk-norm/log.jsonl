@@ -1,2 +1,3 @@
 {"ts":"2026-06-15T08:16:37Z","agent":"taste","idea":"190-per-layer-qk-norm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:17:06Z","agent":"taste","idea":"190-per-layer-qk-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp attribution bet on 016's WIN axis (block-level vs head-level γ); both branches informative, mechanism-shaped with bit-identical step-0, transfer-risk low, not portfolio-crowded"}
+{"ts":"2026-06-15T08:18:25Z","agent":"reviewer","idea":"190-per-layer-qk-norm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}

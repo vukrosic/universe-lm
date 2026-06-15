@@ -1,8 +1,8 @@
 ---
 id: 194-lowrank-ffn
-status: needs-taste
+status: needs-repitch
 round: 1
-updated: 2026-06-15T09:00:00Z
+updated: 2026-06-15T08:18:15Z
 transfer-risk: med
 plain: Shrink the FFN's intermediate dimension by a learnable low-rank factorization (init at identity so the FFN matches the baseline at step 0), like a soft bottleneck that the optimizer can tighten over training.
 ---
