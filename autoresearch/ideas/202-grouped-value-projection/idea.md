@@ -1,8 +1,8 @@
 ---
 id: 202-grouped-value-projection
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:23:40Z
+updated: 2026-06-15T08:29:36Z
 transfer-risk: low
 plain: Group attention heads into clusters that share a single Value projection (init each cluster's projection to match the per-head baseline so step-0 is byte-identical), like partial value-sharing across heads — between full MHA and full MQA.
 ---

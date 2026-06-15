@@ -1,5 +1,46 @@
 # Taste log — 197 Tied W_O Across Blocks
 
+## r2 — 2026-06-15 — verdict: accept
+- **All five r1 findings closed.** (a) Both closed priors engaged: 171 is
+  a *weight-level regularizer* (training-time multiplicative noise on W_O
+  weights, stochastic α); 197 is *parameter-level sharing* (inference-time
+  structural collapse of W_O_b into W_O_shared, learnable α_b). Different
+  mechanisms, different failure modes — 171's null says "W_O has no slack
+  to absorb dropconnect noise at training time"; 197's question is "W_O
+  has no slack to absorb block-collapse at inference time." (b) The full
+  tying null tests QKVO + FFN collapse; 197 isolates W_O-collapse alone —
+  narrower, weaker regularizer. (c) Committed to soft blend only:
+  `W_O_eff_b = (1 − α_b) · W_O_b + α_b · W_O_shared`, α_b init 0, step-0
+  byte-identical to baseline. Hard version explicitly relegated to
+  definition-gate ablation, not this pitch. (d) Param fairness: +1 shared
+  W_O (4096) + 12 α scalars (12) = +4,108 params (+0.4% overhead), no
+  per-block removed — treatment is param-*superset* of control, not subset.
+  (e) Bet sharpened: "if 197 wins, the binding constraint of full tying
+  was FFN-tie or QK-tie, not W_O-tie. If 197 nulls, W_O-tie is not the
+  binding constraint and the failure mode lives in QK or FFN. Either
+  result bounds the tying-axes failure-mode decomposition."
+- **Leverage / niche fit.** Mechanism-shaped (not HP), identity-init at step
+  0 (α_b=0 ⇒ baseline), transferable to 135M (ALBERT/U-T partial tying
+  validated at 110M-235M). Param overhead sub-noise; any signal is signal
+  not capacity. The discriminator axis (tying-attribution) is novel — full
+  tying closed null on all-tied, but the *attribution* of that null to one
+  of {QK, FFN, W_O} has not been done. 197 picks the W_O-side, which is
+  the one least likely to bind (W_O is the residual-stream *write*, not
+  the *read*; tying writes is structurally weaker than tying reads).
+- **Portfolio check.** 5 W_O-adjacent ideas in flight is the crowding
+  alarm — but 171 is regularizer, closed-tying is full, 196-ffn-glu-mish
+  is FFN-side, 207-wo-lowrank-bottleneck is *lowrank* (parameter-shape,
+  not parameter-sharing). 197 is parameter-sharing on W_O — a distinct
+  mechanism from any of the others. Not a 3rd W_O null in a row; a
+  different mechanistic question.
+- **Crisp bet (one sentence).** "Soft W_O tying at 0.94M is the
+  narrowest tying lever, the one most likely to win; a 197 WIN points
+  the next tying experiment at FFN-tie, a 197 NULL bounds the W_O-tie
+  failure mode from above. Both results inform the tying-attribution
+  axis that full tying's null couldn't decompose."
+- **Verdict: accept** — round-2 pitch earned the slot. Ship to definition
+  gate (round reset to 1).
+
 ## r1 — 2026-06-15 — verdict: revise
 - **Engage the closed priors or lose me.** Two W_O-adjacent nulls are on the
   record. (a) `closed.md:23` — "layer tying" closed (full Universal-Transformer

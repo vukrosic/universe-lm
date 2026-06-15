@@ -1,0 +1,13 @@
+# Taste review — 195-qk-clamp-min-max
+
+## r1 — 2026-06-15 — verdict: revise
+- **The "sharper regularizer" claim doesn't bind at the recommended c=8.** With Kaiming init the QK^T entries are O(1) Gaussian, so the typical logit is in the 3-sigma range ≈ [-3, +3]. A clamp at c=8 is *inactive* across that range, so for the whole A/B the lever is mathematically a no-op (the only way it can fire is if some QK^T magnitude grows past 8, which is rare at 0.94M/12L/4H/3M-tokens). At c=8, the hard clip is *bit-identical to the closed tanh softcap at c=8* (smooth tanh and hard min/max agree when both are outside the clamp range), so the A/B is "the same lever the softcap already tested."
+- **Re-pitch with one of two crisp bets:**
+  1. **"Tight hard-clamp" bet (c ≈ 2.0).** Pick a c that's *active* at step 0 (so the lever is not bit-identical to baseline and not bit-identical to the closed softcap). Expected delta: a regularizer that forces the model to keep QK^T magnitudes in a narrow band. This is a *different* bet than the softcap and tests the "sharper gradient = stronger regularizer" claim honestly. Predicted null OR mild win; the null is informative (closes *tight-clip sub-axis*).
+  2. **"Wide hard-clamp closes the family" bet (c = 8.0 as written, framed as a deliberate null).** Acknowledge upfront that the lever is expected to be inactive for the whole run, and frame the A/B as the final close of the *logit-bounding family* (smooth form already closed, hard form to follow). Predicted null. Cheap, ~5 min, and tidies the closed-axes line — but only worth a slot if the miner commits to writing the family-close language in the close-log.
+- **The "sharper regularizer" framing is currently a vibe.** The discontinuous-derivative argument is theoretically true but at c=8 the gradient is non-zero everywhere we ever go — so the "sharper" property never actually fires. Re-pitch needs to either tighten c (so the sharp boundary is reachable) or honestly call it a family-close null.
+- **Niche form fit is fine:** 0 new params, identity-able (inactive at step 0 in the wide form, bit-identical at step 0 in the wide form), mechanism not HP. The niche check passes once the bet is sharpened.
+- **Portfolio fit:** the softcap was closed earlier the same week. A 2nd logit-bounding variant in the same week is fine *if* it's a sharp distinct bet (option 1) or an explicit family-close (option 2); the current "different implementation, same lever at c=8" framing is the failure mode that the prompt's portfolio rule is meant to flag.
+- **Transfer-risk: low** tag is acceptable; the lever is scale-portable. No change there.
+
+**Action:** pick (1) or (2) above; rewrite the bet in one sentence; resubmit.
