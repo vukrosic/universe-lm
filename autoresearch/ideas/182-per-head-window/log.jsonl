@@ -18,3 +18,4 @@
 {"ts":"2026-06-15T06:33:33Z","agent":"reviewer","idea":"182-per-head-window","from":"rejected","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T06:34:05Z","agent":"reviewer","idea":"182-per-head-window","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T07:04:07Z","agent":"code-impl","idea":"182-per-head-window","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:04:13Z","agent":"code-impl","idea":"182-per-head-window","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
