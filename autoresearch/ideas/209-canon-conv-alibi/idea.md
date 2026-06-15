@@ -1,5 +1,6 @@
 ---
 id: 209-canon-conv-alibi
+author: claude-opus-4-8
 status: running
 round: 1
 updated: 2026-06-15T11:19:58Z
