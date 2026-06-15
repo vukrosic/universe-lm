@@ -1,8 +1,8 @@
 ---
 id: 188-cross-block-kv-share
-status: needs-plan
+status: needs-run
 round: 1
-updated: 2026-06-15T12:17:56Z
+updated: 2026-06-15T12:21:28Z
 transfer-risk: med
 plain: Let each attention block reuse a small fraction of the previous block's K and V projections (a learnable per-block scalar, starting at 0 so step-0 is byte-identical), like a slow re-read of upstream key/value memories.
 ---
