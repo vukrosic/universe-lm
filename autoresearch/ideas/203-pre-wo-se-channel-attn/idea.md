@@ -1,8 +1,8 @@
 ---
 id: 203-pre-wo-se-channel-attn
-status: needs-revision
+status: revising
 round: 2
-updated: 2026-06-15T08:48:38Z
+updated: 2026-06-15T16:46:44Z
 transfer-risk: med
 plain: Insert a tiny Squeeze-Excitation channel-attention block right before the W_O projection (init so it returns all-ones, byte-identical at step 0), letting each token softly up- or down-weight its own channels.
 ---

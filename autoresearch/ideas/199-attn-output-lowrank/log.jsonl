@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T16:25:46Z","agent":"taste","idea":"199-attn-output-lowrank","from":"tasting","to":"needs-review","round":1,"note":"accept: clean W_Q pivot, matches 207/194-r2 soft-residual mechanism, family-completion bet with pre-registered null-result framing (rank-axis closed at 0.94M if all three sub-blocks null)"}
 {"ts":"2026-06-15T16:45:29Z","agent":"reviewer","idea":"199-attn-output-lowrank","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:45:57Z","agent":"reviewer","idea":"199-attn-output-lowrank","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T16:47:21Z","agent":"code-impl","idea":"199-attn-output-lowrank","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
