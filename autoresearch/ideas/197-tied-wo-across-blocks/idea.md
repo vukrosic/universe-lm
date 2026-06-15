@@ -1,13 +1,13 @@
 ---
 id: 197-tied-wo-across-blocks
-status: revising
-round: 1
-updated: 2026-06-15T12:01:06Z
+status: needs-review
+round: 2
+updated: 2026-06-15T12:02:12Z
 transfer-risk: med
 plain: Force every attention block to use the same output projection matrix W_O (init at the baseline's W_O so step-0 is byte-identical), like tying the final step of attention across depth — a cheap regularizer on what each block is allowed to write back to the residual stream.
 ---
 
-# 197 — Tied W_O Across Blocks (Soft Blend, α_b Init 0)
+# 197 — Tied W_O Across Blocks (Soft Blend, Sigmoid-Bounded, α_b_raw Init −10)
 
 ## Source
 - Dehghani et al., "Universal Transformers" (ICLR 2019, arXiv:1807.03819) — share *all* parameters across blocks; 197 shares only W_O and only via a learnable soft blend.

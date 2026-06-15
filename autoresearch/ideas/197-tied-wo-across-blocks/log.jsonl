@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T08:49:48Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:57:48Z","agent":"orchestrator","idea":"197-tied-wo-across-blocks","from":"revising","to":"needs-revision","round":1,"note":"reclaim stale revising lock (7m)"}
 {"ts":"2026-06-15T12:01:06Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:02:12Z","agent":"reviser","idea":"197-tied-wo-across-blocks","from":"revising","to":"needs-review","round":2,"note":"2 findings applied: pass/fail bar with cache refs (champion 6.2403 from 175-alibi, baseline 6.40±0.04, noise floor ±0.01) and WIN/NULL/DRIFT bands; α_b committed to sigmoid-bounded (α_b_raw init -10, matches 188/206 in-repo precedent) with convex-blend justification and rejection note for unconstrained-real form"}

@@ -1,8 +1,8 @@
 ---
 id: 200-rope-phase-offset-per-layer
-status: tasting
-round: 2
-updated: 2026-06-15T12:01:04Z
+status: needs-review
+round: 1
+updated: 2026-06-15T12:02:22Z
 transfer-risk: med
 plain: Give each layer × each RoPE pair its own learnable static K-rotation angle (init 0 so step-0 is byte-identical, K-only application so QK^T can bind) — a depth-axis twin of 185-static-per-head-k-rotation, now with per-pair × per-layer granularity.
 ---

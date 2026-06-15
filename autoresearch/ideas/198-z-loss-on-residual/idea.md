@@ -1,8 +1,8 @@
 ---
 id: 198-z-loss-on-residual
-status: needs-taste
+status: tasting
 round: 2
-updated: 2026-06-15T08:50:18Z
+updated: 2026-06-15T12:02:10Z
 transfer-risk: low
 plain: Add a small penalty that prevents the residual stream's magnitude from exploding (z-loss on the L2 norm of the residual) — a stability regularizer that targets a different layer than logit z-loss.
 ---

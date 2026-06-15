@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T08:49:01Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:56:41Z","agent":"orchestrator","idea":"189-cosformer-linear-attn","from":"revising","to":"needs-revision","round":1,"note":"reclaim stale revising lock (7m)"}
 {"ts":"2026-06-15T12:00:44Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:01:56Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"revising","to":"needs-review","round":2,"note":"applied 8 findings: sister 189-cos-attn coord gate; 004-retnet as direct prior (vs 148); real-model step-0 cumulative-mean check (vs toy); mandatory denominator no-skip; cumsum-causal mask (option c); MHA-flag convention (no new module); nn.Parameter on MinimalLLM (vs per-MHA); Choromanski 2021 + Yang 2024 kernel-shape analog citation"}
