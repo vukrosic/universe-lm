@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"172-per-head-rope-base","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}
 {"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"172-per-head-rope-base","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"172-per-head-rope-base","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-15T05:24:32Z","agent":"runner","idea":"172-per-head-rope-base","from":"running","to":"done","round":1,"note":"NULL: trt=6.4084 vs baseline 6.3975±0.040 (Δ=+0.0109 wrong-sign tiny, inside band)"}
