@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T07:19:24Z","agent":"taste","idea":"187-lm-head-bias","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp bet on output/input decoupling via per-vocab additive bias at tied-embedding scale; fresh axis, transfer-risk:low (T5-validated), two-sided informative (win unlocks per-vocab lever; null closes axis at 0.94M); 183/184 output-head levers in flight are mechanistically orthogonal (1-D per-vocab vs scalar RMSNorm/scalar temperature)"}
 {"ts":"2026-06-15T07:22:37Z","agent":"reviewer","idea":"187-lm-head-bias","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:23:08Z","agent":"reviewer","idea":"187-lm-head-bias","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-15T07:25:01Z","agent":"reviser","idea":"187-lm-head-bias","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
