@@ -1,8 +1,8 @@
 ---
 id: 199-spectral-attn-output
-status: repitching
-round: 1
-updated: 2026-06-15T08:33:24Z
+status: needs-taste
+round: 2
+updated: 2026-06-15T08:47:42Z
 transfer-risk: med
 plain: Per-block learnable scalar γ_l multiplies σ_max(W_O_init) to form the W_O spectral cap; γ_l init 0 ⇒ byte-identical baseline; optimizer can loosen (γ_l>0) or tighten (γ_l<0) the Lipschitz bound on the projection itself, opening a regularization axis on the projection rather than a magnitude axis on its output.
 ---

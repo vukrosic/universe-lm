@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T08:22:21Z","agent":"miner","idea":"199-spectral-attn-output","from":"needs-repitch","to":"repitching","round":1,"note":"claimed r2"}
 {"ts":"2026-06-15T08:31:36Z","agent":"orchestrator","idea":"199-spectral-attn-output","from":"repitching","to":"needs-repitch","round":1,"note":"reclaim stale repitching lock (9m)"}
 {"ts":"2026-06-15T08:33:24Z","agent":"miner","idea":"199-spectral-attn-output","from":"needs-repitch","to":"repitching","round":1,"note":"claimed r2"}
+{"ts":"2026-06-15T08:47:42Z","agent":"miner","idea":"199-spectral-attn-output","from":"repitching","to":"needs-taste","round":2,"note":"applied 4 findings: dropped per-token-output branch, learnable per-block γ_l via exp(γ_l), sharp Δval window [-0.005,-0.012] with mechanism, explicit 160 distinction + 4-deep null family framing"}
