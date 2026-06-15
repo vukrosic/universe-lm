@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T12:17:39Z","agent":"reviewer","idea":"192-pre-rope-qk-rotation","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:17:59Z","agent":"reviewer","idea":"192-pre-rope-qk-rotation","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T12:18:58Z","agent":"code-impl","idea":"192-pre-rope-qk-rotation","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:28:10Z","agent":"orchestrator","idea":"192-pre-rope-qk-rotation","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (9m)"}

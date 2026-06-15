@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T12:04:58Z","agent":"reviewer","idea":"200-rope-phase-offset-per-layer","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:05:45Z","agent":"reviewer","idea":"200-rope-phase-offset-per-layer","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T12:11:39Z","agent":"code-impl","idea":"200-rope-phase-offset-per-layer","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:28:13Z","agent":"orchestrator","idea":"200-rope-phase-offset-per-layer","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (16m)"}
