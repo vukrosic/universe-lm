@@ -1,5 +1,105 @@
 # Review log — 181 cross-head-rmsnorm
 
+## r2 — 2026-06-15 — verdict: approve
+
+**Source check — still passes.** NormFormer (Shleifer et al. 2021,
+arXiv:2110.09423) and RMSNorm (Zhang & Sennrich 2019, arXiv:1910.07467)
+are real; cross-head RMSNorm axis (RMS across H heads within each d_k
+slice, as opposed to standard post-AV RMSNorm which normalizes over the
+concatenated d_model axis) remains novel at this tier.
+
+**Mechanism check — passes (all four r1 findings applied).**
+- Gate-α canonicalized: `α_h = relu(α_raw_h)` init `−1e-3` ⇒
+  `relu(−1e-3) = 0` exactly (not ≈0 — relu clamps negative to zero,
+  so alpha is bit-exact zero at step 0). Step-0 byte-identity holds:
+  `(1−0)·out + 0·(out/rms·γ) = out`. ✓
+- Per-(h,k) gain stays tanh-gated: `γ_h[k] = 1 + tanh(γ_raw_h[k])`
+  init `γ_raw=0` ⇒ γ=1. ✓
+- Param count re-derived: `H×1 (α) + H×d_k (γ) = 4 + 64 = 68` per
+  block × 12 blocks = **816 params (+0.087% of 0.94M)**. ✓
+- RMS reduction is over the H axis (`dim=1, keepdim=True`), so each
+  `(b, t, k)` slice is normalized across heads — cross-head coupling,
+  not per-head. ✓
+
+**Plan section — passes.** Locks field name
+(`use_cross_head_rmsnorm: bool = False`), config subclass
+(`Tiny1M3MCrossHeadRMSNormConfig(Tiny1M3MConfig)`, `@dataclass`-decorated
+to avoid the bare-class-inheritance issue 162/165/155/161/176 hit),
+MHA kwarg plumbing, parameter registration, apply site (after
+`out = attn_w @ V` in MHA.forward, before the existing use_head_gain
+branch), mutual-exclusion asserts against `use_head_gain`,
+`use_attn_output_gate`, and `use_gated_attn`, TransformerBlock
+pass-through, llm.py read+thread, runner stub mirror. ✓
+
+**Pass / fail bar — passes.** Uses the **current** cached baseline:
+`val_mean = 6.3988 ± 0.0088`, `noise_band = 0.04` (per
+`autoresearch/baseline-cache.json`, box `5b8a7fea8963`, measured
+2026-06-15T05:58:50Z). r1 reviewer had cited an older `≈6.4394`; the
+reviser correctly updated to the current cache. WIN: `Δval ≤ −0.005`
+AND `treatment_val < 6.3588` (val_mean − noise_band). NULL: `|Δ| <
+0.005`. DRIFT: `Δ ≥ +0.005`. Sub-noise is **inconclusive**, no
+multi-seed re-run (per one-seed-only rule). ✓
+
+**Closed-axis dedup — still passes.**
+- 160-rms-gain-per-head (NULL): per-head *scalar* gain, independent
+  per head, post-AV. 181 normalizes *across* heads (couples them)
+  before applying a per-(h,k) gain. Different axis — 160 leaves
+  relative head magnitudes intact, 181 removes them. Not a
+  duplicate.
+- 176-v-pre-av-norm (NULL): V-side pre-AV per-head RMSNorm.
+  Different position (V pre-AV vs `out` post-AV), different
+  normalization target (V same `[B,H,T,d_k]` shape but 176
+  normalizes each head independently along d_k; 181 normalizes
+  *across* heads along H).
+- 162-q-only-norm (NULL), 165-k-only-norm (NULL): pre-softmax Q/K
+  RMSNorm. Different tensor, different position.
+- 152-attn-logit-bias (NULL), 155-per-head-temp (NULL),
+  166-t5-rpe (NULL): per-head attention-shape, smooth.
+- 154-rebased-attn (WIN): rebases K/V pre-softmax. Different op.
+- 173-entmax-15: softmax replacement.
+- 107-exclusive-self-attn, 109-kda-channel-gate, 024-gated-attn,
+  045-attn-output-gate: output-side gates, none couple the H axis.
+- 177-talking-heads (NULL DRIFT): H×H linear mixing post-AV;
+  different operation (linear mixing vs normalization).
+- Norm zoo (pnorm, manhattan, center, squash, clip, channelscale):
+  closed.
+- Not in `_closed/`. Not in `closed.md` post-160 (the closest
+  prior lever). ✓
+
+**Transfer-risk — still justified as `med`.** Tag and Scale evidence
+section line up: primitive is scale-validated at 7B-70B (LLaMA-3,
+Qwen-2, Gemma-2); NormFormer at 100M-300M; cross-head axis novel at
+100M+. `med` is correct (not `low` because cross-head is novel at
+scale; not `high` because the primitive is well-tested in adjacent
+forms).
+
+**LoC budget — passes.** ~25 LoC normalization + plumbing, ~10 LoC
+config subclass, ~12 LoC llm.py threading (2 sites), ≈50 LoC total.
+Well under 200.
+
+**Non-blocking note for the code-implementer.** Two line-number
+references in `## Plan` are stale against the current working tree
+(everything else in the spec is line-number-independent and the
+mechanism description is unambiguous):
+- `models/layers.py:1668` for the existing `use_head_gain` apply
+  site — the current `if self.use_head_gain:` branch is at
+  `models/layers.py:3890`. Apply 181's RMS-normalization *before*
+  line 3890 regardless of the line number.
+- `models/layers.py:2468` for the `use_cope ∧ use_qk_norm_post_rope`
+  mutual-exclusion assert — the current pattern is at
+  `models/layers.py:2597`. Mirror *that* pattern for 181's three
+  asserts.
+
+Both are cosmetic — semantic targets are correct, only the line
+numbers drifted. No need to bounce back to the reviser; the
+implementer can locate the sites via `grep use_head_gain` /
+`grep "use_cope and use_qk_norm_post_rope"`.
+
+**Verdict**: approve → `needs-plan`. All four r1 findings applied
+cleanly. Round reset to 1 for the code gate.
+
+---
+
 ## r1 — 2026-06-15 — verdict: revise
 
 **Source check — passes.**
