@@ -53,19 +53,30 @@ With V pre-AV RMSNorm:
    mean subtraction (RMS, not LayerNorm).
 3. scores, out same as above.
 
-**Step-0 bit-identical**: `γ_h = 1` for all heads (init) ⇒ `V ← V / √(mean(V²) + ε) ⊙ 1 = V / √(mean(V²) + ε)`. This is NOT bit-identical — V is rescaled. So `γ_h = 1` doesn't give us identity.
+**Step-0 byte-identical (max-abs-diff = 0.0)**: `γ_h = 1` for all heads
+(init) ⇒ `V ← V / √(mean(V²) + ε) ⊙ 1 = V / √(mean(V²) + ε)`. This
+is NOT byte-identical — V is rescaled. So `γ_h = 1` alone doesn't
+give us identity.
 
-**Correct identity init**: scale RMSNorm so that with `γ_h = 1`, output equals input. Define a "1-RMS" RMSNorm that divides by `1.0` when the input is at unit RMS — equivalent to setting `γ_h = √(mean(V²) + ε)` initially. But this is non-trivial.
-
-**Cleaner init**: make the entire RMSNorm *optional* and gate by a learnable scalar `α_h` init 0:
+**Identity init via α-gate**: make the entire RMSNorm *optional* and
+gate by a learnable scalar `α_h` init 0:
 ```
 V_out = (1 − α_h) · V_in + α_h · RMSNorm(V_in) · γ_h
 ```
-With `α_h = 0` for all heads (init), `V_out = V_in` exactly — bit-identical. The lever's knob is α_h: pushing it positive introduces V normalization; α=1 gives full RMSNorm(V)·γ_h. The transition is smooth and the lever can be partial.
+With `α_h = 0` for all heads (init), `V_out = V_in` exactly —
+**byte-identical (max-abs-diff = 0.0)**. The lever's knob is α_h:
+pushing it positive introduces V normalization; α=1 gives full
+`RMSNorm(V)·γ_h`. The transition is smooth and the lever can be
+partial. (Other parameterizations — sigmoid init −10, straight-through
+clamp — also yield bit-identical forward at step 0 but add complexity
+without buying anything at this tier; relu is the simplest.)
 
-**Even cleaner**: parameterize the gate as `α_h = sigmoid(α_raw_h)` so `α_h ∈ (0, 1)`, init `α_raw_h → −∞` for α→0. Use a large negative init (e.g. -10) so `α_h ≈ 5e-5` at step 0. This is bit-identical up to a tolerance of ~5e-5 × |V|, which is below the fp32 noise floor used in step-0 identity assertions. Or, simpler, use the direct linear `α_h = clamp(α_raw_h, 0, 1)` with init 0 and the **straight-through estimator** for backward pass — gives bit-identical forward and clean gradients.
-
-For simplicity, we use `α_h = relu(α_raw_h)` (init 0 ⇒ α=0) with the understanding that the lever can only grow V normalization, not reverse it. This is the cleanest bit-identical-init.
+**Locked parameterization**: `α_h = relu(α_raw_h)` with
+`α_raw_h ∈ ℝ^{H}` init 0, `γ_h ∈ ℝ^{H × d_k}` init 1. The relu
+constrains the gate to grow only (lever can introduce V-norm, never
+reverse it). The forward is `V_out = (1 − relu(α_raw_h)) · V_in +
+relu(α_raw_h) · RMSNorm(V_in) · γ_h`, computed per head along the
+`d_k` axis.
 
 ## Design sketch
 - **Files**:
