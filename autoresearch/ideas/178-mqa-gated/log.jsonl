@@ -14,3 +14,4 @@
 {"ts":"2026-06-15T06:24:17Z","agent":"code-impl","idea":"178-mqa-gated","from":"recoding","to":"needs-run","round":2,"note":"r2: implementation never committed from prior pass (box ImportError). committed 0653bfc (configs/layers/llm). local SMOKE_OK. needs user push to advance box HEAD."}
 {"ts":"2026-06-15T06:29:24Z","agent":"daemon","idea":"178-mqa-gated","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T06:29:42Z","agent":"daemon","idea":"178-mqa-gated","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMQAGatedConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T06:30:37Z","agent":"implement-button","idea":"178-mqa-gated","from":"needs-recode","to":"needs-run","round":2,"note":"code ready; runnable at tiny1m3m seed 42 (r3: arq stub committed at cbb3968; config+model at 0653bfc; local SMOKE_OK)"}
