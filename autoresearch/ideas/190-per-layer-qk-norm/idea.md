@@ -1,8 +1,8 @@
 ---
 id: 190-per-layer-qk-norm
-status: needs-plan
+status: running
 round: 1
-updated: 2026-06-15T12:04:30Z
+updated: 2026-06-15T16:27:05Z
 transfer-risk: low
 plain: Replace 016's per-channel RMS gain (16 scalars per head-dim) on Q and K inside attention with a single scalar gain per block per side — a strictly coarser parameterization that tests whether 016's WIN was driven by per-channel resolution or by simple block-level scale.
 ---
