@@ -9,3 +9,4 @@
 {"ts":"2026-06-15T08:49:03Z","agent":"code-impl","idea":"194-lowrank-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:56:47Z","agent":"orchestrator","idea":"194-lowrank-ffn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
 {"ts":"2026-06-15T16:19:07Z","agent":"code-impl","idea":"194-lowrank-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:26:39Z","agent":"orchestrator","idea":"194-lowrank-ffn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
