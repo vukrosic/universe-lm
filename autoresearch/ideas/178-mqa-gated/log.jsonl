@@ -21,3 +21,7 @@
 {"ts":"2026-06-15T07:07:48Z","agent":"reviewer","idea":"178-mqa-gated","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T07:09:52Z","agent":"code-impl","idea":"178-mqa-gated","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:10:26Z","agent":"code-impl","idea":"178-mqa-gated","from":"planning","to":"needs-run","round":1,"note":"plan+code done; use_mqa_gated flag wired through MHA/TransformerBlock/MinimalLLM with per-KV-head zero-init beta and zero-init W_{K,V}_shared; step-0 max-abs-diff=0.0 vs baseline; CPU build smoke OK; _arq_178-mqa-gated.py + run.json emitted"}
+{"ts":"2026-06-15T07:10:53Z","agent":"daemon","idea":"178-mqa-gated","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T07:10:59Z","agent":"daemon","idea":"178-mqa-gated","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMQAGatedConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T07:10:59Z","agent":"auto-implement","idea":"178-mqa-gated","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 5 failed runs — needs a human"}
+{"ts":"2026-06-15T07:11:04Z","agent":"auto-implement","idea":"178-mqa-gated","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
