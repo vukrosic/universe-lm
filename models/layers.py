@@ -1690,6 +1690,29 @@ class MultiHeadAttention(nn.Module):
         # perturb the per-head fill. See
         # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
         use_anti_causal_subheads: bool = False,
+        # 202 — V-Only Soft-Blend Probe (Isolate V-Sharing From
+        # K-Sharing). Per head h, soft-blend per-head V with a
+        # group-shared V via per-head `sigmoid(α_h) ∈ R^H`:
+        #   `V_h_eff = (1 − σ(α_h)) · V_h_local + σ(α_h) · V_group_g(x)`
+        # where `g = h // v_group_size` is the head's group and
+        # `V_group_g(x) ∈ R^{d_k}` is the output of a fresh
+        # group-shared projection `W_V_group_g ∈ R^{d_k × d_model}`.
+        # K is **never touched** — every head keeps its own W_K_h,
+        # so the K-axis is the held-out implicit control. Group V
+        # projections (G = n_heads // v_group_size, default G=2 at
+        # tiny1m3m with v_group_size=2 and H=4) are allocated and
+        # init to the elementwise mean of the in-group per-head
+        # W_V_h weights; α_h init `-25.0` ⇒ `σ(α_h) ≈ 1.4e-11`
+        # (well below fp32 precision) ⇒ `V_h_eff ≈ V_h_local`
+        # exactly at step 0 ⇒ forward is bit-identical to the
+        # no-flag baseline. K remains untouched, so the K-axis is
+        # the held-out implicit control (the family-dead or
+        # family-keep attribution is read off the σ(α) trajectory,
+        # not val loss). Default off ⇒ no Parameter registered, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+        use_grouped_v: bool = False,
+        v_group_size: int = 2,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -1770,7 +1793,61 @@ class MultiHeadAttention(nn.Module):
                 torch.nn.init.normal_(self.mla_uk,  mean=0.0, std=0.02)
                 torch.nn.init.normal_(self.mla_uv,  mean=0.0, std=0.02)
         # ================================================
-        
+
+        # 202 — V-Only Soft-Blend Probe. Allocate G = n_heads //
+        # v_group_size group-shared V projections (each shape
+        # `[d_k, d_model]`) and a per-head `α_h ∈ R^H` gate
+        # parameter. Init `W_V_group_g` to the in-group
+        # elementwise mean of the per-head W_V_h weights — under
+        # GQA, all heads in a group share a single KV-head's V
+        # slice, so the "mean" collapses to that slice. Init
+        # `α_h = -25.0` ⇒ `σ(α) ≈ 1.4e-11` ⇒ V_h_eff ≈ V_h_local
+        # in fp32 at step 0 ⇒ baseline path is bit-identical. K
+        # is untouched, so the K-axis is the held-out control.
+        # Default off ⇒ no Parameter, no branch, baseline
+        # bit-identical. See
+        # `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+        self.use_grouped_v = use_grouped_v
+        self.v_group_size = v_group_size
+        if self.use_grouped_v:
+            G = self.n_heads // self.v_group_size
+            assert G * self.v_group_size == self.n_heads, (
+                f"use_grouped_v=True requires n_heads ({self.n_heads}) "
+                f"to be divisible by v_group_size ({self.v_group_size}); "
+                f"got G = n_heads // v_group_size = {G} "
+                f"(must be integer ≥ 1)."
+            )
+            # Group V projections stored as a ParameterList of G
+            # tensors of shape [d_k, d_model]. Init each to the
+            # in-group mean of per-head W_V_h weights (under
+            # GQA, all heads in a group share one KV head's W_V
+            # slice — mean = that slice).
+            self.W_V_group = nn.ParameterList()
+            W_V_slice = self.qkvo_proj[
+                self.qkv_size - self.kv_size : self.qkv_size
+            ]  # [kv_size, d_model] → reshape to [n_kv_heads, d_k, d_model]
+            W_V_per_kv = W_V_slice.view(self.n_kv_heads, self.d_k, self.d_model)
+            for g in range(G):
+                head_indices = list(
+                    range(g * self.v_group_size, (g + 1) * self.v_group_size)
+                )
+                kv_indices = [
+                    h // self.num_key_value_groups for h in head_indices
+                ]
+                # Mean across heads in the group — under GQA this
+                # collapses to the shared KV-head slice.
+                W_V_group_g = W_V_per_kv[kv_indices].mean(dim=0).clone()
+                self.W_V_group.append(nn.Parameter(W_V_group_g))
+            # Per-head α gate, init -25.0 ⇒ σ(α) ≈ 1.4e-11
+            # (below fp32 precision ⇒ V_h_eff = V_h_local
+            # numerically at step 0).
+            self.v_group_alpha = nn.Parameter(
+                torch.full((self.n_heads,), -25.0)
+            )
+        else:
+            self.W_V_group = None
+            self.v_group_alpha = None
+
         # #91 Robust QK-norm: q_norm/k_norm can use any invented norm (e.g.
         # pnorm1.5) so the attention-logit dot product is outlier-robust.
         # #16 QK-Norm (Dehghani et al. 2023, ViT-22B): the Q/K norms
@@ -2286,7 +2363,7 @@ class MultiHeadAttention(nn.Module):
         self.wv_rank = int(wv_rank)
         if self.use_lowrank_wv:
             self.wv_a = nn.Parameter(
-                torch.empty(self.d_model, self.wv_rank)
+                torch.empty(self.kv_size, self.wv_rank)
             )
             with torch.no_grad():
                 torch.nn.init.normal_(self.wv_a, mean=0.0, std=0.02)
@@ -5691,17 +5768,20 @@ class MultiHeadAttention(nn.Module):
         # learnable Lipschitz cap on the O-slice weight. Track
         # `σ_max(W_O)` via power iteration on a per-block Buffer
         # vector `u ∈ R^{d_model}`; on the FIRST forward, seed
-        # `u` from a fresh random unit vector and snapshot
-        # `σ_max_init = ||w_o · u||₂ / ||u||₂` (Rayleigh quotient —
-        # equals `||w_o||₂` to within PI convergence error).
-        # Subsequent forwards run `wo_spectral_cap_pi_iters` PI
-        # steps and read the current `σ_max` from the same
-        # Rayleigh quotient on the *current* `w_o`. The cap is
-        # applied BEFORE the 197 blend (and therefore BEFORE the
-        # 171-DropConnect mask and 207-LowRank addition) so the
-        # cap operates on the per-block W_O weight itself, and
-        # the blend / mask / lowrank still operate on a valid
-        # `[d_model, d_model]` O-slice tensor.
+        # `u` from a DETERMINISTIC unit vector (`u[0]=1`, rest 0,
+        # then renormalized — NOT `torch.randn`, which would
+        # consume model RNG inside forward and break dropout
+        # reproducibility) and snapshot `σ_max_init = ||w_o · u||₂
+        # / ||u||₂` (Rayleigh quotient — equals `||w_o||₂` to
+        # within PI convergence error). Subsequent forwards run
+        # `wo_spectral_cap_pi_iters` PI steps and read the
+        # current `σ_max` from the same Rayleigh quotient on the
+        # *current* `w_o`. The cap is applied BEFORE the 197
+        # blend (and therefore BEFORE the 171-DropConnect mask
+        # and 207-LowRank addition) so the cap operates on the
+        # per-block W_O weight itself, and the blend / mask /
+        # lowrank still operate on a valid `[d_model, d_model]`
+        # O-slice tensor.
         #
         # At step 0: `γ_l = 0` ⇒ `exp(γ_l) = 1`; `σ_max = σ_max_init`
         # (snapshot on the same forward) ⇒ the cap factor
@@ -5726,26 +5806,34 @@ class MultiHeadAttention(nn.Module):
         # a leaf Parameter slice — gradient flows through
         # `w_o * cap_factor` to `w_o`).
         if self.use_wo_spectral_cap:
-            if not self._wo_pi_initialized:
-                with torch.no_grad():
-                    new_u = torch.randn(
+            with torch.no_grad():
+                # Seed `u` once (deterministic — `u[0]=1`, rest 0)
+                # on the first forward; the FIRST forward's
+                # σ_max estimate IS the σ_max_init we snapshot,
+                # so they are produced from the SAME PI run and
+                # are numerically equal ⇒ cap_factor = min(1, 1)
+                # = 1 exactly ⇒ `w_o_eff == w_o` byte-identical
+                # to the no-flag baseline at step 0. NOT
+                # `torch.randn` — that would consume model RNG
+                # inside forward and break dropout reproducibility.
+                if not self._wo_pi_initialized:
+                    seed_u = torch.zeros(
                         self.d_model, device=w_o.device, dtype=w_o.dtype
                     )
-                    new_u = new_u / (new_u.norm() + 1e-12)
-                    self._wo_pi_u.copy_(new_u)
-                    wu = w_o @ new_u
-                    self._wo_pi_sigma_max_init.copy_(
-                        wu.norm() / (new_u.norm() + 1e-12)
-                    )
-                    self._wo_pi_initialized = True
-            with torch.no_grad():
+                    seed_u[0] = 1.0
+                    self._wo_pi_u.copy_(seed_u)
                 u = self._wo_pi_u
                 for _ in range(self.wo_spectral_cap_pi_iters):
                     wu = w_o @ u
                     u = wu / (wu.norm() + 1e-12)
                 self._wo_pi_u.copy_(u)
                 wu_final = w_o @ u
-                sigma_max_now = (wu_final.norm() / (u.norm() + 1e-12)).detach()
+                sigma_max_now = (
+                    wu_final.norm() / (u.norm() + 1e-12)
+                ).detach()
+                if not self._wo_pi_initialized:
+                    self._wo_pi_sigma_max_init.copy_(sigma_max_now)
+                    self._wo_pi_initialized = True
             sigma_max_init = self._wo_pi_sigma_max_init
             cap_factor = torch.minimum(
                 torch.ones_like(sigma_max_init),
@@ -6680,6 +6768,15 @@ class TransformerBlock(nn.Module):
             use_lowrank_wo=use_lowrank_wo,
             wo_rank=wo_rank,
             wo_lowrank_alpha_init=wo_lowrank_alpha_init,
+            # 194 — W_V Low-Rank Residual Correction pass-through
+            # to the inner MHA. See `MultiHeadAttention.use_lowrank_wv`
+            # for the mechanism (`W_V_eff = W_V + σ(α)·(W_V_A @ W_V_B)`,
+            # W_V_B zero-init ⇒ step-0 bit-identical). Default off →
+            # baseline path bit-identical. See
+            # `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+            use_lowrank_wv=use_lowrank_wv,
+            wv_rank=wv_rank,
+            wv_lowrank_alpha_init=wv_lowrank_alpha_init,
             # 151 — RoV pass-through to the inner MHA. Default off
             # → baseline path bit-identical. See
             # `autoresearch/ideas/151-rov-gated/idea.md`.

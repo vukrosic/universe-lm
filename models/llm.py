@@ -717,13 +717,16 @@ class MinimalLLM(nn.Module):
         # Transformer-style learnable parameter sharing restricted
         # to the attention output projection, Dehghani et al. ICLR
         # 2019 arXiv:1807.03819 + Lan et al. ALBERT arXiv:1909.11942).
-        # When on, allocate a single shared `W_O_shared` Parameter
-        # on the model (shape `[d_model, d_model]`, std=0.02 normal-
-        # init to match the baseline `qkvo_proj` O-slice init) and
-        # plumb the SAME reference to every block's MHA. The MHA
-        # registers a per-block 0-dim scalar `tied_wo_alpha_raw`
-        # (init `tied_wo_alpha_init`, default −10 ⇒ `σ(−10) ≈
-        # 4.54e-5`); the forward computes
+        # `use_gau` is set on `self` further down (after this comment
+        # block), so the YOCO check fires here but the GAU check is
+        # deferred to just after `self.use_gau` is set. When on,
+        # allocate a single shared `W_O_shared` Parameter on the model
+        # (shape `[d_model, d_model]`, std=0.02 normal-init to match
+        # the baseline `qkvo_proj` O-slice init) and plumb the SAME
+        # reference to every block's MHA. The MHA registers a
+        # per-block 0-dim scalar `tied_wo_alpha_raw` (init
+        # `tied_wo_alpha_init`, default −10 ⇒ `σ(−10) ≈ 4.54e-5`);
+        # the forward computes
         #   `W_O_eff_b = (1 − σ(α_b_raw)) · W_O_b + σ(α_b_raw) · W_O_shared`
         # at the W_O application site, BEFORE the 171-DropConnect
         # mask branch. At step 0 `σ(−10) ≈ 4.54e-5` and `W_O_shared`
@@ -731,38 +734,26 @@ class MinimalLLM(nn.Module):
         # matrix is on the order of 1e-7 in std ⇒ the forward is
         # bit-identical to baseline up to fp32 noise of one extra
         # multiply-add — same tolerance the 188 / 204 cross-block
-        # siblings accept. Mutually exclusive with `use_yoco` and
-        # `use_gau` (the upper-half YOCO blocks and GAU blocks don't
-        # take a `tied_wo_shared` kwarg — the assertion is right
-        # below). Composes with 171-DropConnect and 207-W_O-LowRank
-        # (the blend is applied first on the O slice; 171 then masks
-        # the blended slice; 207 then adds a lowrank correction on
-        # top). Default off → no `tied_wo_shared` Parameter, no
-        # per-MHA `tied_wo_alpha_raw` Parameter, baseline path
-        # bit-identical. See
+        # siblings accept. Composes with 171-DropConnect and
+        # 207-W_O-LowRank (the blend is applied first on the O slice;
+        # 171 then masks the blended slice; 207 then adds a lowrank
+        # correction on top). Default off → no `tied_wo_shared`
+        # Parameter, no per-MHA `tied_wo_alpha_raw` Parameter,
+        # baseline path bit-identical. See
         # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
         # `plan.md`.
         self.use_tied_wo_across_blocks = getattr(
             config, "use_tied_wo_across_blocks", False
         )
-        if self.use_tied_wo_across_blocks:
-            if self.use_yoco or self.use_gau:
-                raise ValueError(
-                    "use_tied_wo_across_blocks=True is mutually exclusive "
-                    "with use_yoco=True / use_gau=True (YOCO upper-half "
-                    "blocks and GAU blocks do not take a tied_wo_shared "
-                    "kwarg — the W_O sharing assumption is incoherent on "
-                    "those block types)."
-                )
-            self.tied_wo_shared = nn.Parameter(
-                torch.empty(config.d_model, config.d_model)
+        if self.use_tied_wo_across_blocks and self.use_yoco:
+            raise ValueError(
+                "use_tied_wo_across_blocks=True is mutually exclusive "
+                "with use_yoco=True (YOCO upper-half blocks do not take "
+                "a tied_wo_shared kwarg — the W_O sharing assumption is "
+                "incoherent on those block types). The use_gau side of "
+                "the mutual-exclusion check fires just after use_gau is "
+                "read off the config below."
             )
-            with torch.no_grad():
-                torch.nn.init.normal_(
-                    self.tied_wo_shared, mean=0.0, std=0.02
-                )
-        else:
-            self.tied_wo_shared = None
         # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
         # top of 016's WIN). When True, each MHA registers a single
         # scalar `qk_norm_scale = nn.Parameter(torch.ones(()))` and
@@ -815,6 +806,28 @@ class MinimalLLM(nn.Module):
         # `use_gau=True`), so the GAU branch and the standard branch
         # can't co-exist. See `autoresearch/ideas/158-gau/idea.md`.
         self.use_gau = getattr(config, "use_gau", False)
+        # 197 — Tied W_O Across Blocks (cont. from above). The YOCO
+        # side of the mutual-exclusion check already fired; the GAU
+        # side fires here, after `self.use_gau` is set. When on,
+        # allocate a single shared `W_O_shared` Parameter on the
+        # model and plumb the SAME reference to every block's MHA.
+        if self.use_tied_wo_across_blocks and self.use_gau:
+            raise ValueError(
+                "use_tied_wo_across_blocks=True is mutually exclusive "
+                "with use_gau=True (GAU blocks do not take a "
+                "tied_wo_shared kwarg — the W_O sharing assumption is "
+                "incoherent on those block types)."
+            )
+        if self.use_tied_wo_across_blocks:
+            self.tied_wo_shared = nn.Parameter(
+                torch.empty(config.d_model, config.d_model)
+            )
+            with torch.no_grad():
+                torch.nn.init.normal_(
+                    self.tied_wo_shared, mean=0.0, std=0.02
+                )
+        else:
+            self.tied_wo_shared = None
         self.use_attn_sink = getattr(config, "use_attn_sink", False)
         # 017 — Sub-LN / Sandwich block (residual-stream re-bounding).
         self.use_sub_ln = getattr(config, "use_sub_ln", False)
@@ -1049,6 +1062,13 @@ class MinimalLLM(nn.Module):
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
+                        # 197 — DeepNet α fixed residual init
+                        # pass-through to the block. Single global
+                        # scalar `α = 1/√(2·n_layers)`; 0 new params.
+                        # Default off → baseline path bit-identical.
+                        # See
+                        # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+                        use_deepnet_alpha=getattr(config, "use_deepnet_alpha", False),
                         resid_mode=getattr(config, "resid_mode", ""),
                         n_layers=config.n_layers,
                         use_layerscale=getattr(config, "use_layerscale", False),
@@ -1485,6 +1505,13 @@ class MinimalLLM(nn.Module):
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
+                        # 197 — DeepNet α fixed residual init
+                        # pass-through to the block. Single global
+                        # scalar `α = 1/√(2·n_layers)`; 0 new params.
+                        # Default off → baseline path bit-identical.
+                        # See
+                        # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+                        use_deepnet_alpha=getattr(config, "use_deepnet_alpha", False),
                         resid_mode=getattr(config, "resid_mode", ""),
                         n_layers=config.n_layers,
                         use_layerscale=getattr(config, "use_layerscale", False),
