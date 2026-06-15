@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T05:54:06Z","agent":"reviser","idea":"182-per-head-window","from":"revising","to":"needs-review","round":2,"note":"applied 5 findings: (1) W_h=2T·sigmoid(w_h) fixes off-by-one step-0 byte-identity, (2) hard-window committed as sole sub-lever (soft Gaussian decay deferred), (3) added explicit Pass/fail bar with cached 6.3988±0.04 + run-day re-pull + two-ctrl rule, (4) dropped β_h alternative (same off-by-one), (5) 1e9 penalty made explicit (matches 154-rebased-attn)"}
 {"ts":"2026-06-15T05:55:18Z","agent":"reviewer","idea":"182-per-head-window","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T05:55:34Z","agent":"reviewer","idea":"182-per-head-window","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T05:56:56Z","agent":"code-impl","idea":"182-per-head-window","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

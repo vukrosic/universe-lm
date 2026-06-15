@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T05:54:48Z","agent":"reviser","idea":"179-anti-causal-subheads","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
 {"ts":"2026-06-15T05:54:52Z","agent":"reviser","idea":"179-anti-causal-subheads","from":"revising","to":"needs-review","round":3,"note":"applied 3 findings: finite -1e9 mask (no -inf), pass/fail bar at 6.3988±0.04, inference schedule=keep γ trained"}
 {"ts":"2026-06-15T05:56:11Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"needs-review","to":"reviewing","round":3,"note":"claimed"}
+{"ts":"2026-06-15T05:56:55Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
