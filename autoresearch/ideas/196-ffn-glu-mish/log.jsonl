@@ -16,3 +16,4 @@
 {"ts":"2026-06-15T16:34:24Z","agent":"daemon","idea":"196-ffn-glu-mish","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:34:42Z","agent":"daemon","idea":"196-ffn-glu-mish","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMishGLUConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
 {"ts":"2026-06-15T16:35:40Z","agent":"auto-implement","idea":"196-ffn-glu-mish","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-15T16:36:38Z","agent":"auto-implement","idea":"196-ffn-glu-mish","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
