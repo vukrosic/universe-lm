@@ -1,8 +1,8 @@
 ---
 id: 192-pre-rope-qk-rotation
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-15T16:59:36Z
+updated: 2026-06-15T17:02:23Z
 transfer-risk: med
 plain: Apply a tiny learned rotation matrix to Q and K *before* the RoPE positional rotation kicks in (init at identity so step-0 is byte-identical), letting the model re-orient each head's geometry independently of position.
 ---

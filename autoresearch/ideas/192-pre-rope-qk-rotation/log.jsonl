@@ -15,3 +15,6 @@
 {"ts":"2026-06-15T16:57:04Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
 {"ts":"2026-06-15T16:57:45Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:59:36Z","agent":"reset-button","idea":"192-pre-rope-qk-rotation","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T17:01:45Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T17:02:02Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-15T17:02:23Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
