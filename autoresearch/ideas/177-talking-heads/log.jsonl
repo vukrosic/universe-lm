@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"177-talking-heads","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"177-talking-heads","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-15T05:44:34Z","agent":"reset-button","idea":"177-talking-heads","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T05:52:20Z","agent":"daemon","idea":"177-talking-heads","from":"needs-run","to":"done","round":1,"note":"NULL: trt=7.3497 above 6.3988±0.04 (Δ+0.9509, ~24× noise band — massive DRIFT)"}
