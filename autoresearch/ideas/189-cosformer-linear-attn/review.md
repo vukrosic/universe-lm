@@ -1,5 +1,33 @@
 # Reviewer log — 189 cosformer-linear-attn
 
+## r2 — 2026-06-15 — verdict: approve
+
+All 8 r1 findings addressed; the spec is sound, falsifiable, and ready to plan. No reject-level concerns; one minor cosmetic note (sister's actual current status, see below) that the implementer can ignore.
+
+**r1 finding-by-finding check:**
+- **Sister 189-cos-attn coord gate (r1 #1)** — §"Distinct from sister idea 189-cos-attn (r1 fix — coordination gate)" names both levers (bounded-softmax vs kernel-replacement), asserts the implementer is building the linear-time kernel-replacement form, and pins the flag as `use_cosformer=True` on MHA. ✓
+- **Direct prior is 004-retnet, not 148 (r1 #2)** — §"Post-null information value (r1 fix — direct prior is 004-retnet, not 148)" rewrites the section around 004 as the structural prior (linear-time feature-map template), explicitly rebuts the 004-null generalization (elu+1 sharp vs cos+sin diffuse), and lists all four mechanism classes (004 decay retention, 008 off-niche gated, 148 additive context, 189 kernel replacement). 008 correctly noted as taste-reject, not empirical. ✓
+- **Step-0 verification on the real model (r1 #3)** — §"Step-0 bit-identity (r1 fix — tightened to cumulative mean-pool over causal prefix)" specifies `trt = build(use_cosformer=True); ctrl = build(use_cosformer=False); assert (trt_out - cummean_ctrl).abs().max() < 1e-6` against the real MHA class, real W_Q/W_K init, real input. Toy `d=64, T=512` is correctly demoted to "not the project standard." ✓
+- **Denominator mandatory, bound in spec (r1 #4)** — §"Design sketch" line "MANDATORY (r1 fix — bound in spec, no skip-flag)" explicitly says `out = out / (Q'·K'^T).clamp_min(1e-6)` with no skip-flag, and binds it to the same shape as `use_qk_norm` (forces the manual path). ✓
+- **Causal mask specified (r1 #5)** — Picks option (c) prefix-sum cumsum, cites the existing `use_linear_attn` line 4314-4330 as the pattern, explicitly rejects (a) O(T²) and (b) post-matmul masking (which leaks future). ✓
+- **MHA-flag convention, no new module (r1 #6)** — `use_cosformer: bool = False` + `cosformer_gamma_init: float = 0.0` on MHA, new `elif self.use_cosformer:` branch right after `use_linear_attn` at line 4301. No new `cosFormerAttention` class. ✓
+- **Cumulative-mean-pool claim, not global mean (r1 #7)** — The cumulative-mean framing now covers all positions t=0..T-1 (not just "mean-pool(V)" globally), with the real-model test reducing correctly at t=0 and t=T-1. γ=0 ⇒ cumulative mean over prefix s≤t. ✓
+- **Parameter layout (r1 #8)** — `self.gammas = nn.Parameter(torch.zeros(n_layers))` on `MinimalLLM`, follows the `layer_temperature` pattern at line 795, passed in via `gammas[block_idx]`. One nn.Parameter on the model, not 12 on the MHA. ✓
+- **Kernel-shape literature analog (bonus from r1)** — §"Sharp prediction" cites Choromanski 2021 (Performers FAVOR+) for the kernel-approximable framing and Yang 2024 (Gated Linear Attention) for the diffuse-kernel quality argument. Marks the diffuse-kernel bet as the miner's mechanistic bet, not a paper claim. ✓
+
+**Other gate checks (r2 fresh look):**
+- **Source real & current** — Qin et al. 2022 NeurIPS, arXiv:2202.08791, validated at GPT-2-small (~125M) on language modeling. Real, not fabricated. The "parity with softmax, not a win" framing is the correct read of the paper and is honored in the spec (transfer-risk med, win criterion framed as a diffuse-kernel bet, not anchored on a paper result). ✓
+- **Mechanism, not HP** — Structural change (softmax removed, replaced with `φ(Q)·(φ(K)^T·V)/Z`), zero-init-able via γ=0. Not a learning-rate/schedule/init-constant lever. ✓
+- **Tiny1m3m only** — No `screen20m` or larger tier referenced anywhere. The linear-vs-quadratic complexity bet is correctly acknowledged as invisible at T=2048, so the lever reduces to a kernel-shape bet. ✓
+- **Not already closed** — Cross-checked `closed.md`: 004-retnet is closed as a null at 0.94M (Δ wrong-sign, trt=6.4162 vs ctrls 6.3875/6.4050). 189 is the direct structural follow-up, not a duplicate. 008-deltanet is taste-reject (off-niche, never ran). 148-focal-mod is additive context (different class). Mathematically distinct. ✓
+- **<200 LoC budget** — One `elif self.use_cosformer:` branch in MHA.forward (~30-40 LoC, with the cumsum + denominator), one `self.gammas = nn.Parameter(torch.zeros(n_layers))` on `MinimalLLM` (~3 LoC), one config flag pair (~5 LoC), and the `gammas[block_idx]` plumbing in the forward call (~3 LoC). Well under 100 LoC. ✓
+- **Falsifiable pass/fail bar** — WIN Δ ≤ −0.005, NULL Δ ≥ +0.003, explicit noise band (−0.003 < Δ < −0.005) treated as inconclusive-not-pass. Aux diagnostic: attention entropy at step 10 ≥ softmax's × 1.10 (catches degenerate-φ collapse). Tightened relative to default; justified by softmax-replacement transition risk. ✓
+- **Transfer-risk: med justified** — Validated at 125M on language modeling (parity, not win), lever is O(T·d_k²) so works at any sequence length. Scale evidence section names the largest scale (GPT-2-small). Tag matches the citation. ✓
+
+**Minor cosmetic note (not blocking):** §"Distinct from sister idea 189-cos-attn" still says the sister is at `status: implementing` (per a 2026-06-15T08:31:50Z timestamp). Sister has since moved on (`status: needs-run` as of this review). The underlying coord concern (don't conflate the two near-twin plans) is still valid even if the sister's status string is stale — the implementer reading this plan.md must still build the linear-time kernel-replacement form, not the bounded-softmax form. The plan text is correct on the *mechanism* distinction. No revision needed; the implementer can update the status string if they care.
+
+**Verdict: approve.** Mechanism is sound, source is real, the spec is fully and falsifiably specified, all 8 r1 findings are addressed, and the implementer has a clean path (flag on MHA, branch after `use_linear_attn`, single nn.Parameter on the model, real-model bit-identity check, optional aux diagnostic). Move to plan.md.
+
 ## r1 — 2026-06-15 — verdict: revise
 
 Mechanism is real, source is current (Qin et al. 2022, arXiv:2202.08791), niche fits (kernel replacement, not HP), scope correct (tiny1m3m/seed 42), pass-bar tightened appropriately, and the auxiliary entropy diagnostic is well-chosen. **Findings to address before plan/spec:**

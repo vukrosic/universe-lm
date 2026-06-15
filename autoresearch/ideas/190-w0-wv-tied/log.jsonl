@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T08:33:52Z","agent":"reviewer","idea":"190-w0-wv-tied","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:51:41Z","agent":"orchestrator","idea":"190-w0-wv-tied","from":"reviewing","to":"needs-review","round":1,"note":"reclaim stale reviewing lock (17m)"}
 {"ts":"2026-06-15T12:00:28Z","agent":"reviewer","idea":"190-w0-wv-tied","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:11:11Z","agent":"orchestrator","idea":"190-w0-wv-tied","from":"reviewing","to":"needs-review","round":1,"note":"reclaim stale reviewing lock (10m)"}

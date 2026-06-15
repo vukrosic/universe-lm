@@ -3,3 +3,5 @@
 {"ts":"2026-06-15T08:49:07Z","agent":"miner","idea":"201-mlp-token-mixer","from":"repitching","to":"needs-taste","round":2,"note":"applied 5 findings: committed to gMLP SGU (formulation c), +1.74% params via 4/12 stochastic blocks, dropped MLP-Mixer-as-replacement framing, conditioned bet on 163 (needs-implement), stated |Δval|≤0.02 null window"}
 {"ts":"2026-06-15T12:01:48Z","agent":"taste","idea":"201-mlp-token-mixer","from":"needs-taste","to":"tasting","round":2,"note":"claimed round 2"}
 {"ts":"2026-06-15T12:03:58Z","agent":"taste","idea":"201-mlp-token-mixer","from":"tasting","to":"needs-review","round":1,"note":"accept: r2 commits to one mechanism, +1.74% fair-by-param, identity-init-able, sharp |Δval|≤0.02 bet with α-trajectory as the load-bearing diagnostic; conditional on 163; reset round to 1"}
+{"ts":"2026-06-15T12:05:15Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:10:45Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}

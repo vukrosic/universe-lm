@@ -1,8 +1,8 @@
 ---
 id: 192-topk-attn
-status: needs-plan
+status: planning
 round: 1
-updated: 2026-06-15T12:03:26Z
+updated: 2026-06-15T12:10:55Z
 transfer-risk: med
 plain: Hard top-k sparse attention — keep only the k largest pre-softmax scores per row, zero the rest, renormalize. Default k=512 (T=2048, 75% sparsity). 0 new params. Step-0 non-identical (structural lever, same category as 173-entmax / 022-softpick).
 ---

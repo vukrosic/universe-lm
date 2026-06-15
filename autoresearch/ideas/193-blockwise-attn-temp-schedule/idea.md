@@ -1,8 +1,8 @@
 ---
 id: 193-blockwise-attn-temp-schedule
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:20:10Z
+updated: 2026-06-15T12:05:20Z
 transfer-risk: low
 plain: Make the attention "sharpness" vary smoothly with depth using a fixed cosine schedule (no learned parameters), starting with a flat schedule so step-0 matches the baseline — a depth-aware attention prior without any trainable knobs.
 ---

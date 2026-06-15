@@ -1,2 +1,3 @@
 {"ts":"2026-06-15T08:19:46Z","agent":"taste","idea":"193-blockwise-attn-temp-schedule","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:20:10Z","agent":"taste","idea":"193-blockwise-attn-temp-schedule","from":"tasting","to":"needs-repitch","round":1,"note":"revise: sign-convention muddle (cooler/sharper); 'both signs' must commit to one; explicit 188-conditional framing needed"}
+{"ts":"2026-06-15T12:05:20Z","agent":"miner","idea":"193-blockwise-attn-temp-schedule","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
