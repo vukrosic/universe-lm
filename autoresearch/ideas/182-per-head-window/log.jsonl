@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T05:56:56Z","agent":"code-impl","idea":"182-per-head-window","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T06:14:39Z","agent":"code-impl","idea":"182-per-head-window","from":"planning","to":"needs-run","round":1,"note":"plan+code done; step-0 byte-identical max_abs_diff=4.1e-8"}
 {"ts":"2026-06-15T06:16:39Z","agent":"daemon","idea":"182-per-head-window","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T06:16:53Z","agent":"daemon","idea":"182-per-head-window","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MPerHeadWindowConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
