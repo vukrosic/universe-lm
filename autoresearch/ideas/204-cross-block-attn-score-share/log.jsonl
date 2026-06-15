@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T12:01:07Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:04:20Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-15T12:04:42Z","agent":"daemon","idea":"204-cross-block-attn-score-share","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T12:25:11Z","agent":"orchestrator","idea":"204-cross-block-attn-score-share","from":"running","to":"needs-run","round":1,"note":"reclaimed: running 20m but box arq queue dead (drainer wedged)"}
