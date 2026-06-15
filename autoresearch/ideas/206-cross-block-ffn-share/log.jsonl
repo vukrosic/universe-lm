@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T08:30:35Z","agent":"reviewer","idea":"206-cross-block-ffn-share","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:31:16Z","agent":"reviewer","idea":"206-cross-block-ffn-share","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T16:17:34Z","agent":"code-impl","idea":"206-cross-block-ffn-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:24:54Z","agent":"orchestrator","idea":"206-cross-block-ffn-share","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}

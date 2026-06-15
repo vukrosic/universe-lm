@@ -1,8 +1,8 @@
 ---
 id: 206-cross-block-ffn-share
-status: planning
+status: needs-plan
 round: 1
-updated: 2026-06-15T16:17:34Z
+updated: 2026-06-15T16:24:54Z
 transfer-risk: med
 plain: Let each FFN use a small fraction of the previous block's W_up, W_down projections (a learnable per-block scalar, init 0 so step-0 is byte-identical), like tying the FFN upward and downward projections across adjacent blocks.
 ---
