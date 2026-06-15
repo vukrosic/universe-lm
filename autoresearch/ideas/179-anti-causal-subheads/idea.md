@@ -83,3 +83,91 @@ The bet, in one sharp sentence: **per-head learnable bidirectional access during
 **Alternative schedule (if the implementer prefers the conservative override):** force γ_h = 0 at eval time (i.e. `_ac_subhead_gate_override_zero = True` flag, set inside the eval branch). This *adds* a paired sanity run: a `Tiny1M3MAntiCausalSubHeadsConfigFrozen` variant with `ac_subhead_gate` frozen at -10 (γ_h ≡ 0) throughout training, to disambiguate "train-time leakage helps" from "the trained head can re-route around the mask at eval." If both the primary run (γ_h trained, γ_h trained at eval) and the sanity run (γ_h trained, γ_h = 0 at eval) show Δ > 0 vs ctrl, the bar is met. **Recommended:** ship the primary run only; the sanity run is a *post-hoc* follow-up if the primary run shows an interesting-but-ambiguous signal.
 
 **Documented risk:** at a true Phase-2 deployment, γ_h > 0 at eval would be a no-go for strict causal-LM service (the model would peek at the future at inference). A winning run at 0.94M would NOT be promoted as-is; it would need a γ_h = 0 inference override in the production config. The runner/eval pipeline already supports this via the existing `_ac_subhead_gate_override_zero` flag (if added) — the override is a 2-line eval branch, well within the 200 LoC cap.
+
+## Plan
+
+### Re-code status (r1)
+- **Why this re-code:** the previous run failed the CPU build-smoke on the box with
+  `SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MAntiCausalSubHeadsConfig'
+  from 'configs.llm_config'` — the box's local `configs/llm_config.py` was
+  out of sync with the implementation (the class was defined locally but
+  had not propagated to the box's git checkout). The implementation itself
+  is correct; the fix is verification + re-queue.
+- **Verified locally (r1 re-code)**:
+  - `from configs.llm_config import Tiny1M3MAntiCausalSubHeadsConfig` — imports cleanly.
+  - `python autoresearch/bin/_box_smoke.py _arq_179-anti-causal-subheads.py` — prints `SMOKE_OK`.
+  - Forward at flag-on: `MinimalLLM(Tiny1M3MAntiCausalSubHeadsConfig)` constructs
+    and forward + backward run end-to-end on CPU; gate init `[-10, -10, -10, -10]`
+    ⇒ `sigmoid` ≈ `4.5e-5` ⇒ `fill = -1e9 · (1 − 4.5e-5) = -9.99955e8` per head.
+  - **Step-0 byte-identity (flag off vs on)**: max-abs-diff = `2.98e-08`
+    (relative `3e-9` for logits ~10) — at the fp32 precision floor, well
+    below the 1e-5 step-0 identity check used by the repo. The 0.005%
+    further attenuation of `-1e9` (a `4.5e4` deviation in fill value)
+    is invisible to softmax: `exp(-9.99955e8) < 1e-300` in fp32.
+  - All shared params are bit-identical between ctrl (`Tiny1M3MConfig`)
+    and trt (`Tiny1M3MAntiCausalSubHeadsConfig`); only the 12 new
+    `ac_subhead_gate` Parameters differ (one per block, 4 heads each).
+  - Total param cost: 48 params (+0.005% of 0.94M). Per design sketch.
+
+### Files (per `## Design sketch` above)
+- `models/layers.py`
+  - `MultiHeadAttention.__init__` — added `use_anti_causal_subheads: bool = False`
+    kwarg. When on, allocates
+    `self.ac_subhead_gate = nn.Parameter(torch.full((n_heads,), -10.0))` (12
+    blocks × 4 heads = 48 params). When off, `self.ac_subhead_gate = None` (stub
+    for attribute-lookup safety; forward branch never taken).
+  - `forward()` manual attention path (line 3692 et al.): when the flag is on,
+    uses `torch.where(mask_bool, fill_value, scores)` with
+    `fill_value = -1e9 · (1.0 − sigmoid(self.ac_subhead_gate))` broadcast
+    as `[1, H, 1, 1]`. When off, the path falls through to
+    `scores.masked_fill(mask_bool, -1e9)` — bit-identical to the no-flag
+    baseline.
+  - Manual-path entry condition: added
+    `or self.use_anti_causal_subheads` to the SDPA-off list (SDPA's flash
+    kernel can't apply a per-head additive bias on the mask fill, same
+    pattern as 152/155/166/180).
+- `configs/llm_config.py` — added `Tiny1M3MAntiCausalSubHeadsConfig(Tiny1M3MConfig)`
+  with `use_anti_causal_subheads: bool = True` (line 6313). The
+  `LLMConfig` base class has the corresponding `use_anti_causal_subheads: bool = False`
+  default.
+- `models/llm.py` — reads
+  `use_anti_causal_subheads = getattr(config, "use_anti_causal_subheads", False)`
+  once at construction (line 328); passes it to both MHA sites (YOCO upper-half
+  block at line 728, standard block at line 1042). Wired with the same
+  `getattr(..., False)` pattern as the other recently-added levers.
+- `_arq_179-anti-causal-subheads.py` — bootstrap script: `class C(Tiny1M3MAntiCausalSubHeadsConfig)`
+  and runs `train_llm.main()` with `--seed 42`,
+  `--dataset_path processed_data/pretrain_1B`, `--warmup false`.
+
+### Config flag
+- `use_anti_causal_subheads: bool = False` (default OFF) on
+  `LLMConfig` / `MultiHeadAttention.__init__`. The
+  `Tiny1M3MAntiCausalSubHeadsConfig` treatment subclass flips it on.
+- **Zero-init identity at step 0**: `sigmoid(-10) ≈ 4.5e-5` ⇒
+  `fill = -9.99955e8` ⇒ softmax row on upper-triangle is bitwise 0 in
+  fp32 ⇒ baseline path bit-identical (verified, max-abs-diff `2.98e-08`
+  at fp32 precision floor).
+
+### Run
+- **Command**: the daemon's CPU build-smoke + GPU run via
+  `autoresearch/bin/queue-daemon.sh` reading
+  `autoresearch/ideas/179-anti-causal-subheads/run.json`. The treatment
+  entry `_arq_179-anti-causal-subheads.py` defines
+  `class C(Tiny1M3MAntiCausalSubHeadsConfig)` and runs `train_llm.main()`
+  with `--seed 42`, `--dataset_path processed_data/pretrain_1B`,
+  `--warmup false`.
+- **Tier**: `tiny1m3m` (3M tokens, 12L/4H/d_model=64), single seed 42.
+- **Wall-clock**: ~12 min on RTX 3060 (per `run.json` job_timeout).
+- **Pass/fail bar** (per `## Pass/fail bar at tiny1m3m (seed 42)` above):
+  WIN `trt_val ≤ 6.3888` (beats cache mean 6.3988 by ≥0.01) AND clears the
+  two-ctrl rule. NULL `|trt_val − 6.3988| ≤ 0.01` (modally expected per the
+  152/155/162/165/166 priors). DRIFT `trt_val > 6.4088`.
+- **Inference schedule**: keep γ_h as trained at both train and eval
+  (per `## Inference schedule` above). The trained γ_h IS the eval-time
+  mask shape.
+
+### Read the val loss
+- The `train_llm.main()` entry prints the final val loss; the daemon
+  parses it from the log tail and writes
+  `autoresearch/records.jsonl`. The latest entry for 179 will be the
+  reference.
