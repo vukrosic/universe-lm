@@ -1,0 +1,15 @@
+{"ts":"2026-06-15T10:09:33Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:12:33Z","agent":"reset-button","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T10:15:14Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:17:36Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691977m)"}
+{"ts":"2026-06-15T10:17:54Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:18:47Z","agent":"reset-button","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T10:20:54Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:30:02Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691990m)"}
+{"ts":"2026-06-15T10:30:03Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:33:33Z","agent":"reset-button","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T10:35:03Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T10:35:11Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691995m)"}
+{"ts":"2026-06-15T10:35:12Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T11:19:52Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29692039m)"}
+{"ts":"2026-06-15T11:19:57Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}

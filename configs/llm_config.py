@@ -2591,6 +2591,94 @@ class Tiny1M3MAlibiConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MVResidualAlibiConfig(Tiny1M3MAlibiConfig):
+    """208 — Value-Residual Learning stacked on the 175-alibi champion
+    (Zhou, Wang, Huang et al. 2024, "Value Residual Learning",
+    arXiv:2410.17897). Subclasses `Tiny1M3MAlibiConfig` so the lever
+    stacks on top of the current champion (val 6.2403, band 0.04).
+
+    Re-uses the already-validated `use_value_residual` flag (021 WIN
+    at tiny1m3m, Δ=−0.034 vs plain; also a WIN on top of FIRE, see
+    `Tiny1M3MVResidualOnFireConfig`). Stash the projected V at layer 0
+    (post-W_V, post-GQA repeat, post-transpose, `[B, n_heads, T, d_k]`);
+    in every later layer l > 0 blend
+        V_l ← (1 − λ_l)·V_l + λ_l·V_1     BEFORE `attn_weights @ V`,
+    with `λ_l = nn.Parameter(torch.zeros(()))` per block on the MHA.
+    `λ_l = 0` at init ⇒ `V_l ← V_l` exactly ⇒ scores/AV/output
+    unchanged ⇒ **byte-identical to the 175-alibi champion at step 0**
+    (max-abs-diff = 0.0). The `.detach()` on the V_1 stash keeps each
+    layer's W_V training on its own attention path — only the blend
+    weight learns the cross-layer shortcut.
+
+    Why this should compound on alibi rather than wash out: the two
+    levers are mechanistically orthogonal. ALiBi (175) is a *score-side*
+    per-head positional bias — it changes *which* key each head attends
+    to. Value-residual is on the *projected V stream* — it changes
+    *which value representation* the attention winners read from. 021
+    fired on the plain baseline and again on top of FIRE (another
+    score-side positional lever), so there is direct in-repo evidence
+    that the V-stream shortcut is additive with a positional score-side
+    win rather than redundant with it.
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2403,
+    band 0.04). Expected Δval ∈ [−0.02, −0.05] (021 gave −0.034 on the
+    plain baseline; the bet is most of that effect survives the alibi
+    stack since the axes don't overlap). PASS ≤ 6.2403 − 0.01 = 6.2303
+    (alibi-champion − 0.01). NULL band |Δ| < 0.01 (the V-stream shortcut
+    is redundant with alibi at this scale). DRIFT > +0.01. Sub-noise is
+    INCONCLUSIVE on one seed per the one-seed-only rule.
+
+    See `autoresearch/ideas/208-value-residual-alibi/idea.md` and the
+    021 wiring at `models/llm.py:400-401,845,1187,1697`.
+    """
+    use_value_residual: bool = True
+
+
+@dataclass
+class Tiny1M3MCanonConvAlibiConfig(Tiny1M3MAlibiConfig):
+    """209 — Canon-conv (residual-stream local mixing) stacked on the
+    175-alibi champion (De, Smith, Fernando et al. 2024 "Griffin",
+    arXiv:2402.19427; Allen-Zhu et al. Canon-layer line). Subclasses
+    `Tiny1M3MAlibiConfig` so the lever stacks on the current champion
+    (val 6.2403, band 0.04).
+
+    Re-uses the already-validated `use_canon_conv` flag (023 WIN at
+    tiny1m3m: Δ≈−0.06 after stripping FIRE — the best of the 020–025
+    cluster). One causal depthwise `Conv1d(kernel=3, left-pad 2)` on
+    the residual stream per block, immediately before the attention
+    sublayer's pre-LN, with a per-block scalar output gate `g` init 0.
+    `g = 0` at init ⇒ `x = x + 0·conv(x) = x` exactly ⇒ **byte-identical
+    to the 175-alibi champion at step 0** (max-abs-diff = 0.0).
+
+    Why this is the highest-EV shot at a new record:
+    - **Maximally orthogonal to alibi.** ALiBi is a per-head additive
+      *positional bias on attention scores* — it lives entirely inside
+      the attention computation. Canon-conv lives on the *residual
+      stream itself*, before pre-LN, and never touches the attention
+      scores. Zero mechanism overlap, so unlike 021-value-residual
+      (V-stream, washed out to null on alibi) there is no shared axis
+      for the two levers to compete over.
+    - **Large effect margin.** 023 cleared the WIN bar by ~6× (≈−0.06
+      vs the −0.01 bar), so even substantial attenuation from stacking
+      should still clear PASS.
+    - **Local-prior complement.** Canon supplies cheap k=3 neighbor
+      context *before* the global attention pass; alibi shapes *which*
+      distant tokens that global pass attends to. Local + global
+      positional priors are a classic additive pair (Griffin, Mamba-2).
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2403,
+    band 0.04). Expected Δval ∈ [−0.02, −0.06] (023 gave ≈−0.06 on the
+    FIRE baseline; the bet is most survives the alibi stack since the
+    axes are disjoint). PASS ≤ 6.2403 − 0.01 = 6.2303. NULL band
+    |Δ| < 0.01. DRIFT > +0.01. Single seed ⇒ sub-noise INCONCLUSIVE.
+
+    See `autoresearch/ideas/209-canon-conv-alibi/idea.md` and the 023
+    wiring referenced at `configs/llm_config.py:487-498`.
+    """
+    use_canon_conv: bool = True
+
+
+@dataclass
 class Tiny1M3MLogitScaleConfig(Tiny1M3MAlibiConfig):
     """Tiny1M3M stacked on the 175-alibi champion with a learned global
     logit temperature (idea 184, CLIP-style, Radford et al. 2021,
