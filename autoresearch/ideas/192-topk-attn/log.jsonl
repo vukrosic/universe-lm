@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T08:21:11Z","agent":"taste","idea":"192-topk-attn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:23:29Z","agent":"taste","idea":"192-topk-attn","from":"tasting","to":"needs-repitch","round":1,"note":"revise: pitch bundles two parameterizations, no magnitude, ignores 173-entmax + 177-talking-heads + 154-rebased priors — see taste.md r1"}
 {"ts":"2026-06-15T08:29:25Z","agent":"miner","idea":"192-topk-attn","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:31:44Z","agent":"miner","idea":"192-topk-attn","from":"repitching","to":"needs-taste","round":2,"note":"r1 findings applied: committed to option (a) hard-fixed top-k, dropped learnable k_l alternative; named Δval prediction (primary NULL) with mechanism against 173 (1-D vs 2-D search); engaged 154 (competing not stacking) and 177 (d_k hostility doesn't transfer); 5 findings applied"}

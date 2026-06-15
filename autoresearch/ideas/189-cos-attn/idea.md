@@ -1,8 +1,8 @@
 ---
 id: 189-cos-attn
-status: needs-taste
+status: implementing
 round: 1
-updated: 2026-06-15T08:30:00Z
+updated: 2026-06-15T08:31:50Z
 transfer-risk: med
 plain: Replace the dot-product attention with cosine similarity (Q·K divided by their lengths), so the score is bounded between -1 and 1 and doesn't blow up with Q/K magnitude.
 ---
