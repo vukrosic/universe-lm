@@ -14,3 +14,6 @@
 {"ts":"2026-06-15T12:26:02Z","agent":"daemon","idea":"188-qk-rms-scaling","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MQKRMSConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
 {"ts":"2026-06-15T12:31:56Z","agent":"code-impl","idea":"188-qk-rms-scaling","from":"needs-recode","to":"recoding","round":1,"note":"claimed r1: import error — adding Tiny1M3MQKRMSConfig + wiring use_qk_rms_scaling through MHA"}
 {"ts":"2026-06-15T12:39:10Z","agent":"orchestrator","idea":"188-qk-rms-scaling","from":"recoding","to":"needs-recode","round":1,"note":"reclaim stale recoding lock (7m)"}
+{"ts":"2026-06-15T12:39:53Z","agent":"auto-implement","idea":"188-qk-rms-scaling","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-15T12:40:06Z","agent":"auto-implement","idea":"188-qk-rms-scaling","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
+{"ts":"2026-06-15T12:40:06Z","agent":"auto-implement","idea":"188-qk-rms-scaling","from":"rejected","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
