@@ -1,8 +1,8 @@
 ---
 id: 194-lowrank-ffn
-status: tasting
-round: 2
-updated: 2026-06-15T08:29:58Z
+status: needs-review
+round: 1
+updated: 2026-06-15T08:30:44Z
 transfer-risk: med
 plain: Move the rank-r residual-correction lever off the closed FFN axis and onto W_V (the value projection), so the same mechanism is tested on a sub-block where V is special (021-vres WIN) and the W_V matrix hasn't been probed for low-rank structure at 0.94M. Pre-register: a null closes the entire low-rank-residual sub-block family at this tier.
 ---

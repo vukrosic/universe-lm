@@ -1,8 +1,8 @@
 ---
 id: 195-qk-clamp-min-max
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:29:35Z
+updated: 2026-06-15T08:30:55Z
 transfer-risk: low
 plain: Clamp the pre-softmax attention scores to a fixed range (e.g., [-8, 8]) before softmax, so no single attention logit can dominate — like logit softcap but with hard clipping instead of tanh.
 ---

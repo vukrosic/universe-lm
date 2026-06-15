@@ -14,7 +14,7 @@
 
 **Verdict routing:** `needs-review` (accept). Round resets to 1 for the definition gate.
 
-
+## r1 — 2026-06-15 — verdict: revise
 
 **Taste gap (one sentence):** the FFN-shape axis is *exhausted* at 0.94M (6+ closed nulls — 146, 153, 157, 158, 170, plus 117/118/145 on the MoE sub-axis), and the pitch itself predicts null ("A null at 0.94M is expected") — that's not a bet, it's a coin-flip asking for a scarce slot.
 
