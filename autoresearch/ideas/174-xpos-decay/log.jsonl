@@ -1,1 +1,2 @@
 {"ts":"2026-06-15T01:47:41Z","agent":"taste","idea":"174-xpos-decay","from":"needs-taste","to":"needs-review","round":1,"note":"accept: orthogonal per-layer magnitude-decay lever vs 172 (per-head base) and 175 (alibi slopes); validated at GLM-130B; bit-identical step-0 properly argued; honest modest Δval band; null closes decay family, win unlocks Phase-2 per-layer γ_l"}
+{"ts":"2026-06-15T01:48:15Z","agent":"implement-button","idea":"174-xpos-decay","from":"needs-review","to":"implementing","round":1,"note":"claimed by implement button"}
