@@ -10,6 +10,15 @@ plain: Apply RMSNorm to the value vectors (V) before they get multiplied by atte
 # 176 — Pre-AV V RMSNorm (RMSNorm on Value Vectors Before Attention-Output Matmul)
 
 ## Source
+- **Primary cite (V-pre-AV normalization primitive):** Wortsman et al.
+  2023, arXiv:2309.14322 — Stability AI report on V-side normalization
+  as a Scale-and-Shift primitive. The already-existing 029-v-norm
+  LayerNorm override cites this paper at `models/layers.py:1017`.
+  176 is the per-head α-gated RMSNorm+γ-gain parameterization of
+  Wortsman 2023's V-norm primitive: closed-029 is "V-pre-AV LayerNorm,
+  no gate, no per-head gain"; 176 layers a per-head α-gate (init 0)
+  and a per-head γ-gain (init 1) on top of the same tensor location,
+  producing a smooth learnable blend.
 - Mechanism is the natural V-side analog of 016-qk-norm (RMSNorm on Q
   and K before QK^T, **WIN** at tiny1m3m with Δ=-0.0138/-0.0185). The
   lever family is "normalize the attention-input tensors before they
