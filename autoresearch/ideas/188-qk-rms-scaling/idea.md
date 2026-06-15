@@ -65,3 +65,14 @@ The bet, in one sharp sentence: **the closed per-head temperature axis (155) sug
 - 184-logit-scale — global scalar on LM-head output logits, not pre-softmax QK^T.
 - 169-qk-norm-depth — null. Tests *placement* of QK norm (which block gets the norm), not a scalar multiplier on the scores.
 - 016-qk-norm (WIN) — symmetric QK RMSNorm. 188 *adds* a per-block scalar after a QK norm; can be stacked on 016.
+
+## Plan
+
+- **Files**:
+  - `configs/llm_config.py` — add `use_qk_rms_scaling: bool = False` on `LLMConfig` (next to `use_per_layer_temp` at line ~157). Add `Tiny1M3MQKRMSConfig(Tiny1M3MAlibiConfig)` with `use_qk_rms_scaling: bool = True`, mirroring `Tiny1M3MLogitScaleConfig` (also subclasses `Tiny1M3MAlibiConfig`).
+  - `models/layers.py` — `MultiHeadAttention.__init__` (line 731): add `use_qk_rms_scaling: bool = False` kwarg and store `self.qk_rms_param = nn.Parameter(torch.zeros(1))` when flag is on (one scalar per MHA = one per block). `MultiHeadAttention.forward`: add `or self.use_qk_rms_scaling` to the manual-path forcing list at line 3875 (so SDPA flash doesn't perturb step-0 numerics). After `scores = QK^T * scale` (line 3921), multiply `scores = scores * self.qk_rms_param.exp()` before the causal mask and softmax.
+- **Config flag**: `use_qk_rms_scaling: bool = False` (off by default; baseline path bit-identical).
+- **Param count**: 1 scalar per MHA × 12 blocks = 12 scalars total (+0.0013% of 0.94M).
+- **Step-0 byte-identity**: `nn.Parameter(torch.zeros(1))` → `s = exp(0) = 1.0` exactly in IEEE 754 → `scores * 1.0 = scores` exactly. The exp form guarantees positivity (a negative scalar would invert the softmax — meaningless zero-init).
+- **Run command**: `autoresearch/bin/run-idea.sh 188-qk-rms-scaling tiny1m3m 42` (or equivalent pipeline slot — see `PIPELINE.md`). Val read: from `autoresearch/remote-results/<run-dir>/trt_*.log` — search for the final `val` line emitted by `train.py`. Champion reference `Tiny1M3MAlibiConfig` val 6.2403, band 0.04.
+- **Pass/fail**: WIN if `trt_val ≤ ctrl_val − 0.005` AND clears two-ctrl rule. NULL `|Δ| < 0.01`. DRIFT `trt_val > ctrl_val + 0.01`.

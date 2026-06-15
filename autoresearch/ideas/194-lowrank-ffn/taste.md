@@ -1,4 +1,20 @@
-## r1 — 2026-06-15 — verdict: revise
+## r2 — 2026-06-15 — verdict: accept
+
+**Taste gap (one sentence):** the miner took the r1 critique ("drop the FFN-side mechanism, propose the same low-rank correction on a different sub-block") and made it concrete: rank-r residual moves to W_V, the only single-side attention projection that *positively* binds at 0.94M (021-value-residual WIN), and the pre-registered null closes the entire low-rank-residual sub-block family (FFN tested, W_O tested in 207, W_V tested here).
+
+**Findings:**
+
+- **Diversification landed.** r1 said: "Drop the FFN-side mechanism and propose the same low-rank correction on a different sub-block (attention Q/K/V/O projection, the residual stream itself, or the embedding-to-hidden lift) where the axis isn't already closed." r2 picks **W_V** — a sub-block that is (a) *within* the attention path, (b) untested for rank at 0.94M, and (c) directly motivated by 021-value-residual (WIN Δ=−0.034), which is the strongest existing empirical signal that V is special at this tier. The Q-only (162, null) and K-only (165, null) attribution nulls confirm V is *not* symmetric to Q/K, so the rank axis on V is the cleanest single-side placement.
+- **Portfolio fit is fine, not crowded.** The low-rank-residual family has exactly one taste-passed prior (207-wo-lowrank-bottleneck, in `needs-plan` — already past this gate, queued for the runner on W_O). 194-r2 on W_V is the *complementary* axis on the *other* major d_model×d_model attention sub-block — different placement, identical mechanism, no duplication. 199-attn-output-lowrank is also `needs-taste` round 1, but it uses a different lever (full SVD low-rank *replacement* of W_O at Kaiming init, not a residual correction with α=0 init), so the three are not redundant. After this gate, the queue holds the 3-axis test (FFN-via-prior / W_O-via-207 / W_V-via-194) without a 4th low-rank lever.
+- **Pre-registered test is excellent.** A null at 0.94M *closes the entire low-rank-residual sub-block family* (FFN tested in r1, W_O tested in 207, W_V tested here). A win (Δ < −0.01) opens a new axis orthogonal to the closed V-side nulls (151, 164, 176, 184). The bet is therefore *falsifiable* in both directions — exactly the taste bar.
+- **Leverage is small but on a binding axis.** +12,288 params (+1.3%) is well inside noise-band territory at 0.94M, but 021's Δ=−0.034 shows V-side binding is detectable at this scale. α ≈ 4.5e-5 at step 0 (sigmoid(−10)) is bit-identical to baseline — no risk of changing the ctrl; the optimizer grows α only if the rank-r path is useful. Identity-init is correct (modded-nanogpt pattern, no skew).
+- **Crisp bet in one sentence.** "If W_V at 0.94M has effective rank < 32 (heads redundant at d_k=16, H=4), a rank-8 residual correction with α=0 init should let the optimizer grow α and win Δ < −0.005; if W_V is full-rank (effective rank ≥ 56), α stays near zero and the null is informative."
+- **Transfer argument holds.** LoRA's structural analog (residual low-rank correction) is validated at 7B-65B. The from-scratch form is the conservative one — at 0.94M it's a soft bottleneck, at 135M it scales naturally (effective rank typically *grows* with scale, so the rank-r correction is a no-op or marginal; not a scaling risk). transfer-risk: med is the right tag.
+- **One small caveat (not blocking).** 207 (W_O rank-r residual) hasn't run yet — if 207 wins big, 194-r2 becomes *deprioritized* (low-rank structure on W_O is the binding axis, W_V rank is the next test). But the pipeline can't reorder without running; the slot is well-targeted on prior evidence alone.
+
+**Verdict routing:** `needs-review` (accept). Round resets to 1 for the definition gate.
+
+
 
 **Taste gap (one sentence):** the FFN-shape axis is *exhausted* at 0.94M (6+ closed nulls — 146, 153, 157, 158, 170, plus 117/118/145 on the MoE sub-axis), and the pitch itself predicts null ("A null at 0.94M is expected") — that's not a bet, it's a coin-flip asking for a scarce slot.
 
