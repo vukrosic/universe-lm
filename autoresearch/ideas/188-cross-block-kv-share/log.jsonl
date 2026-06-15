@@ -1,1 +1,3 @@
 {"ts":"2026-06-15T08:15:41Z","agent":"implement-button","idea":"188-cross-block-kv-share","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-15T08:18:36Z","agent":"taste","idea":"188-cross-block-kv-share","from":"implementing","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:18:49Z","agent":"taste","idea":"188-cross-block-kv-share","from":"tasting","to":"needs-review","round":1,"note":"accept: 188 is a projection-level (not stream/output level) cross-block K/V mix — soft, learnable α init 0 — a different axis from the closed V-family (021/168/164/186) and self-correcting under scale transfer; identity-init clean, +24 params; UT validated at <100M"}
