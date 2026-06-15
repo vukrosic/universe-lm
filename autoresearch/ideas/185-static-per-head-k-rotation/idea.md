@@ -1,8 +1,8 @@
 ---
 id: 185-static-per-head-k-rotation
-status: reviewing
+status: needs-plan
 round: 1
-updated: 2026-06-15T07:18:47Z
+updated: 2026-06-15T07:21:21Z
 transfer-risk: med
 plain: Give each head its own small learned rotation matrix for its keys (no position information, just a static re-orientation), starting at the identity so step-0 is byte-identical — a per-head generalization of the rebased-attention idea.
 ---
