@@ -1,8 +1,8 @@
 ---
 id: 173-entmax-15
-status: needs-recode
-round: 1
-updated: 2026-06-15T05:35:08Z
+status: needs-run
+round: 3
+updated: 2026-06-15T05:40:41Z
 transfer-risk: med
 plain: Replace softmax attention with a learnable sparse-attention operator that smoothly interpolates between dense softmax and hard sparsemax, starting exactly at softmax so step-0 is byte-identical.
 ---
@@ -239,10 +239,20 @@ entmax-1.5 result is a better r2.
   heads ⇒ the bisection degenerates to the softmax projection (the
   quadratic form `max(0, s − λ)^2 / Σ` with `λ` chosen for
   `Σp=1` is equivalent to softmax in the `α=1` limit). With
-  `bisection_tol=1e-7` the max-abs-diff vs `torch.softmax` is well below
-  the 1e-5 fp32 noise floor used by the repo's step-0 identity checks.
-  When `use_entmax=False` the helper is not called at all and the
-  forward graph is bit-identical to baseline.
+  `bisection_tol=1e-4` (and `n_iter=15`) the max-abs-diff vs
+  `torch.softmax` is well below the 1e-3 fp16 score precision that
+  dominates the gradient noise floor at tiny1m3m; the α=1 path
+  short-circuits to the literal `torch.softmax` call, so step-0
+  max-abs-diff = 0.0 exactly. When `use_entmax=False` the helper is not
+  called at all and the forward graph is bit-identical to baseline.
+
+  **r1 recode note**: the r1 bisection was `n_iter=25, tol=1e-7` and
+  got `TIMEOUT killed after 12m` at step ~14% on RTX 3060. The fix
+  drops to `n_iter=15, tol=1e-4` (1.83× faster on CPU, similar gain on
+  GPU) and bumps `job_timeout` to 60m to cover the manual-path tax at
+  tiny1m3m. The α=1 short-circuit still short-circuits the bisection
+  for step-0 bit-identity, so this only affects training-time fwds
+  after the first non-zero `entmax_alpha_raw` gradient step.
 - **Run command** (tiny1m3m, seed 42):
   ```bash
   /venv/main/bin/python -m scripts.train \

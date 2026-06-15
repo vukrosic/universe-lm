@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"174-xpos-decay","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}
 {"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"174-xpos-decay","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"174-xpos-decay","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-15T05:40:14Z","agent":"daemon","idea":"174-xpos-decay","from":"running","to":"done","round":1,"note":"NULL: trt=6.4819 inside 5b8a7fea8963±commit-changed (Δ0.0831)"}
