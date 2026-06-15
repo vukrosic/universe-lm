@@ -15,3 +15,4 @@
 {"ts":"2026-06-15T07:57:29Z","agent":"daemon","idea":"187-lm-head-bias","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T07:57:42Z","agent":"daemon","idea":"187-lm-head-bias","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MAlibiLMHeadBiasConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
 {"ts":"2026-06-15T07:58:25Z","agent":"auto-implement","idea":"187-lm-head-bias","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-15T07:58:57Z","agent":"auto-implement","idea":"187-lm-head-bias","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
