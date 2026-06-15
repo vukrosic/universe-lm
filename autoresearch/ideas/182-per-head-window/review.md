@@ -1,5 +1,89 @@
 # Review log — 182 per-head-window
 
+## r4 — 2026-06-15 — verdict: approve
+
+Re-pass because the auto-implement agent flipped this idea to `rejected` a
+*second* time at 2026-06-15T07:05:54Z ("auto-rejected: blocked 4x with no
+path forward (see log)"). This is the same doer-protocol violation r3
+overturned: auto-implement is a doer, the spec has not changed since the
+r3 approval, and the reviewer never issued a reject. Per the reviewer
+prompt: *"Doers never close — the reviser and code-implementer bounce
+blocked ideas back to a `needs-*` queue, not to `rejected`."* Bounce-loop
+termination on push-side staleness is not the reviewer's call to ratify.
+Re-walking the spec to confirm the r3 verdict still holds.
+
+- **Spec is unchanged from r3 approval.** Re-verified the four r3 findings
+  all hold against the current `idea.md`:
+  - **Step-0 byte-identical (BLOCKING, fixed in r1).** `W_h =
+    2T·sigmoid(w_h)` with `w_h_init=10` gives `W_h/2 = T·sigmoid(10) ≈
+    T − 0.00005·T`. At T=2048, `W_h/2 ≈ 2047.9 > max|t−s| = T−1 = 2047`,
+    so the mask is all-ones, `relu(|t−s| − W_h/2) = 0` everywhere, softmax
+    unchanged ⇒ **byte-identical at fp32**. Code-impl self-check:
+    `max_abs_diff = 2.98e-08` (well under the 1e-6 bar). The dropped
+    `β_h = sigmoid(w_h)` alternative is correctly absent.
+  - **Single sub-lever committed.** Hard window only. Soft Gaussian decay
+    (`λ_h·(t−s)²`) is explicitly deferred, with the rationale preserved.
+    No implementer choice space.
+  - **Pass/fail bar is concrete and tied to a real control.** NULL band
+    `|trt − cached_baseline| < 0.01`, WIN pass `trt ≤ cached_baseline −
+    0.01`, cache-authoritative WIN rule `trt < val_mean − noise_band`.
+    Cache has moved again (now pinned at `val_mean = 6.2403`, `val_std =
+    0.0088`, `noise_band = 0.04` ⇒ WIN iff `trt < 6.2003` — the 175-alibi
+    WIN has reset the cache). The spec's run-day re-pull instruction
+    handles this: plan.md mirrors whichever cache version is current on
+    run day; evidence.md cites that version.
+  - **`1e9` penalty explicit.** No more `−∞` in prose; spec pins `1e9`
+    (fp32-clean, no NaN risk, matches 154-rebased-attn's rebased-softmax
+    style).
+
+- **Source check.** BigBird (Zaheer et al., arXiv:2007.14062, NeurIPS 2020)
+  and Longformer (Beltagy et al., arXiv:2004.05150, 2020) are real, the
+  per-head-pattern ablation in BigBird is real, the 100M+ scale-evidence
+  claim is honest. Not fabricated.
+
+- **Distinct from closed.** Confirmed against `autoresearch/closed.md` (no
+  `per-head-window` entry). The closed SWA window-sweep line is a *fixed
+  global HP*, not a per-head learnable window — different lever. Closed
+  per-head scalars (152/155/160/166/172) are *score-magnitude* levers;
+  182 is a *spatial-pattern* lever, in mechanism shape with
+  154-rebased-attn (WIN, Δ-3.48) and 143-shortconv (borderline).
+  174-xpos-decay null tested learnable *scalar decay*, not a window.
+  **Distinct, salvageable.**
+
+- **Implementability.** `<200 LoC`: `use_per_head_window: bool` config
+  flag, +48 params (H=4 × n_layers=12), one extra `1e9 · relu(...)` term
+  in the score path in `models/layers.py`, threaded through
+  `TransformerBlock`. Trivial. **Already implemented in commit 0653bfc8**
+  (per `ideas/182-per-head-window/evidence.md`); local `SMOKE_OK` +
+  step-0 `max_abs_diff = 2.98e-08` both pass.
+
+- **Tiny1m3m-only.** Confirmed. No references to `screen20m`, the ladder,
+  or any larger tier.
+
+- **Transfer-risk.** `med` is honest. Windowed attention is
+  well-validated at 100M+; per-head learnable window is novel at this
+  scale but the locality prior is established. Scale-evidence section
+  cites BigBird (100M–300M encoder) and Longformer (100M+ encoder). Tag
+  matches the citation.
+
+- **Why the second "rejected" line should be undone.** Identical to the
+  r3 reasoning: the doer's bounce loop failed because the box
+  (`/root/universe-lm`) could not `git pull --ff-only` the local commit
+  (no `git push` per the don't-push-without-approval protocol). That is
+  a **push-side** issue, not a **spec-side** issue — orthogonal to the
+  reviewer's definition-gate responsibilities. The spec is sound, the
+  code is committed locally, the byte-identical math holds, and the
+  implementation has no path-blocking defect that a reviewer should
+  ratify as a reject. Re-approving the spec restores it to `needs-plan`
+  with a fresh round budget so code-impl can pick it up again once the
+  push lands.
+
+**Verdict: approve.** Sound, falsifiable, one sub-lever, distinct from
+closed, byte-identical at step 0, <200 LoC, already implemented locally.
+Reset `round` to 1 so the code gate gets a fresh budget.
+
+---
+
 ## r3 — 2026-06-15 — verdict: approve
 
 Re-pass because the auto-implement agent flipped this idea to `rejected` at
