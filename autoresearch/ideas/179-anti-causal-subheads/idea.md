@@ -16,26 +16,29 @@ plain: Let some attention heads peek at the future during training (a small per-
 - In-repo context: closed.md line "Multiscale heads / parallel block / attn sink (2026-06-04 batch)" closed global bidirectional + causal hybrids at the layer level (some layers global, some causal). 179 is per-**head** within a single layer: each head independently chooses causal or bidirectional. CoPE (013) closed drift. The per-head axis is fresh.
 
 ## Mechanism
-Standard causal attention: position t attends to positions ≤ t. The attention mask is `M[i,j] = −∞ for j > i`, `0` for j ≤ i.
-Anti-causal sub-heads: for each head h, learn a scalar `γ_h ∈ [0, 1]` that controls how much of the head's attention is bidirectional. Concretely:
-```
-mask_h[i, j] = (1 − γ_h) · (−∞ for j > i)  +  γ_h · 0  (no mask)
-```
-Equivalently, the bidirectional component adds the upper-triangular mask with weight 1−γ_h (or equivalently, attenuates the causal mask with weight γ_h).
+Standard causal attention: position t attends to positions ≤ t. The attention mask is `M[i,j] = M_C for j > i`, `0` for j ≤ i, where `M_C` is the mask sentinel. **Important — fix from r1 review:** `M_C` is **NOT** `float("-inf")`. The repo convention for the main MHA causal/SWA path uses a finite sentinel `M_C = -1e9` (`models/layers.py:3455` `scores.masked_fill(~window, -1e9)`, and `models/layers.py:3608` for the NSA block-mask). Using `-inf` for the lever would degenerate: `(1 − γ_h) · -inf = -inf` for every γ_h < 1 (always-masked), and at γ_h = 1 we get `0 · -inf = NaN` — the lever becomes a broken two-state switch with NaN at the off→on boundary. With `M_C = -1e9` (finite), `(1 − γ_h) · M_C` is a real-valued continuous interpolation: γ_h = 0 ⇒ `M_C` (effectively masked via `exp(-1e9) ≈ 0` in fp32), γ_h = 1 ⇒ 0 (no mask, fully bidirectional), and intermediate γ_h smoothly interpolate the mask magnitude. We follow the repo convention.
 
-Parameterize `γ_h = sigmoid(γ_raw_h)` with `γ_raw_h` init `−10` (large negative) ⇒ `γ_h ≈ 0` at step 0 ⇒ full causal mask for all heads ⇒ **byte-identical to baseline at step 0**.
+Anti-causal sub-heads: for each head h, learn a scalar `γ_h ∈ [0, 1]` that controls how much of the head's attention is bidirectional. Concretely, the per-head additive mask becomes:
+```
+mask_h[i, j] = (1 − γ_h) · M_C  +  γ_h · 0     (no mask)
+            = (1 − γ_h) · (-1e9)                 for j > i
+            = 0                                  for j ≤ i
+```
+Equivalently, the bidirectional component attenuates the causal mask with weight 1−γ_h (i.e. anti-causal leakage = γ_h).
 
-The lever: pushing `γ_raw_h` positive makes head h progressively bidirectional. The optimizer can grow any subset of heads into "global" heads.
+Parameterize `γ_h = sigmoid(γ_raw_h)` with `γ_raw_h` init `−10` (large negative) ⇒ `γ_h ≈ 4.5e-5` at step 0 ⇒ mask ≈ `(1 − 4.5e-5) · (-1e9) ≈ -9.99955e8` ⇒ softmax weight `exp(-9.99955e8)` < 1e-300 in fp32 ⇒ essentially no attention to future positions ⇒ **byte-identical to baseline at step 0** (softmax of a -1e9 sentinel is bitwise 0 in fp32; a 0.005% further attenuation is well below fp32 precision at typical logit magnitudes ~10).
+
+The lever: pushing `γ_raw_h` positive makes head h progressively bidirectional — `γ_h = 0.5` ⇒ mask = -5e8 (still very strong, but the softmax no longer fully zeroes the upper-triangle); `γ_h = 0.99` ⇒ mask = -1e7 (causal prior heavily dampened but not removed); `γ_h = 1` ⇒ no mask (fully bidirectional). The optimizer can grow any subset of heads into "global" heads on a continuous spectrum.
 
 A second lever axis (orthogonal): per-head *learned mask pattern*, e.g., a learned position-wise bias of shape `[H, T]` that the optimizer can shape. Out of scope for this filing — keep the lever isolated to γ_h.
 
 ## Design sketch
 - **Files**:
-  - `models/layers.py` — add `use_anti_causal_subheads: bool = False` to `MultiHeadAttention.__init__`. Allocate `self.ac_subhead_gate = nn.Parameter(torch.full((n_heads,), -10.0))` (init −10 ⇒ sigmoid ≈ 4.5e-5 ≈ 0 ⇒ causal for all heads). Apply in the attention forward: after computing scores `[B, H, T, T]`, compute `γ_h = sigmoid(self.ac_subhead_gate)`, then `mask = causal_mask * (1 − γ_h).view(1, H, 1, 1) + 0 * γ_h` (broadcasting across heads). The mask is `−∞` where causal-only is needed and `0` where bidirectional is allowed.
+  - `models/layers.py` — add `use_anti_causal_subheads: bool = False` to `MultiHeadAttention.__init__`. Allocate `self.ac_subhead_gate = nn.Parameter(torch.full((n_heads,), -10.0))` (init −10 ⇒ sigmoid ≈ 4.5e-5 ≈ 0 ⇒ causal for all heads). Apply in the attention forward: after computing scores `[B, H, T, T]`, compute `γ_h = sigmoid(self.ac_subhead_gate)`, then build the upper-triangular mask once (`causal_neg = torch.triu(torch.full((T, T), -1e9), diagonal=1)`) and broadcast-attenuate per head: `mask = causal_neg * (1 − γ_h).view(1, H, 1, 1)`. (Do NOT write `(1-γ_h) · -inf`; use `-1e9` so the interpolation is real-valued and NaN-free.) `scores = scores + mask`. The mask is `≈ -1e9` where causal-only is needed and `0` where bidirectional is allowed (depending on γ_h per head).
   - `configs/llm_config.py` — add `use_anti_causal_subheads: bool = False`. Add `Tiny1M3MAntiCausalSubHeadsConfig` subclass with `use_anti_causal_subheads: bool = True`.
   - `models/llm.py` — thread into both `TransformerBlock` sites.
 - **Config flag**: `use_anti_causal_subheads: bool = False`.
-- **Step-0 byte-identical**: `γ_raw_h = −10` ⇒ `γ_h = sigmoid(−10) ≈ 4.5e-5` ⇒ mask is essentially `−∞` for j>i (scaled by 0.99995) ⇒ softmax gets `exp(−large·0.99995)` which is < 1e-300 in fp32 ⇒ effectively no attention to future positions ⇒ byte-identical to causal baseline. **Note**: in fp32, exp(−30) ≈ 9e-14, still effectively zero. With `−10·(1 − 4.5e-5) ≈ −9.99955`, exp ≈ 2.3e-5, which is technically nonzero but 5 orders of magnitude smaller than the diagonal exp(0)=1.0, so the softmax output is identical at fp32 precision.
+- **Step-0 byte-identical** (against the MHA path that uses `−1e9`, not `−∞`): `γ_raw_h = −10` ⇒ `γ_h = sigmoid(−10) ≈ 4.5e-5` ⇒ `causal_neg * (1 − 4.5e-5) ≈ -9.99955e8`. Softmax: `exp(-9.99955e8) < 1e-300` in fp32 ⇒ upper-triangle is bitwise 0 in softmax output ⇒ causal baseline restored. With typical logits ~10, the deviation is ~5 orders of magnitude below fp32 precision, so the softmax row is byte-identical to the no-leakage case. Verified by the closed 170-swiglu-ffn path which uses the same `silu(0)=0 ⇒ step-0 bit-identity` derivation pattern.
 - **Param count**: H=4, n_layers=12. Per block: 4 gate params. Total: 48 params (+0.005% of 0.94M).
 - **Intuition (why it might lower val loss)**: bidirectional heads during training can see the answer for next-token prediction. This is training-time leakage, but it's an inductive bias that helps the head learn *structural* features (where things appear in context) that causal heads can't. At inference time, all heads must be causal (we don't have future context). The hope is that bidirectional training pushes the model toward better representations even when constrained to causal at inference. UniLM/prefix-LM papers show this works at 100M+ for encoder-decoder tasks; this is the **decoder-only** analog. Different from the closed "multiscale heads" axis (which mixes causal + global at the **layer** level); 179 mixes at the **head** level within a layer.
 
