@@ -65,6 +65,77 @@ A variant lever axis: **per-layer γ_l** (12 scalars, init all 0) so each layer 
 - **LoC**: ~25 (parameter + apply-g_t). The decay is a single
   `torch.exp(-gamma * t)` broadcast over t; the math is one line.
 
+## Plan
+
+**Files to change**
+
+1. `models/layers.py` — `MultiHeadAttention.__init__`: add kwarg
+   `use_xpos: bool = False`. Store `self.use_xpos = use_xpos` and,
+   only when the flag is on, build
+   `self.xpos_gamma = nn.Parameter(torch.zeros(1))` (single scalar
+   per layer ⇒ 12 scalars total at tiny1m3m; +12 params, +0.001% of
+   the 0.94M model).
+
+   In `MultiHeadAttention.forward`, after the K-rotary path
+   (`K = self.rotary(K)` in the `else` branch at ~lines 2387-2396
+   and any GQA repeat), apply the per-position decay to K:
+   `K = K * exp(-xpos_gamma * t).view(1, T, 1, 1)` where `t` is the
+   integer position index. We multiply K only (not Q) — matches the
+   standard xPos "decay the key by its own position" reading: the
+   attention score `Q[t] · K[s]^T` then picks up a factor `g_s =
+   (1-γ)^s` that shrinks as `s` grows, biasing attention toward
+   recent tokens without altering the Q-side rotation.
+
+   Same branch in `_manual_rope` (~lines 2103-2120) when the manual
+   path is forced by other levers — apply the decay factor to the
+   `[B, T, d_k/2]` cos/sin tensors before the rotation is applied.
+   The mathematical identity is the same.
+
+2. `models/layers.py` — `TransformerBlock.__init__`: add pass-through
+   `use_xpos: bool = False` and forward it into the inner
+   `MultiHeadAttention(...)` call.
+
+3. `models/layers.py` — `YOCOLlamaBlock`: same pass-through.
+
+4. `configs/llm_config.py` — `LLMConfig`: add `use_xpos: bool = False`.
+   Add a `Tiny1M3MXPosConfig` treatment config with `use_xpos: bool =
+   True`.
+
+5. `models/llm.py` — `MinimalLLM.__init__`: read the flag with
+   `getattr(config, "use_xpos", False)` (mirrors the 151-rov,
+   147-dropkey pattern) and pass it into every
+   `TransformerBlock(..., use_xpos=self.use_xpos, ...)` and
+   `YOCOLlamaBlock(..., use_xpos=self.use_xpos, ...)` call.
+
+**Config flag**: `use_xpos: bool = False` (off by default → baseline
+path bit-identical, no extra parameters).
+
+**Step-0 byte-identical**: `xpos_gamma = nn.Parameter(torch.zeros(1))`
+⇒ `exp(-0 * t) = 1.0` for every position ⇒ `K = K * 1.0 = K` exactly
+⇒ the rotated K is unchanged ⇒ attention scores are unchanged ⇒
+forward is bit-identical to the 500k-base RoPE baseline at step 0
+(max-abs-diff = 0.0).
+
+**Run command** (matches the orchestrator convention, tiny1m3m seed 42):
+```bash
+/venv/main/bin/python scripts/train.py --config-name tiny1m3m_xpos
+```
+
+Final val loss is read from the run's `val/loss` JSONL key (or
+`metrics.json` → `val_loss` depending on the runner; the orchestrator
+aggregates the two-ctrl bracket and emits a Δ vs the cached
+`autoresearch/baseline-cache.json` baseline).
+
+**Smoke verification before launch**:
+- `from configs.llm_config import Tiny1M3MXPosConfig` imports cleanly.
+- Build a `MinimalLLM(Tiny1M3MXPosConfig())` and assert no NaNs at
+  step 0 (one forward pass with batch 1, seq 8 — output shape and
+  dtype match baseline).
+- Build the baseline `MinimalLLM(Tiny1M3MConfig())` and assert
+  `use_xpos` is `False` end-to-end (no extra parameters created,
+  max-abs-diff = 0.0 on the same forward call vs the no-flag
+  baseline).
+
 ## Scale evidence
 - xPos validated at GLM-130B and adopted in ChatGLM-2/3 (per Sun et al.
   2022 and ChatGLM papers). **Direct validation at ≥100M**.
