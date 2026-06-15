@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T12:03:58Z","agent":"taste","idea":"201-mlp-token-mixer","from":"tasting","to":"needs-review","round":1,"note":"accept: r2 commits to one mechanism, +1.74% fair-by-param, identity-init-able, sharp |Δval|≤0.02 bet with α-trajectory as the load-bearing diagnostic; conditional on 163; reset round to 1"}
 {"ts":"2026-06-15T12:05:15Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:10:45Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T12:16:01Z","agent":"code-impl","idea":"201-mlp-token-mixer","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

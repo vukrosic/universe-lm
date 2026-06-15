@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T12:05:20Z","agent":"miner","idea":"193-blockwise-attn-temp-schedule","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:13:10Z","agent":"orchestrator","idea":"193-blockwise-attn-temp-schedule","from":"repitching","to":"needs-repitch","round":1,"note":"reclaim stale repitching lock (7m)"}
 {"ts":"2026-06-15T12:14:15Z","agent":"miner","idea":"193-blockwise-attn-temp-schedule","from":"needs-repitch","to":"repitching","round":1,"note":"claimed r2 repitch"}
+{"ts":"2026-06-15T12:15:35Z","agent":"miner","idea":"193-blockwise-attn-temp-schedule","from":"repitching","to":"needs-taste","round":2,"note":"3 findings applied: sign-convention fixed (tau<1 sharper); committed to alpha=-0.3; reframed as conditional 188 follow-up"}

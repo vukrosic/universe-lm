@@ -7,3 +7,5 @@
 {"ts":"2026-06-15T08:48:44Z","agent":"reviewer","idea":"196-ffn-glu-mish","from":"needs-review","to":"reviewing","round":1,"note":"claimed: starting r1 definition review"}
 {"ts":"2026-06-15T08:56:47Z","agent":"orchestrator","idea":"196-ffn-glu-mish","from":"reviewing","to":"needs-review","round":1,"note":"reclaim stale reviewing lock (7m)"}
 {"ts":"2026-06-15T12:01:03Z","agent":"reviewer","idea":"196-ffn-glu-mish","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T12:15:40Z","agent":"code-impl","idea":"196-ffn-glu-mish","from":"needs-plan","to":"planning","round":1,"note":"claimed: plan+code+artifacts done"}
+{"ts":"2026-06-15T12:15:42Z","agent":"code-impl","idea":"196-ffn-glu-mish","from":"planning","to":"needs-run","round":1,"note":"MishGLUFeedForward + use_mish_glu flag + Tiny1M3MMishGLUConfig + _arq stub + run.json"}
