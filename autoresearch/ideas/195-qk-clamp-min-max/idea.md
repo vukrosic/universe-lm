@@ -1,8 +1,8 @@
 ---
 id: 195-qk-clamp-min-max
-status: running
+status: done
 round: 2
-updated: 2026-06-15T16:40:40Z
+updated: 2026-06-15T16:47:46Z
 transfer-risk: low
 plain: Hard-clip the pre-softmax QK scores to a tight range (c=2.0) so the discontinuous-gradient boundary is exercised at step 0 — distinct from the closed tanh softcap which was inactive at c=8.
 ---

@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T16:26:39Z","agent":"orchestrator","idea":"194-lowrank-ffn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
 {"ts":"2026-06-15T16:27:12Z","agent":"code-impl","idea":"194-lowrank-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:45:39Z","agent":"orchestrator","idea":"194-lowrank-ffn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (18m)"}
+{"ts":"2026-06-15T16:47:58Z","agent":"code-impl","idea":"194-lowrank-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed: previous worker exit was uncommitted; re-claimed by plan agent"}

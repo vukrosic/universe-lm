@@ -1,10 +1,10 @@
 ---
 id: 203-pre-wo-se-channel-attn
-status: revising
-round: 2
-updated: 2026-06-15T16:46:44Z
+status: needs-review
+round: 3
+updated: 2026-06-15T16:48:14Z
 transfer-risk: med
-plain: Insert a tiny Squeeze-Excitation channel-attention block right before the W_O projection (init so it returns all-ones, byte-identical at step 0), letting each token softly up- or down-weight its own channels.
+plain: Insert a tiny Squeeze-Excitation channel-attention block right before the W_O projection (γ-gate init ≈ 0 ⇒ step-0 max-abs-diff < 1e-5 vs baseline; internal se_weight ≈ 0.5 but γ-gate silences the branch), letting each token softly up- or down-weight its own channels.
 ---
 
 # 203 — Pre-W_O Squeeze-Excitation Channel Attention (Per-Token Channel Reweighting)
@@ -20,23 +20,31 @@ plain: Insert a tiny Squeeze-Excitation channel-attention block right before the
 ## Mechanism
 Standard pre-W_O: `attn_out_post = attn_out` (shape `[B, T, d_model]`), then `W_O(attn_out_post)`.
 
-SE channel attention: insert a per-token channel attention block that reweights each token's channels:
+Per-token SE channel attention: insert a per-token channel attention block that reweights each token's channels. The MLP is applied **per-token to the channel vector** (no T-axis pooling — the original SE-Net CNN pattern pools over the spatial axis, but here the lever is the per-token content-dependent cell, not the original CNN cell):
 ```
-attn_out_se = attn_out · se_weight(attn_out)        # se_weight: [B, T, d_model] → [B, T, d_model]
-attn_out_post = (1 − γ) · attn_out + γ · attn_out_se # γ learnable, init 0
-out = W_O(attn_out_post)
+se_weight_t(x_t) = sigmoid(W_2 · gelu(W_1 · x_t))    # per-token, x_t ∈ R^{d_model}
+attn_out_se   = attn_out ⊙ se_weight_t(attn_out)     # elementwise along channel axis
+attn_out_post = (1 − γ) · attn_out + γ · attn_out_se # γ = sigmoid(γ_raw), init γ_raw=-10
+out           = W_O(attn_out_post)
 ```
-Where `se_weight(x) = sigmoid(W_2 · gelu(W_1 · x_pooled))` with x_pooled = mean over T axis, W_1, W_2 ∈ R^{d_model × d_model/r} with reduction ratio r=4 (so W_1 is `d_model × 16`, W_2 is `16 × d_model`).
+Where `W_1 ∈ R^{d_model × d_model/r}` and `W_2 ∈ R^{d_model/r × d_model}` with reduction ratio `r=4` (so `W_1` is `64 × 16`, `W_2` is `16 × 64`). Same W_1, W_2 applied to every token/position; no `[B, d_model/r]` pooled intermediate.
 
-At init γ=0, `attn_out_post = attn_out` exactly (bit-identical baseline). The SE branch is silent. As γ grows, the SE branch is *added* to the residual via γ-weighted blend.
+At init γ=sigmoid(-10) ≈ 4.54e-5, `attn_out_post ≈ attn_out` (clean A/B vs same-seed baseline; see `## Pass bar` for the numeric bit-identity bar). The internal `se_weight_t` at step 0 is ~0.5 per channel (not 1.0), but the γ-gate silences the whole branch, so the blend's contribution to `attn_out_post` is at the fp32 floor regardless. As γ grows, the SE branch is *added* to the residual via γ-weighted blend.
 
 ## Design sketch
 - **File**: `models/layers.py` — add an `se_channel_attn` module to attention block.
 - **Config flag**: `use_se_pre_wo: bool = False`, `se_reduction_ratio: int = 4`, `se_alpha_init: float = -10.0` (sigmoid ≈ 0).
-- **Compute**: SE block computes per-token channel weights. `attn_out_post = (1 − sigmoid(γ_raw)) · attn_out + sigmoid(γ_raw) · (attn_out · se_weight)`.
-- **Bit-identical at step 0**: γ_raw = -10 ⇒ sigmoid ≈ 0 ⇒ `attn_out_post = attn_out` exactly.
-- **Params**: SE block: 2 × (d_model × d_model/r) = 2 × (64 × 16) = 2048 params per block × 12 blocks = 24,576 params (+2.6% of 0.94M); plus 12 γ scalars.
+- **Compute**: `attn_out_post = (1 − sigmoid(γ_raw)) · attn_out + sigmoid(γ_raw) · (attn_out ⊙ sigmoid(W_2 · gelu(W_1 · attn_out)))`.
+- **Step-0 bit-identity (clean A/B)**: γ_raw=-10 ⇒ sigmoid(γ_raw) ≈ 4.54e-5, so `attn_out_post = (1 − 4.54e-5)·attn_out + 4.54e-5·(attn_out ⊙ se_weight_t)` ⇒ `max-abs-diff(attn_out_post, attn_out) < 1e-5` vs the same-seed baseline run at fp32. The internal `se_weight_t` is ~0.5 (not 1.0), but the γ-gate silences the whole branch — implementer's self-check is `max-abs-diff < 1e-5`, not "exactly bit-identical."
+- **Params**: SE block: 2 × (d_model × d_model/r) = 2 × (64 × 16) = 2048 params per block × 12 blocks = 24,576 params (+2.6% of 0.94M); plus 12 γ_raw scalars.
+- **Param group for γ_raw**: route to the **Muon** param group (not AdamW). 1-D gain scalars benefit from Muon's LR scale; AdamW at peak LR 0.024 is ~10× too hot for a scalar. The default `is_muon_candidate` in `training/trainer.py` requires `ndim==2`, so the implementer should either (a) name the param with a `norm`-suffixed key (so `muon_for_1d_norm=True` catches it) or (b) add a small explicit `if 'se_gamma' in name` branch in the Muon routing. Per 021/207 reviewer precedent (1-D gains → Muon).
 - **Intuition**: SE channel attention reweights each token's channels based on the *content* of that token. The bet: at 0.94M, attention already mixes cross-token information, but within-token channel mixing is implicit through W_O. An explicit per-token channel attention gives the optimizer a clean axis to up-weight informative channels and down-weight noise channels — distinct from LayerScale (per-channel diagonal gain) and cross-head RMSNorm (cross-head normalization).
+
+## Pass bar
+- **Numeric bar (WIN)**: `Δval ≤ -0.01` vs the 4-ctrl cluster mean (6.4394) at tiny1m3m, seed 42. The cache band at tiny1m3m is ±0.04 and the box-noise band is ±0.01; -0.01 clears the noise band and must also beat **both** individual ctrls in the cluster per the §2 two-ctrl rule.
+- **NULL (informative)**: `Δval` inside `6.4394 ± 0.04` (cache band) closes the post-AV axis family at 0.94M — paired with the static cells (142, 160, 181, 191) this completes the {static, content} × {per-channel, per-token} 2×2 on the post-AV axis family.
+- **Above band (informative)**: `Δval ≥ 6.4394 + 0.04` and no param-group mistake → consider the lever actively harmful and abandon.
+- **Bit-identity check (gate for the WIN/NULL read)**: the implementer must report `max-abs-diff(attn_out_post, attn_out) < 1e-5` at step 0 vs the same-seed baseline. If the diff is much larger, suspect a config-flag wiring bug (γ not on the residual, W_1/W_2 init non-default) — not a real signal.
 
 ## Scale evidence
 SE-Net validated at ImageNet (all scales); CBAM validated at ImageNet. No published "pre-W_O SE channel attention for LMs" paper I'm aware of. Transfer-risk: med (lever is a well-known CNN primitive applied to a fresh placement in attention output).
