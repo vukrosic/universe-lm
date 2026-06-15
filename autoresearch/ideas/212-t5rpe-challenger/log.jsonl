@@ -15,3 +15,4 @@
 {"ts":"2026-06-15T16:39:16Z","agent":"daemon","idea":"212-t5rpe-challenger","from":"running","to":"needs-run","round":2,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
 {"ts":"2026-06-15T16:39:45Z","agent":"daemon","idea":"212-t5rpe-challenger","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:40:19Z","agent":"daemon","idea":"212-t5rpe-challenger","from":"running","to":"needs-run","round":2,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-15T16:40:40Z","agent":"daemon","idea":"212-t5rpe-challenger","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}

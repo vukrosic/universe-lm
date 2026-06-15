@@ -20,3 +20,6 @@
 {"ts":"2026-06-15T16:38:01Z","agent":"reviewer","idea":"196-ffn-glu-mish","from":"rejected","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T16:40:10Z","agent":"code-impl","idea":"196-ffn-glu-mish","from":"needs-plan","to":"planning","round":1,"note":"claimed: plan+code+artifacts verified in HEAD; build-smoke SMOKE_OK"}
 {"ts":"2026-06-15T16:40:13Z","agent":"code-impl","idea":"196-ffn-glu-mish","from":"planning","to":"needs-run","round":1,"note":"plan+code done; build-smoke SMOKE_OK; r2 review's deploy-issue root cause is the daemon's stale-box race — code is in HEAD and constructs on CPU"}
+{"ts":"2026-06-15T16:40:40Z","agent":"daemon","idea":"196-ffn-glu-mish","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T16:41:18Z","agent":"daemon","idea":"196-ffn-glu-mish","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MMishGLUConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T16:41:39Z","agent":"auto-implement","idea":"196-ffn-glu-mish","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 4 failed runs — needs a human"}

@@ -19,3 +19,4 @@
 {"ts":"2026-06-15T16:21:36Z","agent":"code-impl","idea":"189-cosformer-linear-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:28:39Z","agent":"orchestrator","idea":"189-cosformer-linear-attn","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
 {"ts":"2026-06-15T16:39:56Z","agent":"code-impl","idea":"189-cosformer-linear-attn","from":"needs-plan","to":"needs-run","round":1,"note":"plan+code done: MHA use_cosformer branch (cumsum causal, mandatory denominator), MinimalLLM.cosformer_gammas param (n_layers,), treatment build-smoke ok, ctrl build-smoke ok, finite forward"}
+{"ts":"2026-06-15T16:40:40Z","agent":"daemon","idea":"189-cosformer-linear-attn","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
