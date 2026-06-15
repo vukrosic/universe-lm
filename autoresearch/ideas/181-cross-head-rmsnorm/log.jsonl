@@ -12,3 +12,5 @@
 {"ts":"2026-06-15T06:23:34Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-15T06:29:24Z","agent":"daemon","idea":"181-cross-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T06:29:42Z","agent":"daemon","idea":"181-cross-head-rmsnorm","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MCrossHeadRMSNormConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T06:31:32Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
+{"ts":"2026-06-15T06:31:38Z","agent":"code-impl","idea":"181-cross-head-rmsnorm","from":"recoding","to":"needs-run","round":2,"note":"build-smoke fixed: Tiny1M3MCrossHeadRMSNormConfig now in configs/llm_config.py; local CPU smoke OK (SMOKE_OK); params 68/block * 12 = 816 (+0.087%); step-0 byte-identical via relu(-1e-3)=0 + tanh(0)=0"}
