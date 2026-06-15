@@ -11,3 +11,4 @@
 {"ts":"2026-06-15T16:27:19Z","agent":"code-impl","idea":"207-wo-lowrank-bottleneck","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T16:34:40Z","agent":"orchestrator","idea":"207-wo-lowrank-bottleneck","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}
 {"ts":"2026-06-15T16:38:13Z","agent":"code-impl","idea":"207-wo-lowrank-bottleneck","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T16:43:01Z","agent":"code-impl","idea":"207-wo-lowrank-bottleneck","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
