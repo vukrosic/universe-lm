@@ -140,3 +140,124 @@ weighted-averaged — there's no "norm of V affects the geometry"
 argument) and the pre-interaction normalization family is exhausted
 at 0.94M. A win unlocks the V-norm axis at Phase-2 where each head
 has more gradient signal to develop a useful gate-α value.
+
+## Plan
+
+**Files changed**
+
+- `configs/llm_config.py` — add `use_v_rmsnorm: bool = False` field on
+  `LLMConfig` (sibling of `use_v_layernorm` at line 1807; default off,
+  baseline path bit-identical). Add `@dataclass
+  Tiny1M3MVPreAVNormConfig(Tiny1M3MConfig)` with
+  `use_v_rmsnorm: bool = True` (sibling of `Tiny1M3MLayerNorm*` configs
+  near line 2690 — must use the `@dataclass` decorator, NOT a bare
+  `class C(...):` annotation, per the 162/165/155/161 precedent that
+  bare-class annotation breaks dataclass field inheritance).
+- `models/layers.py` — add `use_v_rmsnorm: bool = False` kwarg to
+  `MultiHeadAttention.__init__` at line 1026 (sibling of
+  `use_v_layernorm` at the same line). When on, register
+  `self.v_rmsnorm_alpha = nn.Parameter(torch.zeros(H))` (init 0) and
+  `self.v_rmsnorm_gain = nn.Parameter(torch.ones(H, d_k))` (init 1)
+  next to the existing `v_norm` construction at line 1324
+  (slot a parallel `elif use_v_rmsnorm:` arm). Apply the gate-α+γ
+  after `v = self.W_V(x)` and before `scores @ v` (i.e. before any
+  RoPE, since V is *not* rotary in the current MHA). The
+  `self.use_v_norm` site at line 2852 is the construction template —
+  slot the gate as `if self.use_v_rmsnorm: V = self._apply_v_rmsnorm(V)`
+  *after* the closed-#92 `v_norm` site and *before* the AV matmul.
+  Verify vs. the existing v-residual site at line ~2848 if
+  `021-value-residual` is also on, and the `self.alpha_av` site at
+  line 1418/3521 if AV-output carry is on (the gate must run on V
+  *before* the AV product; AV-output carry is post-product and
+  doesn't interact).
+- `models/layers.py` — `TransformerBlock.__init__` adds
+  `use_v_rmsnorm: bool = False` kwarg (sibling of `use_v_layernorm`
+  at line 3740), reads it from kwargs, passes it into the MHA
+  constructor at lines 4204-4206.
+- `models/llm.py` — read `self.use_v_rmsnorm = getattr(config,
+  "use_v_rmsnorm", False)` at line ~440 (sibling of
+  `self.use_v_layernorm`); thread it into both `TransformerBlock(...)`
+  constructor sites at lines ~685 and ~941.
+
+**Mutual exclusion asserts** (top of `MultiHeadAttention.forward`,
+mirror the `use_cope ∧ use_qk_norm_post_rope` assertion at line 1948):
+```
+assert not (self.use_v_rmsnorm and self.use_v_layernorm), \
+    "use_v_rmsnorm and use_v_layernorm are mutually exclusive (V-pre-AV)"
+assert not (self.use_v_rmsnorm and self.use_v_norm), \
+    "use_v_rmsnorm and closed-#92 v_norm_type are mutually exclusive"
+```
+The `use_v_mix_conv` check is optional (clean independence insurance,
+not a hard requirement — only add if the impl is trivially free).
+
+**Flag name**: `use_v_rmsnorm: bool = False` (off by default).
+
+**Step-0 identity**: at init, `α_raw_h = 0` for all heads ⇒
+`relu(0) = 0` ⇒ `V_out = (1 − 0) · V_in + 0 · ... = V_in` *exactly* ⇒
+**byte-identical to baseline at step 0 (max-abs-diff = 0.0)**. Verify
+in the runner with a fp32 max-abs-diff test (assert
+`trt_step0_logits == ctrl_step0_logits` byte-exact).
+
+**Param count**: H=4, d_k=16, n_layers=12. Per block:
+`H × (1 α + d_k γ) = 4 × (1 + 16) = 68` params. Across 12 blocks:
+`12 × 68 = 816` params. That's +0.087% of the 0.94M baseline
+(949,056 params). Well under the per-lever budget.
+(Not 204 as a hypothetical taste-summary might say — re-derive from
+H=4, d_k=16, n_layers=12, not H=12.)
+
+**CPU build-smoke** (the daemon's `MinimalLLM(C())` check):
+- `MinimalLLM(Tiny1M3MConfig())` → 949,056 params (baseline).
+- `MinimalLLM(Tiny1M3MVPreAVNormConfig())` → 949,872 params
+  (+816 = 12 × 68).
+- The 176 build-smoke must call `MinimalLLM(C())` cleanly before
+  any GPU time is spent (the daemon's `_box_smoke.py` wraps this).
+
+**Run command**:
+- Artifact: `_arq_176-v-pre-av-norm.py` at repo root, imports
+  `Tiny1M3MVPreAVNormConfig as C` from `configs.llm_config`, dispatches
+  `train_llm.main()` with `--config_class __main__.C --seed 42
+  --dataset_path processed_data/pretrain_1B --warmup false`
+  (mirror the 162/165/169/170 `_arq_*.py` pattern).
+- Job: `python _arq_176-v-pre-av-norm.py` with `JOB_TIMEOUT=12m`
+  (tiny1m3m runs in ~2-6 min; the cap keeps a hung treatment from
+  burning the box for 40 min).
+- Descriptor: `autoresearch/ideas/176-v-pre-av-norm/run.json` —
+  `{"name": "176-v-pre-av-norm", "arq_file": "_arq_176-v-pre-av-norm.py",
+   "job_timeout": "12m"}`.
+- Val loss is read from the run's log via
+  `grep "val_loss" ~/arq/logs/176-v-pre-av-norm.log`.
+
+**LoC budget**: ~30 lines total (parameter + apply-RMSNorm-with-gate +
+3-line assert). Well under the 200 LoC cap. Uses the existing
+`nn.RMSNorm` from `torch.nn` (PyTorch ≥2.4 already used in this repo
+per `models/layers.py:340, 879`).
+
+## Pass / fail bar
+
+**Control**: unmodded `Tiny1M3MConfig` (no V-norm baseline).
+**Cached baseline val_mean** ≈ 6.4447, noise_band ≈ 0.0488
+(see `autoresearch/baseline-cache.json`).
+
+- **WIN (V-norm helps at 0.94M):** treatment val ≤ val_mean − 0.005
+  (i.e. ≤ 6.4397) **AND** clears the plan bar of Δval ≤ −0.005 vs the
+  bare no-norm ctrl. Mirrors the 016-qk-norm bar: clears the
+  ±0.049 noise band by ≥10× (one-seed; sub-noise is inconclusive,
+  not real). Win message: "per-head α-gated V-norm lowers val at
+  0.94M ⇒ pre-AV normalization extends to V."
+- **NULL (V-norm axis closed at this tier):** |treatment val −
+  val_mean| < 0.005 (i.e. inside [6.4397, 6.4497]). Null message:
+  "per-head α-gated V-norm is indistinguishable from the no-norm
+  baseline at 0.94M ⇒ pre-AV V is structurally inert at our tier,
+  or the per-head gate can't accumulate enough gradient signal
+  in 3k steps."
+- **DRIFT (lever harmful):** treatment val ≥ val_mean + 0.005
+  (i.e. ≥ 6.4497). Drift message: "the V-norm rescaling disturbs
+  a useful prior (e.g. learned V magnitudes encode positional
+  information)."
+- Crash / NaN / OOM → `needs-recode` (round 1, inside budget).
+- Sub-noise (|Δval| < 0.005 but not DRIFT) is INCONCLUSIVE on one
+  seed per the one-seed-only rule — do **not** re-run with extra
+  seeds; the next reviewer adjudicates and may call for a
+  follow-up lever that targets the gate differently (e.g. init
+  α_raw_h to a small positive constant rather than 0, so the gate
+  is open from step 1).
