@@ -20,14 +20,16 @@ Standard attention: each block b has its own `W_O_b ∈ R^{d_model × d_model}` 
 **197 commits to the soft blend only.** Every block keeps its own `W_O_b`; a single shared `W_O_shared` is added; an effective output projection is built per-block:
 
 ```
-α_b ∈ R, init 0.0
+α_b_raw ∈ R, init -10.0
+α_b = sigmoid(α_b_raw)            # ∈ [0, 1] — convex blend
 W_O_eff_b = (1 − α_b) · W_O_b + α_b · W_O_shared
 ```
 
-- **At init (α_b = 0):** `W_O_eff_b = W_O_b` exactly. Step-0 is byte-identical to baseline.
-- **At α_b = 1:** block b degenerates to a copy of `W_O_shared`; with all 12 blocks at α_b = 1, this reduces to a *hard* tied W_O. That extreme is a *limit*, not a target — the sweet spot is somewhere in (0, 1), learnable per block, with no manual schedule.
-- **Params added:** 1 shared `W_O` (4096) + 12 `α_b` scalars (12) = 4,108 params. **No per-block parameters are removed.** Treatment has +4,108 params vs control; param delta is *symmetric* — this is a parameter-shape lever, not a model-size lever.
-- **Optimization detail:** α_b is a free parameter of the per-block `attention_block` module. Standard SGD/AdamW on α_b is fine; no special optimizer (the only constraint is that the gradient on α_b is a scalar, so any optimizer works). No LR warmup trick, no α-schedule — let the model learn whether each block wants to share.
+- **At init (sigmoid(−10) ≈ 4.54e-5):** `W_O_eff_b = W_O_b` numerically (max-abs-diff on the projection < 1e-4 in fp32, within the champion-noise band). Step-0 is byte-identical to baseline up to fp32 noise.
+- **At α_b = 1:** block b degenerates to a copy of `W_O_shared`; with all 12 blocks at α_b = 1, this reduces to a *hard* tied W_O. That extreme is a *limit*, not a target — the sweet spot is somewhere in (0, 1), learnable per block, with no manual schedule. The sigmoid bound prevents the optimizer from extrapolating off the convex hull (the rejected unconstrained-real `α_b ∈ R` form would let α_b = 2 produce `−W_O_b + 2·W_O_shared`, a non-convex linear combination — *not* a blend).
+- **Why sigmoid-bounded (not unconstrained real).** Matches the in-repo precedent at `188-cross-block-kv-share` and `206-cross-block-ffn-share`, both of which use `α_raw init = −10.0` with `sigmoid(α_raw)` for the same "init-near-0 AND bounded [0,1]" semantics. The implementer should follow the 188 pattern (sigmoid, raw init −10) — do NOT copy the original draft's `α_b ∈ R` form, which would let the optimizer walk off the convex hull and break the "convex blend" interpretation.
+- **Params added:** 1 shared `W_O` (4096) + 12 `α_b_raw` scalars (12) = 4,108 params. **No per-block parameters are removed.** Treatment has +4,108 params vs control; param delta is *symmetric* — this is a parameter-shape lever, not a model-size lever.
+- **Optimization detail:** `α_b_raw` is a free parameter of the per-block `attention_block` module (e.g. `nn.Parameter(torch.full((), -10.0))`); `α_b = torch.sigmoid(α_b_raw)` is computed inside `forward()`. Standard SGD/AdamW on `α_b_raw` is fine; no special optimizer. No LR warmup trick, no α-schedule — let the model learn whether each block wants to share.
 
 **Why soft over hard (the rejected alternative):** the hard version removes 12 `d_model × d_model` matrices (-49,152 params, -5.2% of 0.94M). A treatment smaller than control produces the wrong null — "tied W_O is just smaller, smaller loses, conclude W_O tying is bad." The soft blend makes the A/B fair: same per-block slot, same per-block learning, same total compute, with α_b as a *probe* into how much sharing each block wants. The hard version is a secondary ablation reserved for the definition gate, not this pitch.
 
@@ -46,3 +48,14 @@ ALBERT validated at BERT-base/large/xxlarge (110M-235M); Universal Transformers 
 **Leverage read.** At 0.94M, +4,108 params is +0.4% overhead — sub-noise, so any signal is *signal* not *capacity*. The win case is "soft W_O tying wins by Δ<-0.01 with sub-1% param overhead"; the null case is "W_O tying is the third closed W_O lever at 0.94M, the W_O neighborhood is exhausted, future levers should target QK or FFN." A 197 NULL is informative enough to justify the slot because it bounds the *narrowest* tying failure mode from above, which is data the closed-tying-axis log can't supply on its own.
 
 **Taste bar check.** Big-if-true: a W_O WIN is the cleanest discriminator in the tying family because it points the next tying experiment. Safe-but-tiny: the soft-blend formulation is small in scope (+12 scalars, +1 matrix) and the implementation is `<50 LoC` in `models/layers.py`. The bet is sharp (one mechanism, one prior, one discriminator), and the null is informative (bounds the failure mode from the most conservative side).
+
+## Pass/fail bar at tiny1m3m (seed 42)
+
+- **Cache reference** (from `autoresearch/baseline-cache.json`):
+  - Champion val: **6.2403** (175-alibi; std 0.0088, noise_band 0.04) — best known at this tier.
+  - Current baseline mean: **6.40 ± 0.04** (two-ctrl bracket per §2 of the protocol).
+  - Box noise floor at 0.94M / 3M tokens: **±0.01** (per the §2 two-ctrl rule). Any band narrower than this will not resolve at this tier.
+- **WIN**: `trt_val ≤ ctrl_val − 0.01` **AND** clears the two-ctrl rule (the two-ctrl bracket must be tighter than the Δ). Sub-1% param overhead means the win is signal, not capacity.
+- **NULL**: `|trt_val − ctrl_val| < 0.01` — within the box noise floor. Mechanistic read: the W_O-tie story is not the binding constraint of the full-tying null; the binding constraint lives in QK-tie or FFN-tie. Log as a third tying-axis null with the attribution narrowed from {QK, FFN, W_O} to {QK, FFN}.
+- **DRIFT**: `trt_val > ctrl_val + 0.01` — treatment is *worse* than control. The structural-collapse prior is *harmful*, not just inert. Stop the tying axis on W_O; redirect future tying experiments at FFN-tie (the next-narrowest lever).
+- **No in-between outcomes.** The band is 0.01 (the noise floor); any result between WIN and NULL is logged as NULL with a note that the effect is sub-noise and the experiment is repeated only if the magnitude is within 2× the noise floor of a 1-seed-42 reference.

@@ -103,3 +103,25 @@ The bet, in one sharp sentence: **μP's joint parameterization (variance-1 embed
 - Pythia per-layer LR multiplier (not in repo) — different axis (LR, not init).
 - 110-weight-ema, 122-tiger, 124-radam (null, tier-mismatch) — runtime/optimizer changes. 193-r2 is init-only.
 - 117-soft-moe, 118-MoD, 145-expert-choice, 146-sparse-ffn (null) — FFN-side. 193-r2 is a *global* init change.
+
+## Plan
+
+- **Champion baseline**: `autoresearch/champion.json` ⇒ `Tiny1M3MAlibiConfig` (`val 6.2403`, band 0.04, seed 42). The new treatment config `C` **subclasses** `Tiny1M3MAlibiConfig` (so the lever stacks on top of the current champion stack).
+- **Files to change**:
+  1. `configs/llm_config.py` — add `class Tiny1M3MMuPJointInitConfig(Tiny1M3MAlibiConfig)` with:
+     - `use_mup_joint_init: bool = True`
+     - `init_std: float = 1.0` (overrides the default `0.02` from `LLMConfig.init_std`)
+  2. `models/llm.py` — in `MinimalLLM.__init__`:
+     - Read `self.use_mup_joint_init = getattr(config, "use_mup_joint_init", False)`.
+     - If on, allocate `self.logit_scale_param = nn.Parameter(torch.tensor(-math.log(50.0)))` so `exp(-log 50) = 1/50` exactly at step 0. (1 scalar; routes to AdamW.)
+     - AFTER the global `_init_weights` runs (which sets `W_emb ~ N(0, 0.02²)`), override `self.token_embedding.weight.data` with `normal_(std=1.0)` (this propagates to the tied `lm_head` automatically since `lm_head.weight = token_embedding.weight`). Step-0 logits get 50×-inflated magnitude → canceled by `1/50` scale → byte-identical.
+     - In `compute_logits` (right after the existing `use_logit_scale` branch ~line 2054), apply `if self.use_mup_joint_init: logits = logits * self.logit_scale_param.exp()`. With flag off the branch is dead and the forward graph is bit-identical to champion.
+  3. `_arq_193-mup-init.py` — stub `class C(Tiny1M3MMuPJointInitConfig): pass` matching the 175/184 stub style. Run via `train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
+- **Param count**: 1 scalar (the logit scale, +0.0001% of 0.94M). The embedding init change is init-only (no extra params).
+- **Step-0 byte-identity**: `W_emb_new = 50 · W_emb_baseline` (both ~normal, std ratio exactly 50×). `logit_scale = exp(-log 50) = 1/50` exactly in fp32. Then `logits_new = (W_emb_new @ x) · (1/50) = W_emb_baseline @ x = logits_baseline` exactly ⇒ loss, gradient, predictions bit-identical to the champion baseline. The flag is off by default; with `use_mup_joint_init=False` the if-branch is never entered and the forward graph is byte-identical to champion.
+- **Run command** (runnable, do not necessarily run here):
+  ```bash
+  cd /root/universe-lm   # adjust to the runner's cwd
+  /venv/main/bin/python _arq_193-mup-init.py
+  ```
+- **Reading the result**: `val_mean` in the runner's print / the `records.jsonl` entry. Compare to champion `val = 6.2403` (cache reference in `autoresearch/baseline-cache.json`, re-pull on run day). WIN: `trt_val ≤ 6.2403 − 0.005` AND clears the two-ctrl rule. NULL: `|trt_val − 6.2403| < 0.01`. DRIFT: `trt_val > 6.2403 + 0.01`. Sub-noise is inconclusive per one-seed-only rule.
