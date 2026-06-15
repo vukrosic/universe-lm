@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T05:50:37Z","agent":"taste","idea":"180-qk-logit-conv","from":"tasting","to":"needs-review","round":1,"note":"accept: novel logit-space conv placement, distinct from closed per-head-scalar axes and from 143 pre-attention conv; sharp mechanistic bet (no intermediate gate); step-0 byte-identical delta-init; +144 params; high info value both ways; r1 done, round reset for definition gate"}
 {"ts":"2026-06-15T05:53:50Z","agent":"reviewer","idea":"180-qk-logit-conv","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T05:55:47Z","agent":"code-impl","idea":"180-qk-logit-conv","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T06:00:12Z","agent":"code-impl","idea":"180-qk-logit-conv","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
