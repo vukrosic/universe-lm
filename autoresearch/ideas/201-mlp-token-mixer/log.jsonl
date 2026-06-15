@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T12:05:15Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:10:45Z","agent":"reviewer","idea":"201-mlp-token-mixer","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T12:16:01Z","agent":"code-impl","idea":"201-mlp-token-mixer","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T12:23:49Z","agent":"code-impl","idea":"201-mlp-token-mixer","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
