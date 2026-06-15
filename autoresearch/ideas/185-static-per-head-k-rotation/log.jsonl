@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T07:16:31Z","agent":"taste","idea":"185-static-per-head-k-rotation","from":"tasting","to":"needs-review","round":1,"note":"accept: 154 established rebase axis at 0.94M (WIN Δ=−3.48); 185 is novel learned per-head K-only generalization, step-0 byte-identical via θ=0 init, sharp bet (can optimizer beat random per-head?), informative in all 3 outcomes, fits niche + portfolio"}
 {"ts":"2026-06-15T07:18:47Z","agent":"reviewer","idea":"185-static-per-head-k-rotation","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:21:21Z","agent":"reviewer","idea":"185-static-per-head-k-rotation","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T07:28:11Z","agent":"code-impl","idea":"185-static-per-head-k-rotation","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
