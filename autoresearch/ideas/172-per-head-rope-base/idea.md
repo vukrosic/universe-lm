@@ -1,8 +1,8 @@
 ---
 id: 172-per-head-rope-base
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-14T10:40:23Z
+updated: 2026-06-15T04:59:49Z
 transfer-risk: med
 plain: Give each attention head its own learnable RoPE base frequency (all starting at the global 500k base so the first step is byte-identical to the baseline), and let the model learn per-head frequency scales via backprop.
 ---

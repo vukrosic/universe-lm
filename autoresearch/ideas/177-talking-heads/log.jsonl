@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T01:59:49Z","agent":"reviewer","idea":"177-talking-heads","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T02:01:12Z","agent":"code-impl","idea":"177-talking-heads","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T03:00:37Z","agent":"code-impl","idea":"177-talking-heads","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"177-talking-heads","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
