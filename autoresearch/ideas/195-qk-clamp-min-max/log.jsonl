@@ -20,3 +20,5 @@
 {"ts":"2026-06-15T16:37:17Z","agent":"daemon","idea":"195-qk-clamp-min-max","from":"running","to":"needs-run","round":2,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
 {"ts":"2026-06-15T16:37:40Z","agent":"daemon","idea":"195-qk-clamp-min-max","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:38:08Z","agent":"daemon","idea":"195-qk-clamp-min-max","from":"running","to":"needs-run","round":2,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-15T16:38:40Z","agent":"daemon","idea":"195-qk-clamp-min-max","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T16:39:16Z","agent":"daemon","idea":"195-qk-clamp-min-max","from":"running","to":"needs-run","round":2,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}

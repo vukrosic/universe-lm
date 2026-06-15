@@ -6,10 +6,13 @@
 - `wo_lowrank_alpha_init: float = -10.0` — `sigmoid(-10) ≈ 4.5e-5`, the soft-gate init for the rank-r contribution.
 
 Files / lines:
-- `configs/llm_config.py:NNN` (new flag block, sits in the W_O lever cluster near the existing 171-DropConnect and 160-head-gain comments).
-- `models/layers.py:NNN` (per-MHA param registration, then forward-site W_O correction just before `F.linear(attn_output, w_o)` at the current `qkvo_proj[self.qkv_size:]` site — same W_O slice the 171-DropConnect mask reads).
-- `models/llm.py:NNN` (mirror the 188 plumbing pattern: `getattr` pick-up at construction, pass-through into `TransformerBlock.__init__`, then to `MultiHeadAttention.__init__`).
-- `configs/llm_config.py` tail — new `Tiny1M3MLowRankWOConfig` subclass with the flag on.
+- `configs/llm_config.py:1255` (flag block in the W_O lever cluster near 171-DropConnect and 199-SpectralCap).
+- `models/layers.py:1409` (`MultiHeadAttention.__init__` kwarg).
+- `models/layers.py:2249-2266` (per-MHA param registration: `wo_a` normal-init std=0.02, `wo_b` zero-init, `wo_lowrank_alpha` init `wo_lowrank_alpha_init`).
+- `models/layers.py:5681-5683` (forward site: `w_o = w_o + α · (wo_a @ wo_b)`, sits AFTER 199 cap, 197 blend, and 171 mask; BEFORE `F.linear`).
+- `models/layers.py:5818,6560` (TransformerBlock pass-through to inner MHA).
+- `models/llm.py:293-296, 922-929, 1337-1344` (MinimalLLM plumbing: `getattr` pick-up at construction, pass-through to both attention paths).
+- `configs/llm_config.py:8576` (new `Tiny1M3MLowRankWOConfig` subclass with the flag on, `wo_rank=16`, `wo_lowrank_alpha_init=-10.0`).
 
 ## Change
 
@@ -19,7 +22,7 @@ A learnable **rank-r residual correction** is added to W_O in every attention bl
 W_O_eff = W_O + σ(α) · (W_O_A @ W_O_B)
 ```
 
-where `W_O_A ∈ R^{d_model × r}` and `W_O_B ∈ R^{r × d_model}`. Per block we register two new `nn.Parameter` tensors (`W_O_A` normal-init std=0.02, matching the existing `out_proj` init at line 6043; `W_O_B` **zero-init** so the correction is exactly 0 at step 0) plus one 0-dim scalar `α_raw` (init `wo_lowrank_alpha_init`, default −10 ⇒ `σ(α) ≈ 4.5e-5` at step 0). The forward computes
+where `W_O_A ∈ R^{d_model × r}` and `W_O_B ∈ R^{r × d_model}`. Per block we register two new `nn.Parameter` tensors (`W_O_A` normal-init std=0.02, matching the existing `out_proj` init; `W_O_B` **zero-init** so the correction is exactly 0 at step 0) plus one 0-dim scalar `wo_lowrank_alpha` (init `wo_lowrank_alpha_init`, default −10 ⇒ `σ(α) ≈ 4.5e-5` at step 0). The forward computes
 
 ```python
 if self.use_lowrank_wo:
@@ -28,9 +31,9 @@ if self.use_lowrank_wo:
 output = F.linear(attn_output, w_o)
 ```
 
-— composes with the 171-DropConnect mask (the 171 mask runs first on `w_o`, the 207 correction is added after, so the two levers multiply through and are jointly OFF-by-default + bit-identical at step 0).
+— composes with 199-SpectralCap, 197-TiedWO, and 171-DropConnect (each runs first on `w_o`; 207 adds the rank-r correction last so all four levers multiply through the linear and are jointly OFF-by-default + bit-identical at step 0).
 
-**LoC budget (well under 200).** Roughly: 3 config flags (~6 LoC incl. comments) + 2 `nn.Parameter` registrations + the σ + matmul (~8 LoC in forward) + TransformerBlock / MinimalLLM plumbing (~12 LoC) = ~30 LoC of new code total. The 188 parallel worker touches the same `models/layers.py` and `configs/llm_config.py` files but on the **K/V projection** axis (input side) — no parameter or forward-site overlap with 207 (output side).
+**LoC budget (well under 200).** Roughly: 3 config flags (~6 LoC incl. comments) + 2 `nn.Parameter` registrations + 1 scalar + the σ + matmul (~8 LoC in forward) + TransformerBlock / MinimalLLM plumbing (~12 LoC) = ~30 LoC of new code total. The 188 / 197 / 199 / 197 parallel workers touch the same `models/layers.py` and `configs/llm_config.py` files but on **different axes** — no parameter or forward-site overlap with 207 (the 207 forward site is at the O-slice; the 188 sibling is on the K/V input side; 199 is a pre-blend Lipschitz cap; 197 is a pre-blend shared-W_O blend).
 
 **Init justification for `wo_lowrank_alpha_init = -10.0`.** σ(−10) ≈ 4.54e-5. Combined with W_O_B=0, the rank-r contribution is *numerically* 0 at step 0 (bit-identical to baseline). The reviewer flagged this is "approximate, not literal" — the σ(−10) gate is just a soft on/off; the dominant silence comes from W_O_B=0, not from σ(−10) being tiny. The `sigmoid(-10)·W_O_A@W_O_B` form mirrors modded-nanogpt's sigmoid gate pattern (not a zero-init gate — see [[U-Net skips gate fix]] for the prior zero-init failure). I chose −10 over −5 (≈ 6.7e-3 — too large, would not be silent) and over −15 (≈ 3.1e-6 — fine but wastes training time) per the modded-nanogpt default.
 
