@@ -1255,6 +1255,32 @@ class LLMConfig:
     use_lowrank_wo: bool = False
     wo_rank: int = 16
     wo_lowrank_alpha_init: float = -10.0
+    # 194 — W_V Low-Rank Residual Correction (LoRA-style trained-
+    # from-scratch low-rank factorization on the value projection,
+    # Hu et al. 2021 arXiv:2106.09685 + Arora et al. on linear-
+    # algebraic word-sense structure). Replace W_V with
+    #   `W_V_eff = W_V + σ(α) · (W_V_A @ W_V_B)`
+    # where `W_V_A ∈ R^{d_model × r}`, `W_V_B ∈ R^{r × d_model}`
+    # (`r = wv_rank`, default 8), and `α` is a 0-dim learnable
+    # scalar (init `wv_lowrank_alpha_init`, default −10 ⇒
+    # `σ(α) ≈ 4.5e-5` at step 0). `W_V_A` is normal-init std=0.02
+    # (matches the existing `qkvo_proj` init); `W_V_B` is
+    # **zero-init** so the rank-r correction is exactly 0 at
+    # step 0 ⇒ `W_V_eff == W_V` bit-identical at step 0. As
+    # training proceeds, the optimizer can grow `W_V_B` and `α`,
+    # activating a learnable low-rank correction on the V
+    # projection — V is the only single-side attention projection
+    # that *positively* binds at 0.94M (021-value-residual WIN),
+    # so this is the highest-prior untested rank axis.
+    # Complementary to 207-W_O-LowRank (same mechanism, different
+    # sub-block); a null at 0.94M closes the entire low-rank-
+    # residual sub-block family (FFN tested in r1, W_O tested in
+    # 207, W_V tested here). Default off → no Parameter
+    # registered, no branch taken, baseline path bit-identical.
+    # See `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+    use_lowrank_wv: bool = False
+    wv_rank: int = 8
+    wv_lowrank_alpha_init: float = -10.0
 
     # 151 — RoV (Rotary Value Embeddings, gated). Apply the same rotary
     # position embedding already used on Q,K to the value vector V as
@@ -3332,6 +3358,48 @@ class Tiny1M3MCanonConvAlibiConfig(Tiny1M3MAlibiConfig):
     wiring referenced at `configs/llm_config.py:487-498`.
     """
     use_canon_conv: bool = True
+
+
+@dataclass
+class Tiny1M3MLowrankWVConfig(Tiny1M3MAlibiConfig):
+    """194 — Tiny1M3M with W_V Low-Rank Residual Correction, stacked on
+    the 175-alibi champion (LoRA-style trained-from-scratch low-rank
+    factorization on the value projection, Hu et al. 2021
+    arXiv:2106.09685 + Arora et al. on linear-algebraic word-sense
+    structure). Subclasses `Tiny1M3MAlibiConfig` (champion val 6.2403,
+    band 0.04) so the W_V rank lever stacks on the current champion.
+
+    Add a learnable rank-r residual to W_V per block:
+      `W_V_eff = W_V + σ(α) · (W_V_A @ W_V_B)`
+    where `W_V_A ∈ R^{d_model × r}` (normal-init std=0.02), `W_V_B ∈
+    R^{r × d_model}` (zero-init), and `α` is a 0-dim learnable scalar
+    init `wv_lowrank_alpha_init = -10.0` ⇒ `σ(α) ≈ 4.5e-5`. At step 0
+    `W_V_B = 0` ⇒ `W_V_A @ W_V_B = 0` exactly ⇒
+    `W_V_eff = W_V` bit-identical to the champion. The optimizer can
+    grow W_V_B and α during training to exploit any low-rank structure
+    in W_V; if W_V is approximately full-rank, α stays near zero and
+    the residual is silent.
+
+    Why W_V (not W_O): W_O is owned by 207 (same mechanism, in-repo
+    queue). V is the only single-side attention projection that
+    *positively* binds at 0.94M (021-value-residual WIN Δ=−0.034);
+    Q-side analog 164-q-carry nulls — V-bind is not symmetric to Q.
+    Pre-registered: a null closes the entire low-rank-residual sub-
+    block family at 0.94M (FFN tested in 194-r1, W_O tested in 207,
+    W_V tested here).
+
+    Cost at r=8, d_model=64: 2 × (64·8 + 8·64) × 12 blocks = 12,288
+    params (+1.3% of 0.94M) + 12 α scalars. Negligible FLOPs
+    (`W_V_A @ W_V_B` is rank-r d_model² ≈ 0.05% of base forward).
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2403,
+    band 0.04). Pre-registered: if `effective_rank(W_V) < 32` ⇒
+    expect `Δ < −0.005`; if `effective_rank(W_V) ≥ 56` ⇒ expect null
+    (axis-closure). Win bar `Δ < −0.01`. Null bar `|Δ| < 0.04`.
+
+    See `autoresearch/ideas/194-lowrank-ffn/idea.md` and `plan.md`.
+    """
+    use_lowrank_wv: bool = True
 
 
 @dataclass

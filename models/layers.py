@@ -899,6 +899,28 @@ class MultiHeadAttention(nn.Module):
         use_nsa_global: bool = False,
         nsa_block: int = 64,
         use_hybrid_heads: bool = False,
+        # 189 — CosFormer-style linear attention (Qin et al. NeurIPS
+        # 2022, arXiv:2202.08791). Replace softmax(QK^T/√d)·V with
+        # the kernel-replacement form
+        # `out = (Q'·(K'^T·V)) / (Q'·K'^T)` where
+        # `Q' = cos(Q)` and `K' = exp(γ·K)·cos(K)` (γ is a learnable
+        # per-block scalar passed in by the model as
+        # `cosformer_gamma`, init 0 ⇒ `K' = cos(K)`). Linear in
+        # sequence length via the prefix-sum cumsum trick. The
+        # denominator `Q'·K'^T` is MANDATORY (no skip-flag) — it is
+        # the softmax replacement, not a global mean-pool.
+        # `cosformer_gamma_init` is the init value for γ (default 0
+        # ⇒ K' = cos(K)). Mutually exclusive with `use_linear_attn`
+        # / `use_diff_attn` / `use_nsa_global` / `use_hybrid_heads`
+        # / `use_multiscale_heads` (the cosFormer branch IS the
+        # attention path; combining with another is double-attention
+        # and a structural lever change). Default off → baseline
+        # path bit-identical (the branch is gated on
+        # `self.use_cosformer`, no Parameter registered, the flag is
+        # a strict no-op). See
+        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+        use_cosformer: bool = False,
+        cosformer_gamma_init: float = 0.0,
         # 009 FIRE positional encoding (Li et al., NeurIPS 2023,
         # arXiv:2306.02613): drop-in for RoPE. Content-aware additive
         # logit bias γ(|t-s|) · f([φ(x_t); φ(x_s)]). Default off →
@@ -1387,6 +1409,26 @@ class MultiHeadAttention(nn.Module):
         use_lowrank_wo: bool = False,
         wo_rank: int = 16,
         wo_lowrank_alpha_init: float = -10.0,
+        # 194 — W_V Low-Rank Residual Correction (LoRA-style
+        # trained-from-scratch low-rank factorization on the value
+        # projection). Replace W_V with
+        #   `W_V_eff = W_V + σ(α) · (W_V_A @ W_V_B)`
+        # where `W_V_A ∈ R^{d_model × r}`, `W_V_B ∈ R^{r × d_model}`
+        # (`r = wv_rank`, default 8), and `α` is a 0-dim learnable
+        # scalar (init `wv_lowrank_alpha_init`, default −10 ⇒
+        # `σ(α) ≈ 4.5e-5` at step 0). `W_V_A` is normal-init std=0.02
+        # (matches the existing `qkvo_proj` init); `W_V_B` is
+        # **zero-init** so the rank-r correction is exactly 0 at
+        # step 0 ⇒ `W_V_eff == W_V` bit-identical to the no-flag
+        # baseline. Complementary to 207-W_O-LowRank (same
+        # mechanism, different sub-block); null closes the entire
+        # low-rank-residual sub-block family. Default off → no
+        # Parameter registered, no branch taken, baseline path
+        # bit-identical. See `autoresearch/ideas/194-lowrank-ffn/
+        # idea.md` / `plan.md`.
+        use_lowrank_wv: bool = False,
+        wv_rank: int = 8,
+        wv_lowrank_alpha_init: float = -10.0,
         # 197 — Tied W_O Across Blocks (soft blend, Universal-
         # Transformer-style learnable parameter sharing restricted
         # to the attention output projection, Dehghani et al. ICLR
@@ -1610,6 +1652,18 @@ class MultiHeadAttention(nn.Module):
         # softmax attention with positive-feature kernel attention
         # using phi(x) = elu(x) + 1.
         self.use_linear_attn = use_linear_attn
+        # 189 — CosFormer-style linear attention (Qin et al. NeurIPS
+        # 2022, arXiv:2202.08791). Replaces softmax attention with
+        # the kernel-replacement form `out = (Q'·(K'^T·V)) /
+        # (Q'·K'^T)` where `Q' = cos(Q)` and `K' = exp(γ·K)·cos(K)`.
+        # γ itself is a per-block learnable scalar passed in by the
+        # MODEL (`MinimalLLM.cosformer_gammas`), not stored here.
+        # When the flag is off (default), no Parameter is registered
+        # on the MHA and the forward branch is gated — baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+        self.use_cosformer = use_cosformer
+        self.cosformer_gamma_init = float(cosformer_gamma_init)
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_heads
@@ -4552,6 +4606,7 @@ class MultiHeadAttention(nn.Module):
             or self.use_topk_attn  # 192 — Hard top-k sparse attention: scatter write can't go through SDPA's flash kernel.
             or self.use_logit_conv  # 180 — Pre-softmax causal conv on QK^T: score-space op, must run on manual path.
             or self.use_qk_clamp  # 195 — Tight hard QK logit clamp (manual path; force SDPA off so the pre-softmax logit is exposed for clamping).
+            or self.use_block_temp_schedule  # 193 — Blockwise attention temperature schedule (manual path; pre-softmax `scores / τ_b` divide, SDPA's flash kernel fuses QK^T+softmax+AV and can't expose the pre-softmax logit for the per-block divide).
             or self.use_anti_causal_subheads  # 179 — Per-head mask fill on the upper-triangle; SDPA flash can't apply a per-head fill, so force the manual path.
             or self.use_per_head_window  # 182 — Per-head learnable window: score-space `1e9·relu(...)` subtract, must run on manual path.
             or self.use_cross_block_score_share  # 204 — Cross-Block Attention Score Sharing: pre-softmax score blend with the previous block's `Q_{b-1}·K_{b-1}^T/√d_k`; SDPA's flash kernel fuses QK^T+softmax+AV and can't expose the pre-softmax logit for blending.
@@ -4596,6 +4651,27 @@ class MultiHeadAttention(nn.Module):
             else:
                 scale = 1.0 / (float(self.d_k) ** 0.5)
                 scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # 193 — Blockwise attention temperature schedule (manual
+            # branch). Apply the precomputed per-block scalar
+            # `τ_b = 1 + α · cos(π · b / (L − 1))` as a divide on
+            # the pre-softmax scores: `scores_b = scores / τ_b`. At
+            # α = 0 ⇒ `τ_b = 1` exactly ⇒ `scores / 1 = scores`
+            # byte-identical to the standard pre-softmax scale; at
+            # the committed `α = -0.3`, `τ_b ∈ [0.7, 1.29]`
+            # (sharpen early / soften late). Inserted AFTER the
+            # `* scale` (or 155 per-head temp replacement) and
+            # BEFORE the 195 clamp + 204 cross-block share so it
+            # composes uniformly with all downstream score-side
+            # levers. The `tau_b` Buffer is registered on the MHA
+            # at construction when the flag is on (see `__init__`);
+            # `.view(1, 1, 1, 1)` broadcasts against the
+            # `[B, H, T, T]` score tensor. Default off → branch not
+            # taken, baseline path bit-identical. See
+            # `autoresearch/ideas/193-blockwise-attn-temp-schedule/
+            # idea.md` for the schedule formula and the sign
+            # convention (`α < 0` = sharpen early).
+            if self.use_block_temp_schedule:
+                scores = scores / self.tau_b.view(1, 1, 1, 1)
             # 195 — Tight hard QK logit clamp (manual branch). Apply
             # `torch.clamp(scores, -c, +c)` immediately after the
             # standard scale and BEFORE any additive transforms
@@ -5342,6 +5418,23 @@ class TransformerBlock(nn.Module):
         # See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
         use_qk_clamp: bool = False,
         qk_clamp_c: float = 2.0,
+        # 193 — Blockwise attention temperature schedule pass-through
+        # to the inner MHA. See `MultiHeadAttention.use_block_temp_
+        # schedule` for the mechanism (per-block fixed cosine
+        # temperature, no learned params; τ_b divides the pre-softmax
+        # `Q·K^T/√d_k` so the pre-softmax score must be exposed).
+        # `block_temp_alpha` is the schedule amplitude (default
+        # `−0.3` in `Tiny1M3MBlockTempConfig`, the committed single
+        # value per `idea.md` r2). `tau_b` is the precomputed scalar
+        # for THIS block (the model passes it in via the loop;
+        # `tau_b = 1 + α · cos(π · b / (L − 1))`); at α=0
+        # `tau_b = 1` exactly so the divide is the identity. Default
+        # off → no Buffer registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/193-blockwise-attn-temp-schedule/idea.md`.
+        use_block_temp_schedule: bool = False,
+        block_temp_alpha: float = 0.0,
+        tau_b: float = 1.0,
         # 180 — Pre-softmax 1D causal depthwise conv on attention
         # logits. Pass-through to the inner MHA. See
         # `MultiHeadAttention.use_logit_conv` for the mechanism
@@ -5406,6 +5499,18 @@ class TransformerBlock(nn.Module):
         use_lowrank_wo: bool = False,
         wo_rank: int = 16,
         wo_lowrank_alpha_init: float = -10.0,
+        # 194 — W_V Low-Rank Residual Correction pass-through to the
+        # inner MHA. See `MultiHeadAttention.use_lowrank_wv` for the
+        # mechanism (`W_V_eff = W_V + σ(α) · (W_V_A @ W_V_B)`, with
+        # `W_V_B` zero-init and `α` init −10 ⇒ step-0 bit-identical
+        # to baseline). `wv_rank` (default 8) sets the absolute rank
+        # of the correction; `wv_lowrank_alpha_init` (default −10)
+        # sets the soft-gate init. Default off → no Parameter
+        # registered, baseline path bit-identical. See
+        # `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+        use_lowrank_wv: bool = False,
+        wv_rank: int = 8,
+        wv_lowrank_alpha_init: float = -10.0,
         # 151 — RoV (Rotary Value Embeddings, gated). Pass-through to
         # the inner MHA. See `MultiHeadAttention.use_rov` for the
         # mechanism. Default off → baseline path bit-identical. See
@@ -5493,6 +5598,25 @@ class TransformerBlock(nn.Module):
         # cascade runs unchanged, baseline forward graph bit-
         # identical. See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
         use_swiglu_ffn: bool = False,
+        # 206 — Cross-Block W_up / W_down Projection Sharing
+        # (Universal-Transformers-style learnable parameter
+        # sharing across depth, narrowed to the two largest FFN
+        # matrices only). When on, the block's FFN is asked to
+        # blend its W_up / W_down with the previous block's
+        # (detached) W_up / W_down. The block's FFN module
+        # allocates the per-side α scalars
+        # (`ffn_share_alpha_up` / `ffn_share_alpha_down`) at
+        # construction (init `ffn_share_alpha_init=-10.0` ⇒
+        # `σ(-10) ≈ 4.5e-5` ⇒ silent at step 0). The FFN
+        # stashes the current W_up / W_down (`.detach()`-ed) so
+        # the model loop can read them for the next block's
+        # `prev_W_up=` / `prev_W_down=`. Default off ⇒ no
+        # α Parameter registered, no stash, no blend, baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/206-cross-block-ffn-share/idea.md` /
+        # `plan.md`.
+        use_cross_block_ffn_share: bool = False,
+        ffn_share_alpha_init: float = -10.0,
         # 196 — MishGLU FFN (Misra 2019 + Shazeer 2020 composition;
         # inner-activation axis orthogonal to 170's outer-GLU axis).
         # Three-projection gated linear unit with `mish` as the inner
@@ -5525,6 +5649,17 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
         use_pre_ffn_attn_mix: bool = False,
         pre_ffn_attn_mix_init: float = -10.0,
+        # 197 — DeepNet α fixed residual init pass-through. See
+        # `MultiHeadAttention.use_deepnet_alpha` for the mechanism
+        # (Wang et al. 2022, arXiv:2203.00555): a single *fixed*
+        # (not learned) global scalar `α = (2·n_layers)^(-1/2)` is
+        # applied to every block's sublayer output before the
+        # residual add. 0 new params. Default off → baseline path
+        # bit-identical (the `self.deepnet_alpha` attribute is
+        # still set, but the multiply only runs when the flag is
+        # on). See `autoresearch/ideas/197-output-residual-sqrt-2l/
+        # idea.md`.
+        use_deepnet_alpha: bool = False,
         use_qk_norm_post_rope: bool = False,
         use_sliding_window: bool = False,
         sliding_window_size: int = 512,
@@ -6008,6 +6143,17 @@ class TransformerBlock(nn.Module):
             # See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
             use_qk_clamp=use_qk_clamp,
             qk_clamp_c=qk_clamp_c,
+            # 193 — Blockwise attention temperature schedule pass-
+            # through to the inner MHA (precomputed per-block
+            # `tau_b` value, computed by the model in
+            # `MinimalLLM.__init__` via the loop). Default off →
+            # baseline path bit-identical (no Buffer registered on
+            # the MHA, no branch taken in forward). See
+            # `autoresearch/ideas/193-blockwise-attn-temp-schedule/
+            # idea.md`.
+            use_block_temp_schedule=use_block_temp_schedule,
+            block_temp_alpha=block_temp_alpha,
+            tau_b=tau_b,
             # 180 — Pre-softmax 1D causal conv pass-through.
             use_logit_conv=use_logit_conv,
             logit_conv_kernel_size=logit_conv_kernel_size,
@@ -6414,6 +6560,34 @@ class TransformerBlock(nn.Module):
         else:
             raise ValueError(f"Unknown ffn_variant: {ffn_variant}")
 
+        # 206 — Cross-Block FFN share. When on, register the two
+        # per-side α scalars on the FFN module (init -10.0 ⇒
+        # `σ(-10) ≈ 4.5e-5` ⇒ silent at step 0). The FFN
+        # implementation owns the `ffn_share_alpha_up` /
+        # `ffn_share_alpha_down` attribute slots and the
+        # `_prev_W_up` / `_prev_W_down` stash slots; we just
+        # fill them when the flag is on. The MoE / TTT FFN
+        # replacements don't have these slots — we skip the
+        # registration on those variants (the flag is silently
+        # shadowed in that case, same pattern as 188's YOCO
+        # guard). When off, the FFN's `ffn_share_alpha_*` is
+        # `None` and the forward blend branch is dead (the
+        # gate is on the parameter, not on a flag, so the
+        # baseline path is bit-identical). See
+        # `autoresearch/ideas/206-cross-block-ffn-share/idea.md` /
+        # `plan.md`.
+        self.use_cross_block_ffn_share = use_cross_block_ffn_share
+        if use_cross_block_ffn_share and not (
+            use_soft_moe or use_switch_ffn or use_expert_choice_moe
+            or use_ttt_ffn
+        ):
+            self.feed_forward.ffn_share_alpha_up = nn.Parameter(
+                torch.full((), float(ffn_share_alpha_init))
+            )
+            self.feed_forward.ffn_share_alpha_down = nn.Parameter(
+                torch.full((), float(ffn_share_alpha_init))
+            )
+
         # 157 — Depthwise Conv inside FFN. Identity-init symmetric
         # depthwise Conv1d applied to the FFN output (post-FFN, pre-
         # residual-add) in `forward`. Built lazily; never called when
@@ -6746,7 +6920,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None, prev_W_up=None, prev_W_down=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -6858,7 +7032,7 @@ class TransformerBlock(nn.Module):
             ffn_in = n
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
-            ff_out = self.feed_forward(ffn_in)
+            ff_out = self.feed_forward(ffn_in, prev_W_up=prev_W_up, prev_W_down=prev_W_down)
             # 157 — Depthwise Conv inside FFN. Identity-init
             # symmetric conv → bit-identical to no-conv at step 0.
             # Applied after the FFN returns, before the
@@ -6901,7 +7075,7 @@ class TransformerBlock(nn.Module):
             ffn_in = x
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
-            ff_out = self.feed_forward(ffn_in)
+            ff_out = self.feed_forward(ffn_in, prev_W_up=prev_W_up, prev_W_down=prev_W_down)
             # 157 — Depthwise Conv inside FFN. Identity-init
             # symmetric conv → bit-identical to no-conv at step 0.
             if self.use_conv_ffn:
@@ -7033,7 +7207,7 @@ class TransformerBlock(nn.Module):
                 ffn_in = self.norm2(x)
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
-            ff_out = self.feed_forward(ffn_in)
+            ff_out = self.feed_forward(ffn_in, prev_W_up=prev_W_up, prev_W_down=prev_W_down)
             # 157 — Depthwise Conv inside FFN. Identity-init
             # symmetric conv → bit-identical to no-conv at step 0.
             if self.use_conv_ffn:

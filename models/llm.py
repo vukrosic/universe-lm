@@ -568,6 +568,29 @@ class MinimalLLM(nn.Module):
         # branch runs, baseline FFN path bit-identical. See
         # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
         self.use_swiglu_ffn = getattr(config, "use_swiglu_ffn", False)
+        # 206 — Cross-Block W_up / W_down Projection Sharing (the
+        # FFN-side analog of 188, narrowed to the two largest FFN
+        # matrices only). Each block's `W_up_eff` / `W_down_eff`
+        # is a learnable convex blend of the block's own W_up /
+        # W_down and the previous block's (detached) W_up / W_down.
+        # Per-block scalars `ffn_share_alpha_up` /
+        # `ffn_share_alpha_down` (init `ffn_share_alpha_init=-10.0`
+        # ⇒ `σ(-10) ≈ 4.5e-5` ⇒ silent at step 0). The block's FFN
+        # owns the α Parameters; the model loop plumbs
+        # `prev_W_up` / `prev_W_down` from the layer-0 stash
+        # (`block.feed_forward._prev_W_up` / `_prev_W_down`,
+        # written inside the FFN's forward) to layers 1..N-1.
+        # Mirrors 188's `prev_W_K` / `prev_W_V` plumbing on the
+        # attention side. Default off → no Parameter registered, no
+        # forward branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/206-cross-block-ffn-share/idea.md` /
+        # `plan.md`.
+        self.use_cross_block_ffn_share = getattr(
+            config, "use_cross_block_ffn_share", False
+        )
+        self.ffn_share_alpha_init = getattr(
+            config, "ffn_share_alpha_init", -10.0
+        )
         # 196 — MishGLU FFN (inner-activation axis orthogonal to 170's
         # outer-GLU axis). Default off → standard `ffn_variant` branch
         # runs, baseline FFN path bit-identical. See
@@ -1046,6 +1069,13 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
                         use_swiglu_ffn=self.use_swiglu_ffn,
+                        # 206 — Cross-Block W_up / W_down
+                        # Projection Sharing pass-through to the
+                        # YOCO upper-half block. Default off →
+                        # baseline FFN path bit-identical. See
+                        # `autoresearch/ideas/206-cross-block-ffn-share/idea.md`.
+                        use_cross_block_ffn_share=self.use_cross_block_ffn_share,
+                        ffn_share_alpha_init=self.ffn_share_alpha_init,
                         # 196 — MishGLU FFN pass-through (inner-
                         # activation axis orthogonal to 170's outer-
                         # GLU axis). Default off → baseline FFN path
@@ -1444,6 +1474,13 @@ class MinimalLLM(nn.Module):
                         # block. Default off → FFN path bit-identical.
                         # See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
                         use_swiglu_ffn=self.use_swiglu_ffn,
+                        # 206 — Cross-Block W_up / W_down
+                        # Projection Sharing pass-through to the
+                        # YOCO upper-half block. Default off →
+                        # baseline FFN path bit-identical. See
+                        # `autoresearch/ideas/206-cross-block-ffn-share/idea.md`.
+                        use_cross_block_ffn_share=self.use_cross_block_ffn_share,
+                        ffn_share_alpha_init=self.ffn_share_alpha_init,
                         # 196 — MishGLU FFN pass-through (inner-
                         # activation axis orthogonal to 170's outer-
                         # GLU axis). Default off → baseline FFN path
@@ -2034,6 +2071,24 @@ class MinimalLLM(nn.Module):
         # the same `not self.use_gau` check as the other cross-
         # block carries.
         prev_block_scores = None
+        # 206 — Cross-Block W_up / W_down Projection Sharing:
+        # stash the layer-0 W_up, W_down slices (detached) on
+        # `block.feed_forward._prev_W_up` / `_prev_W_down`; read
+        # them back after the layer-0 block and pass as
+        # `prev_W_up=` / `prev_W_down=` to every layer l ≥ 1.
+        # None ⇒ the FFN's blend branch is dead (the FFN module
+        # never enters the `prev_W_up is not None` branch on
+        # layer 0). Mirrors 188's `prev_W_K=` / `prev_W_V=`
+        # plumbing on the attention side. GAU is mutually
+        # exclusive (GAUBlock has no FFN at all) — guarded with
+        # the same `not self.use_gau` check. MoE / TTT variants
+        # of the FFN also lack the `ffn_share_alpha_up` slot —
+        # when the model loop has those flags on, the
+        # `use_cross_block_ffn_share` lever is silently
+        # shadowed (the FFN never blends), same pattern as 188's
+        # YOCO guard.
+        prev_W_up = None
+        prev_W_down = None
         # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
         # across all upper-half blocks. Computed ONCE on the lower
         # half's final residual stream after the last lower-half
@@ -2143,6 +2198,20 @@ class MinimalLLM(nn.Module):
                     # 168's `av_carry=...` / 188's `prev_W_K=` /
                     # `prev_W_V=` plumbing on the same call.
                     prev_block_scores=prev_block_scores,
+                    # 206 — Cross-Block W_up / W_down
+                    # Projection Sharing: forward-pass-local stash
+                    # from the previous block's W_up, W_down slices
+                    # (detached at the FFN call site, shape
+                    # `[d_ff, d_model]` for W_up, `[d_model, d_ff]`
+                    # for W_down). `None` on layer 0 (or when the
+                    # lever is off) → the block's `prev_W_up=` /
+                    # `prev_W_down=` kwargs are no-ops and the
+                    # baseline FFN path is bit-identical. Mirrors
+                    # 021's `v_residual=...` / 164's `q_carry=...` /
+                    # 168's `av_carry=...` / 188's `prev_W_K=` /
+                    # `prev_W_V=` plumbing.
+                    prev_W_up=prev_W_up,
+                    prev_W_down=prev_W_down,
                     # 150 — Cross-Layer Feedback: forward-pass-local
                     # list of pre-FFN x from the previous K blocks.
                     # The block reads from it and appends its own
@@ -2224,6 +2293,26 @@ class MinimalLLM(nn.Module):
                 # pre-softmax stash); the capture is a safe no-op.
                 if not self.use_gau:
                     prev_block_scores = block.attention._prev_block_scores
+            if self.use_cross_block_ffn_share and i == 0:
+                # After layer-0 FFN forward, the W_up and W_down
+                # slices of the layer-0 feed_forward (already
+                # `.detach()`-ed inside the FFN's forward) are
+                # stashed at
+                # `block.feed_forward._prev_W_up` /
+                # `block.feed_forward._prev_W_down`. Capture for
+                # layers 1..N-1. Same `not self.use_gau` guard as
+                # the other cross-block carries — GAUBlock has no
+                # FFN at all (the gating pair plays the FFN role
+                # in the fused operator). The MoE / TTT FFN
+                # variants don't register `ffn_share_alpha_*` on
+                # their module — in those cases the FFN's own
+                # stash branch is dead (`ffn_share_alpha_up is
+                # None` ⇒ the stash is skipped), so the captured
+                # `_prev_W_up` / `_prev_W_down` is `None` and
+                # the layer-l blend is silently shadowed.
+                if not self.use_gau:
+                    prev_W_up = block.feed_forward._prev_W_up
+                    prev_W_down = block.feed_forward._prev_W_down
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary
