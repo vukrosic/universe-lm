@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T05:53:50Z","agent":"reviewer","idea":"180-qk-logit-conv","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T05:55:47Z","agent":"code-impl","idea":"180-qk-logit-conv","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
 {"ts":"2026-06-15T06:00:12Z","agent":"code-impl","idea":"180-qk-logit-conv","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-15T06:16:39Z","agent":"daemon","idea":"180-qk-logit-conv","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
