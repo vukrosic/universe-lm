@@ -81,3 +81,15 @@ Given the three-null prior in the per-head-attention-shape family (152, 155, 160
 ## Why this is different from 184-logit-scale (in-repo, needs-run)
 - 184 is *global* and at the LM head *output* (logit side of the LM, not attention). The output side cannot be absorbed by per-head Q/K updates — that's why 184 was accepted.
 - 205 is *per-head* and *post-softmax in attention*. The placement is on the attention-side (interior of the network), not the output side. The lever sits between QK and AV — a different gradient path. 184's win does NOT predict 205's win; they test different axes.
+
+## Plan
+
+- **Files to edit**:
+  - `models/layers.py` — three insertions:
+    1. MHA `__init__` kwargs near line 1523: add `use_per_head_post_softmax_mix: bool = False` and `per_head_post_softmax_mix_init_raw: float = -4.0` with a docstring block matching the lever spec (per-head `m_h = σ(raw_h)` init `-4` ⇒ `m_h ≈ 0.018`, soften-only, bounded in [0,1]).
+    2. MHA `__init__` body near line 2055: register `self.attn_post_softmax_mix_raw = nn.Parameter(torch.full((n_heads,), init_raw))` when the flag is on; stub `None` otherwise.
+    3. Manual forward branch (line ~4619 area, after the `attn_w = torch.softmax(scores, dim=-1)` line and before the dropout / `attn_output = torch.matmul(attn_w, V)` line): compute `m_h = σ(raw).view(1,H,1,1)`, build per-row uniform `1/(t+1) * window` (so masked positions stay 0), then `attn_w = (1 − m_h)·attn_w + m_h·uniform`. The dispatch condition (~line 4309) needs `or self.use_per_head_post_softmax_mix` to force the manual path. Pass-throughs in `TransformerBlock` and the `MinimalLLM` config dataclass chain.
+  - `configs/llm_config.py` — append a treatment config class `Tiny1M3MAlibiPostSoftmaxMixConfig(Tiny1M3MAlibiConfig)` (subclasses the current champion `Tiny1M3MAlibiConfig`, val 6.2403, per `autoresearch/champion.json`) with `use_per_head_post_softmax_mix: bool = True`.
+- **Step-0 identity**: `m_h ≈ 0.018` ⇒ per-cell deviation in `attn_w` is bounded by `0.018 · max(attn_w[s], 1/(t+1))` ⇒ well within fp32 noise. The forward branch is gated on `self.use_per_head_post_softmax_mix`, parameter is not registered when off, so the no-flag path is untouched. Stacks on top of the 175-alibi champion.
+- **Run command** (tiny1m3m · seed 42): the daemon picks up the slug from the idea status; final command is the standard `autoresearch/bin/queue-daemon.sh run ...` flow. The control (`Tiny1M3MAlibiConfig`, val 6.2403) and the treatment (`Tiny1M3MAlibiPostSoftmaxMixConfig`) are both A/B'd on the same box.
+- **Val read**: from the daemon's records.jsonl entry for `205-per-head-mult-logit-scale` at tiny1m3m / seed 42 / 3M tokens. WIN iff `val_loss(trt) − mean(val_loss(ctrl)) ≤ −0.010` AND the lever binds (`max_h m_h > 0.1` for ≥1 head/layer on average). NULL band `|Δ| < 0.010`. Compare against champion 6.2403, not bare baseline.
