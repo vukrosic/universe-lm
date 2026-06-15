@@ -11,3 +11,4 @@
 {"ts":"2026-06-15T07:48:52Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"repair: OK on box but UI stale-sweep clobbered to needs-run; restore so finalize judges it"}
 {"ts":"2026-06-15T07:50:42Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691830m)"}
 {"ts":"2026-06-15T07:50:42Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T07:57:28Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"running","to":"done","round":1,"note":"NULL: trt=6.2541 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0138)"}

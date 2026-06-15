@@ -1,8 +1,8 @@
 ---
 id: 187-lm-head-bias
-status: needs-run
+status: needs-review
 round: 2
-updated: 2026-06-15T07:55:25Z
+updated: 2026-06-15T07:58:25Z
 transfer-risk: low
 plain: Add one learned additive bias to the language-model output (a single knob per vocab token, starting at 0 so step-0 is byte-identical) — a way to break output-tie without disturbing the input embedding.
 ---
