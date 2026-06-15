@@ -2264,6 +2264,42 @@ class MultiHeadAttention(nn.Module):
             self.wo_a = None
             self.wo_b = None
             self.wo_lowrank_alpha = None
+        # 194 — W_V Low-Rank Residual Correction. Two `nn.Parameter`
+        # matrices `wv_a ∈ R^{d_model × r}` (normal-init std=0.02,
+        # matches the existing `qkvo_proj` init) and `wv_b ∈
+        # R^{r × d_model}` (zero-init ⇒ `wv_a @ wv_b == 0` exactly
+        # at step 0), plus one 0-dim learnable scalar
+        # `wv_lowrank_alpha` (init `wv_lowrank_alpha_init`, default
+        # −10 ⇒ `sigmoid(-10) ≈ 4.5e-5`). The forward computes
+        #   `w_v_eff = w_v + σ(α) · (wv_a @ wv_b)`
+        # at the W_V extraction site (before the F.linear call).
+        # At step 0 `wv_b = 0` ⇒ `wv_a @ wv_b == 0` exactly ⇒
+        # `w_v_eff == w_v` bit-identical to the no-flag baseline.
+        # Both `wv_a` and `wv_b` are constructed and registered ONLY
+        # when `use_lowrank_wv=True` (default off → no Parameter
+        # created, no branch taken, baseline path bit-identical).
+        # The `wv_lowrank_alpha` scalar is also gated — when the
+        # lever is off, no Parameter exists, so the forward gate
+        # `if self.use_lowrank_wv` short-circuits. See
+        # `autoresearch/ideas/194-lowrank-ffn/idea.md` / `plan.md`.
+        self.use_lowrank_wv = use_lowrank_wv
+        self.wv_rank = int(wv_rank)
+        if self.use_lowrank_wv:
+            self.wv_a = nn.Parameter(
+                torch.empty(self.d_model, self.wv_rank)
+            )
+            with torch.no_grad():
+                torch.nn.init.normal_(self.wv_a, mean=0.0, std=0.02)
+            self.wv_b = nn.Parameter(
+                torch.zeros(self.wv_rank, self.d_model)
+            )
+            self.wv_lowrank_alpha = nn.Parameter(
+                torch.full((), float(wv_lowrank_alpha_init))
+            )
+        else:
+            self.wv_a = None
+            self.wv_b = None
+            self.wv_lowrank_alpha = None
         # 197 — Tied W_O Across Blocks. When on, store the
         # SAME per-model `W_O_shared` Parameter reference on every
         # MHA (NOT a copy — every block reads the same parameter,
@@ -6406,6 +6442,19 @@ class TransformerBlock(nn.Module):
         use_tied_wo_across_blocks: bool = False,
         tied_wo_alpha_init: float = -10.0,
         tied_wo_shared=None,  # Optional[torch.nn.Parameter]
+        # 199 — Spectral-Norm-Bounded W_O Projection pass-through
+        # to the inner MHA. Per-block learnable scalar `γ_l` (init
+        # 0) and per-block power-iteration Buffer `u_l` are
+        # allocated by the MHA when the flag is on. See
+        # `MultiHeadAttention.use_wo_spectral_cap` for the
+        # forward-time mechanism (per-block Lipschitz cap on W_O
+        # with σ_max_init snapshot on first forward ⇒ step-0
+        # byte-identical). Default off → no Parameter, no Buffer,
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/199-spectral-attn-output/idea.md` /
+        # `plan.md`.
+        use_wo_spectral_cap: bool = False,
+        wo_spectral_cap_pi_iters: int = 1,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -6620,6 +6669,15 @@ class TransformerBlock(nn.Module):
             use_tied_wo_across_blocks=use_tied_wo_across_blocks,
             tied_wo_alpha_init=tied_wo_alpha_init,
             tied_wo_shared=tied_wo_shared,
+            # 199 — Spectral-Norm-Bounded W_O Projection pass-through
+            # to the inner MHA (per-block learnable Lipschitz cap
+            # on W_O with σ_max_init snapshot on first forward ⇒
+            # step-0 byte-identical). Default off → no Parameter, no
+            # Buffer, no branch taken, baseline path bit-identical.
+            # See `autoresearch/ideas/199-spectral-attn-output/
+            # idea.md` / `plan.md`.
+            use_wo_spectral_cap=use_wo_spectral_cap,
+            wo_spectral_cap_pi_iters=wo_spectral_cap_pi_iters,
             # 129 — YOCO shared KV pass-through to the MHA. Default
             # off → standard path. See `autoresearch/ideas/129-yoco/idea.md`.
             use_shared_kv=use_shared_kv,

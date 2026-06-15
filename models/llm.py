@@ -822,6 +822,22 @@ class MinimalLLM(nn.Module):
         if self.tie_layer_groups > 1 and getattr(config, "use_unet_skips", False):
             raise ValueError("tie_layer_groups > 1 is incompatible with use_unet_skips")
         n_unique = config.n_layers // self.tie_layer_groups
+        # 189 — CosFormer-style linear attention: register the per-
+        # block γ scalar as ONE `nn.Parameter` of size `n_layers` on
+        # the model (not 12 separate Parameters on the MHA — that
+        # would give 12 entries in the optimizer's param groups,
+        # breaking the project's flat layout). Init 0 ⇒ at step 0
+        # `K' = cos(K)` (the cosine-only feature map), so the lever
+        # reduces to the cumulative mean of V over the causal prefix.
+        # Default off → no Parameter registered, baseline path
+        # bit-identical. The forward loop reads
+        # `self.cosformer_gammas[i]` and passes it as
+        # `cosformer_gamma=` to each block. See
+        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+        if self.use_cosformer:
+            self.cosformer_gammas = nn.Parameter(
+                torch.full((config.n_layers,), self.cosformer_gamma_init)
+            )
         deep_value_embed_hidden = getattr(config, "deep_value_embed_hidden", None)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         # #86 Interleaved global attention: when global_attn_every_k > 0,
@@ -1093,6 +1109,13 @@ class MinimalLLM(nn.Module):
                         # bit-identical. See
                         # `autoresearch/ideas/196-ffn-glu-mish/idea.md`.
                         use_mish_glu=self.use_mish_glu,
+                        # 189 — CosFormer-style linear attention
+                        # pass-through to the YOCO upper-half block.
+                        # Default off → baseline path bit-identical.
+                        # See
+                        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+                        use_cosformer=self.use_cosformer,
+                        cosformer_gamma_init=self.cosformer_gamma_init,
                         # 198 — Pre-FFN Attention Mixing pass-through
                         # to the YOCO upper-half block. Default off
                         # → baseline path bit-identical. See
@@ -1498,6 +1521,12 @@ class MinimalLLM(nn.Module):
                         # bit-identical. See
                         # `autoresearch/ideas/196-ffn-glu-mish/idea.md`.
                         use_mish_glu=self.use_mish_glu,
+                        # 189 — CosFormer-style linear attention
+                        # pass-through to the standard block. Default
+                        # off → baseline path bit-identical. See
+                        # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+                        use_cosformer=self.use_cosformer,
+                        cosformer_gamma_init=self.cosformer_gamma_init,
                         # 198 — Pre-FFN Attention Mixing pass-through
                         # to the standard block. Default off →
                         # baseline path bit-identical. See
