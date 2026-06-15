@@ -1,8 +1,8 @@
 ---
 id: 195-mid-attn-rmsnorm
-status: implementing
+status: needs-run
 round: 2
-updated: 2026-06-15T08:31:59Z
+updated: 2026-06-15T08:34:04Z
 transfer-risk: low
 plain: RMS-normalize the attention scores themselves (after Q·K, before softmax) along the key axis, with per-head γ_h init at 1 (the lever's value is in the fixed per-query RMS reshape, NOT the γ_h scalar which is the closed-null axis).
 ---

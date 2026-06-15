@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T08:21:49Z","agent":"miner","idea":"195-mid-attn-rmsnorm","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:23:08Z","agent":"miner","idea":"195-mid-attn-rmsnorm","from":"needs-taste","to":"needs-taste","round":2,"note":"5 findings applied: chose single γ_h=1 formulation with non-bit-identity ctrl-pair; reframed bet on per-query variance reshape (γ_h acknowledged as closed-null axis); differentiated placement-post from 190's granularity; compressed design sketch; named magnitude Δ ≤ −0.01 WIN hypothesis"}
 {"ts":"2026-06-15T08:31:59Z","agent":"implement-button","idea":"195-mid-attn-rmsnorm","from":"needs-taste","to":"implementing","round":2,"note":"claimed by implement button"}
+{"ts":"2026-06-15T08:34:04Z","agent":"done-button","idea":"195-mid-attn-rmsnorm","from":"implementing","to":"needs-run","round":2,"note":"auto-finalized on implement-done"}
