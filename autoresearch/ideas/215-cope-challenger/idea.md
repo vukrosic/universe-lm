@@ -1,9 +1,9 @@
 ---
 id: 215-cope-challenger
 author: claude-opus-4-8
-status: running
+status: done
 round: 1
-updated: 2026-06-15T13:06:21Z
+updated: 2026-06-15T13:30:14Z
 transfer-risk: medium
 plain: Challenge the ALiBi champion head-on with Contextual Position Encoding (CoPE). ALiBi measures position as raw token distance (t−s) and adds a fixed bias for it. CoPE instead computes position by cumulatively summing a CONTENT-dependent gate over the keys, so "position" is measured in learned units (words/sentences) rather than token count. It is a strictly richer positional mechanism on the SAME axis ALiBi won on — so it can win where orthogonal bolt-ons (208–211) washed out. Replacement, not a stack.
 ---
