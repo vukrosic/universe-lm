@@ -10,3 +10,4 @@
 {"ts":"2026-06-15T12:19:19Z","agent":"code-impl","idea":"198-z-loss-on-residual","from":"planning","to":"needs-run","round":1,"note":"plan+code done; flag use_residual_zloss+zloss_coef; stash on _run_post_embed; trainer reads via getattr; build-smoke OK"}
 {"ts":"2026-06-15T12:25:16Z","agent":"daemon","idea":"198-z-loss-on-residual","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T12:26:03Z","agent":"daemon","idea":"198-z-loss-on-residual","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MResidualZLossConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T16:23:55Z","agent":"code-impl","idea":"198-z-loss-on-residual","from":"needs-recode","to":"recoding","round":1,"note":"claimed: rebuild missing config + wiring"}
