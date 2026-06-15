@@ -1,5 +1,31 @@
 # Taste review — 196-ffn-glu-mish (MishGLU)
 
+## r2 — 2026-06-15 — verdict: accept
+
+**Context.** r1 raised two specific concerns: (a) the FFN-gating family is closed at 0.94M by 170 (with explicit "re-evaluate at >=135M" deferral), and (b) the tiny1m3m bet was unsharp. r1 offered two paths: defer to 135M, or sharpen the bet for 0.94M. The miner chose (2) and re-pitched the inner-activation axis with a specific mechanism and prediction.
+
+**Where the r2 repitch lands.**
+
+- **The math is right.** `dMish/dx|_{x=0} = tanh(softplus(0)) + 0·sigmoid'(0)·... = tanh(ln 2) ≈ 0.6`; `dSiLU/dx|_{x=0} = sigmoid(0) = 0.5`. The 20% origin-gradient advantage is exactly computed, not hand-waved. Both activations are 0 at the origin ⇒ step-0 bit-identity holds (satisfied by `mish(0)=0` and `silu(0)=0`).
+- **The orthogonal-axis framing is structurally correct.** 170 closed the *outer* axis — does the GLU gating mechanism bind at this tier? Answer: borderline, gate weights grow slowly, gate values stay small. 196 asks a different question: *given* a borderline-engaged gate, is Mish or SiLU the better inner activation? The lever is in a different sub-family from 170 even though they share the gating structure. Both axes deserve to be tested.
+- **The null is informative (the r1 bar was high here).** A clean null at 0.94M (|Δ| < 0.01) closes the *inner-activation axis* — a different orthogonal axis from 170's closed outer axis. After 196 we know: (a) the GLU gating mechanism doesn't bind at 0.94M (170), AND (b) the specific choice of inner activation within the GLU family also doesn't matter at 0.94M (196). That gives the reviewer a structured menu at 135M: where the outer axis binds, the inner-activation sub-choices (Mish, SiLU, GELU, ReLU) become the next variable to test. This is the high-leverage null the screen was asking for.
+- **The bet is sharp.** Specific mechanism (20% origin-gradient advantage concentrated in |x| < 0.5 where ~38% of gate inputs live, post-Kaiming N(0,1)). Specific predicted magnitude (Δ = -0.005 to -0.01). Specific falsification criterion (|Δ| < 0.01 closes the inner-activation axis). The bet is testable at 0.94M/12L/92 steps, not deferred to 135M. r1's example of a "real sharp sentence" was more elaborate (tail-distribution argument with 30% gate-saturation reduction), but the r2 bet's math-and-mechanism form is sharp enough to falsify.
+
+**What I'm not ignoring.**
+
+- **Leverage is small.** The predicted magnitude (-0.005 to -0.01) sits inside the ±0.04 noise band; the WIN bar of `trt_val ≤ ctrl_val − 0.005` requires clearing the two-ctrl rule. r1 flagged this as a `safe-but-tiny` lever concern. The counter: the *null* value is high (orthogonal-axis closure), and at 135M where the gate binds, the inner-activation sub-choice becomes a real lever — knowing it doesn't matter at 0.94M rules out a 7th-FFN-variant re-test, and a win at 0.94M (rare-but-possible per the 20% gradient argument) would carry to 135M.
+- **Family is crowded.** 170, 153, 157, 158, 156, 146, 117, 118 are all null on the FFN-side / capacity-mixing axis. The miner correctly distinguishes 196 as *gated-inner-activation*, not capacity-injection or un-gated-activation. The orthogonal-axis argument holds.
+- **Predicted magnitude is at the edge of the bar.** Δ = -0.005 is exactly the WIN bar; the two-ctrl rule adds friction. Acceptable for a `safe-but-tiny-but-informative-null` bet.
+
+**What I'm not blocking on.**
+
+- Mechanism is real; step-0 bit-identity is exact; param count is identical to SwiGLU. Definition gate can implement as-is.
+- Source citations clean (Shazeer 2020 + Misra 2019); no dup/axis-collision issue.
+- Transfer-risk: med is correctly tagged.
+- File-level plan (MishGLUFeedForward + `use_mish_glu` flag, structurally identical to SwiGLU) is correct.
+
+**Verdict.** The r2 repitch earned the slot. The orthogonal-axis framing is structurally correct, the math is right, the bet is testable and falsifiable, and the null is informative at the high end of the r1 bar. Round 1 reset; definition gate's budget starts now.
+
 ## r1 — 2026-06-15 — verdict: revise
 
 **Context.** The FFN family is densely closed at 0.94M:
