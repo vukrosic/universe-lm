@@ -1,8 +1,8 @@
 ---
 id: 205-per-head-mult-logit-scale
-status: needs-taste
+status: needs-repitch
 round: 1
-updated: 2026-06-15T09:00:00Z
+updated: 2026-06-15T08:22:23Z
 transfer-risk: low
 plain: Give each attention head its own learned multiplicative scale on the attention logits (init 1 so step-0 is byte-identical), so individual heads can softly sharpen or soften their own attention pattern.
 ---

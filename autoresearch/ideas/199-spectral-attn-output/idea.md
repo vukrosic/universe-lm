@@ -1,8 +1,8 @@
 ---
 id: 199-spectral-attn-output
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:20:45Z
+updated: 2026-06-15T08:22:21Z
 transfer-risk: med
 plain: Constrain each token's attention output to have bounded Lipschitz constant (a soft spectral-norm cap), implemented as a learnable per-token scalar that scales the output so its norm matches a target — starting at 1 so step-0 is byte-identical.
 ---

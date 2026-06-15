@@ -1,0 +1,9 @@
+# Taste log — 206 cross-block-ffn-share
+
+## r1 — 2026-06-15 — verdict: accept
+- **Sharp bet, novel axis.** The closed `layer tying` axis tested *full* Universal-Transformer sharing; 206 narrows to W_up + W_down only (the two largest FFN matrices, 49k each). Crisp question: does tying the FFN expansion/compression subspace generalize better than tying *everything*? A 206 WIN isolates W_up/W_down as the binding regularizer; a 206 NULL generalizes the layer-tying null cleanly.
+- **Family precedent that earns the slot.** 021 value-residual (cross-block V carry via residual) is in-repo WIN Δ=−0.034 — cross-block mixing *can* pay off at 0.94M. 206 targets a *different matrix* than the other in-flight cross-block/tying ideas: 197 = W_O, 204 = scores, 188 = KV projections, 206 = W_up/W_down. The crowding concern (5+ cross-block tying/carry ideas in queue) is real but 206 is the FFN-side analog — a different lever, not a duplicate.
+- **Identity-clean at step 0.** α init −10 ⇒ sigmoid ≈ 0 ⇒ W_up_eff = W_up_b exactly. Bit-identical baseline holds; no allclose-trap. α is a *per-block* scalar (24 total, +0.003%) — large enough to learn, small enough not to perturb baseline.
+- **Niche fit.** Mechanism (not HP). Identity-init-able. Runs at tiny1m3m seed 42. W_gate left per-block — sensible scoping (sharing the gating projection would be too aggressive; the lever keeps the *gating decision* per-block and only ties the *expansion/compression* subspace).
+- **Information value either way.** Even a 206 NULL is informative: it confirms the layer-tying null generalizes to the FFN-tying subset, retiring partial-tying as an axis. Not "meh, inconclusive" territory.
+- **Transfer.** A regularizer lever; effect should compose with scale (more blocks ⇒ more tying ⇒ stronger regularizer). transfer-risk: med is fair.

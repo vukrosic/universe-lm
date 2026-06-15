@@ -1,8 +1,8 @@
 ---
 id: 195-mid-attn-rmsnorm
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:20:07Z
+updated: 2026-06-15T08:21:49Z
 transfer-risk: low
 plain: Normalize the attention scores themselves (after Q·K, before softmax) with a single RMS gain per head, starting at 1 so step-0 matches the baseline — a way to re-scale the raw attention logits without changing what they point at.
 ---

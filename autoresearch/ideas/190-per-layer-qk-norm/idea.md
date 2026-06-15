@@ -1,8 +1,8 @@
 ---
 id: 190-per-layer-qk-norm
-status: reviewing
+status: needs-revision
 round: 1
-updated: 2026-06-15T08:18:25Z
+updated: 2026-06-15T08:22:05Z
 transfer-risk: low
 plain: Apply RMSNorm to Q and K inside attention, but with a single shared gain per layer (instead of per-head), starting at 1 so step-0 matches the baseline exactly — a coarser-grained version of the QK-norm win.
 ---

@@ -1,2 +1,3 @@
 {"ts":"2026-06-15T08:19:39Z","agent":"taste","idea":"195-mid-attn-rmsnorm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:20:07Z","agent":"taste","idea":"195-mid-attn-rmsnorm","from":"tasting","to":"needs-repitch","round":1,"note":"revise: muddled bit-identity (3 formulations), per-head γ_h is closed null axis (155/152/160), overlaps 190's attribution bet, implementation-detail-heavy sketch, no positive WIN magnitude claimed"}
+{"ts":"2026-06-15T08:21:49Z","agent":"miner","idea":"195-mid-attn-rmsnorm","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
