@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T05:54:01Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T05:54:08Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise — gate-α canonicalization + plan section + pass-bar"}
 {"ts":"2026-06-15T05:55:41Z","agent":"reviser","idea":"181-cross-head-rmsnorm","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-15T05:59:32Z","agent":"reviser","idea":"181-cross-head-rmsnorm","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings: gate-α canonicalized, param count 816 (+0.087%), Plan section added, Pass/fail bar added"}
