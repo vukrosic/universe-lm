@@ -12,3 +12,4 @@
 {"ts":"2026-06-15T12:01:56Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"revising","to":"needs-review","round":2,"note":"applied 8 findings: sister 189-cos-attn coord gate; 004-retnet as direct prior (vs 148); real-model step-0 cumulative-mean check (vs toy); mandatory denominator no-skip; cumsum-causal mask (option c); MHA-flag convention (no new module); nn.Parameter on MinimalLLM (vs per-MHA); Choromanski 2021 + Yang 2024 kernel-shape analog citation"}
 {"ts":"2026-06-15T12:03:59Z","agent":"reviewer","idea":"189-cosformer-linear-attn","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T12:05:02Z","agent":"reviewer","idea":"189-cosformer-linear-attn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T12:12:14Z","agent":"code-impl","idea":"189-cosformer-linear-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
