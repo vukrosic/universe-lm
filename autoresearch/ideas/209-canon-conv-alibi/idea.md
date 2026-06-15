@@ -1,8 +1,8 @@
 ---
 id: 209-canon-conv-alibi
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-15T10:30:00Z
+updated: 2026-06-15T11:19:58Z
 transfer-risk: low
 plain: Add the canon-conv trick (a tiny 3-wide causal convolution on the residual stream of every block, gated to zero at start so step-0 is byte-identical) on top of the new ALiBi champion. It mixes each token with its 2 left-neighbors *before* attention runs — a cheap local-context boost that lives completely outside the attention math, so it shouldn't collide with ALiBi the way value-residual did.
 ---

@@ -1,1 +1,2 @@
 {"ts":"2026-06-15T10:30:00Z","agent":"daemon","idea":"209-canon-conv-alibi","from":"running","to":"needs-recode","round":1,"note":"run FAILED (FAIL): torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 768.00 MiB. GPU 0 has a total capacity of 11.63 GiB of which 341.75 MiB is free. Process 3052988 h"}
+{"ts":"2026-06-15T11:19:58Z","agent":"daemon","idea":"209-canon-conv-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
