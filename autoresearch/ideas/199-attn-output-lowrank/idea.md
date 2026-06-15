@@ -1,8 +1,8 @@
 ---
 id: 199-attn-output-lowrank
-status: planning
+status: needs-plan
 round: 1
-updated: 2026-06-15T16:47:21Z
+updated: 2026-06-15T16:55:44Z
 transfer-risk: med
 plain: After 207-wo-lowrank-bottleneck claimed the rank-residual axis on W_O and 194-r2 claimed it on W_V, take the same mechanism onto W_Q — the only remaining d_model x d_model attention sub-block unowned in the active queue, completing the rank-residual family across {W_Q, W_V, W_O} (W_K left to a future sub-block probe).
 ---
