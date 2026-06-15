@@ -521,6 +521,26 @@ class LLMConfig:
     # softmax, not a replacement), 020-FoX (post-softmax forget gate,
     # softmax stays). See `autoresearch/ideas/173-entmax-15/idea.md`.
     use_entmax: bool = False
+    # 192 — Pre-softmax per-row hard top-k sparse attention
+    # (Touvron et al. 2021, "Going Deeper with Image Transformers" /
+    # DeiT III, arXiv:2103.17239). Keep only the k largest pre-softmax
+    # scores per row, scatter -inf to the rest, then softmax-
+    # renormalize over the surviving k positions. `k` is a config
+    # int (`topk_k`, default 512 = T/4 at the tiny1m3m `max_seq_len
+    # = 2048`, i.e. 75% sparsity). 0 new params, no learnable
+    # scalar — `k` is fixed. Step-0 is NOT bit-identical to baseline
+    # when flag-on (topk of random Gaussians is a different operator
+    # than full softmax) — same structural-lever category as 173 /
+    # 022 / 154. Forces the manual attention path (the scatter write
+    # can't go through SDPA's flash kernel). Causal-mask
+    # interaction: topk runs on the already-masked scores, so
+    # -inf future positions are below the topk budget and never
+    # selected. `k = min(topk_k, scores.size(-1))` is the defensive
+    # bound (handles shorter eval contexts). Default off → baseline
+    # path bit-identical. See
+    # `autoresearch/ideas/192-topk-attn/idea.md`.
+    use_topk_attn: bool = False
+    topk_k: int = 512
     # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
     # per-head learnable scalar s_h that scales the attention logits
     # by `s_h · log(n)` pre-softmax, where n is the per-query causal
@@ -863,6 +883,28 @@ class LLMConfig:
     # case. Tests whether linear-attention math unlocks a new
     # operating point on the best baseline.
     use_linear_attn: bool = False
+    # 189 — CosFormer-Style Linear Attention (Qin et al. NeurIPS 2022,
+    # arXiv:2202.08791). Replace softmax(QK^T/√d) V with the kernel-
+    # replacement form `out = (Q'·(K'^T·V)) / (Q'·K'^T)` where
+    # `Q' = cos(Q)` and `K' = exp(γ·K)·cos(K)` (γ is a learnable
+    # per-block scalar, init 0 ⇒ `K' = cos(K)`, the cosFormer cosine
+    # feature map). Linear in sequence length, with the prefix-sum
+    # cumsum trick at `models/layers.py` for causal masking. The
+    # denominator `Q'·K'^T` is MANDATORY (no skip-flag) — it is the
+    # softmax replacement, not a global mean-pool. γ lives on the
+    # MODEL (`MinimalLLM.cosformer_gammas`), one Parameter of size
+    # `n_layers` (the 161-`layer_temperature` pattern), so the
+    # optimizer sees one entry not 12. Mutually exclusive with
+    # `use_linear_attn` / `use_diff_attn` / `use_nsa_global` /
+    # `use_hybrid_heads` / `use_multiscale_heads` (the cosFormer
+    # branch IS the attention path; combining with another is
+    # double-attention and a structural lever change). Default off
+    # → baseline path bit-identical (the branch is gated on
+    # `self.use_cosformer`, no Parameter registered, the flag is
+    # a strict no-op). See
+    # `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+    use_cosformer: bool = False
+    cosformer_gamma_init: float = 0.0
     # #86 Interleaved global attention (DeepSeek-V4 hybrid-attention
     # analog): the model is otherwise all-SWA (cheap local context
     # everywhere, like V4's compressed/sparse path). When
@@ -1166,6 +1208,56 @@ class LLMConfig:
     # no Parameter registered, no branch taken, baseline path bit-
     # identical. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
     use_static_k_rotation: bool = False
+
+    # 202 — V-Only Soft-Blend Probe (Isolate V-Sharing From
+    # K-Sharing). Per head h, soft-blend per-head V with a group-
+    # shared V via per-head `sigmoid(α_h) ∈ R^H`:
+    #   `V_h_eff = (1 − σ(α_h)) · V_h_local + σ(α_h) · V_group_g(x)`
+    # where `g = h // v_group_size` is the head's group and
+    # `V_group_g(x) ∈ R^{d_k}` is the output of a fresh group-shared
+    # projection `W_V_group_g ∈ R^{d_k × d_model}`. K is **never
+    # touched** — every head keeps its own W_K_h, so the K-axis is
+    # the held-out implicit control. Group V projs (G = n_heads //
+    # v_group_size, default G=2 at tiny1m3m with v_group_size=2 and
+    # H=4) are allocated and init to the elementwise mean of the
+    # in-group per-head W_V_h weights; α_h init `-25.0` ⇒
+    # `σ(α_h) ≈ 1.4e-11` (well below fp32 precision) ⇒
+    # `V_h_eff ≈ V_h_local` exactly at step 0 ⇒ forward is bit-
+    # identical to the no-flag baseline. K remains untouched, so the
+    # K-axis is the held-out implicit control (the family-dead or
+    # family-keep attribution is read off the σ(α) trajectory, not
+    # val loss). Default off ⇒ no Parameter registered, no branch
+    # taken, baseline path bit-identical. See
+    # `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+    use_grouped_v: bool = False
+    v_group_size: int = 2
+
+    # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+    # (Su et al. 2024 RoFormer / RoPE, arXiv:2104.09864, position-
+    # dependent rotation context). Per head h and per pair i
+    # (d_k/2 = 8 planes), one learnable scalar angle `φ_{h,i} ∈ R`
+    # applied to BOTH Q and K as a static (position-independent)
+    # 2D rotation on disjoint `(2i, 2i+1)` planes BEFORE RoPE's
+    # position-dependent rotation. The block-diagonal `R_h` (product
+    # of d_k/2 2D rotations) is orthogonal; applied to both Q and
+    # K the inner product `<Rq, Rk> = <q, k>` would absorb the
+    # lever under identity RoPE — but RoPE is NOT identity: the
+    # rotation layers cleanly BEFORE RoPE, so the (Q, K) stream
+    # entering RoPE is in a *learned static basis*, and RoPE's
+    # position-dependent per-pair rotation then mixes that basis
+    # with position. The pre-RoPE placement is the fresh axis
+    # (185 rotates K post-RoPE, 200 rotates K post-RoPE with
+    # shared angles, 154 uses a fixed rebase on K,V pre-softmax
+    # — 192 is the only learned QK rotation that lives *before*
+    # the position mix). Init `φ_{h,i} = 0` ⇒ `cos(0)=1,
+    # sin(0)=0` in fp32 ⇒ `R_h = I_{d_k}` exactly ⇒ `Q = R_h @
+    # Q = Q` and `K = R_h @ K = K` exactly ⇒ step-0 forward is
+    # bit-identical to the no-flag baseline. Default off ⇒ no
+    # Parameter registered, no branch taken, baseline path bit-
+    # identical. See
+    # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+    use_pre_rope_rotation: bool = False
+    pre_rope_rotation_init: float = 0.0
 
     # 134 — Mega: Moving Average Equipped Gated Attention
     # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
@@ -2146,6 +2238,28 @@ class LLMConfig:
     # QK-norm output. See
     # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
     use_qk_norm_depth: bool = False
+    # 190 — Per-Layer QK-Norm (scalar γ per block per side, replaces
+    # 016's per-channel γ). Sits on top of 016's WIN shape: the per-head
+    # `q_norm`/`k_norm` (RMSNorm/LayerNorm over d_head) is kept intact,
+    # and a single scalar `qk_norm_scalar_{q,k} = nn.Parameter(
+    # torch.ones(()))` per MHA per side is multiplied AFTER the per-head
+    # norm and BEFORE the QK matmul. Default off ⇒ no Parameter
+    # registered, no branch taken, baseline path bit-identical. When
+    # ON with init 1.0, the multiply is exactly the identity in fp32 ⇒
+    # step-0 forward is byte-identical to 016's step-0 (max-abs-diff =
+    # 0.0). Distinct from 169 (`use_qk_norm_depth`, single SHARED scalar
+    # across Q and K) — 190 keeps Q and K scalars separate by default
+    # to preserve 016's QK symmetry; the shared variant is gated behind
+    # `qk_norm_scalar_qk_shared` (collapses to 169's axis if both are
+    # on). 190 default `qk_norm_scalar_qk_shared=False` ⇒ 12 × 2 × 1 =
+    # 24 γ params total (vs 016's 384 per-channel); shared variant ⇒
+    # 12 × 1 = 12. Mutually exclusive with `use_q_only_norm` /
+    # `use_k_only_norm` / `use_qk_norm_post_rope` (asserted at MHA
+    # forward) — those levers restructure the norm, not the gain, and
+    # combining them confounds 190's axis. See
+    # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+    qk_norm_scalar_per_block: bool = False
+    qk_norm_scalar_qk_shared: bool = False
 
     # 132 — Born-Again Networks: Self-Distillation with EMA Teacher
     # (Furlanello, Lipton, Tschiatschek, Prabhudesai, Urbach 2018,
@@ -2333,6 +2447,39 @@ class Tiny1M3MSWANConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MCosFormerConfig(Tiny1M3MConfig):
+    """Tiny1M3M with cosFormer linear attention (189, Qin et al. 2022,
+    arXiv:2202.08791).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Replaces
+    `softmax(QK^T/√d) V` with the kernel-replacement form
+    `out = (Q'·(K'^T·V)) / (Q'·K'^T)` where `Q' = cos(Q)` and
+    `K' = exp(γ·K)·cos(K)`. γ is a learnable per-block scalar
+    (`MinimalLLM.cosformer_gammas`, init 0 ⇒ `K' = cos(K)`). At
+    step 0 the lever reduces to the cumulative mean of V over the
+    causal prefix (cos(Q)·cos(K)^T ≈ 1 under the small-logit
+    std-0.02 qkvo_proj init). Linear in sequence length via the
+    prefix-sum cumsum trick at `models/layers.py`. The denominator
+    is mandatory (no skip-flag) — it is the softmax replacement,
+    not a global mean-pool. At T=2048 the linear-vs-quadratic
+    complexity bet is invisible; the lever reduces to a
+    *kernel-shape* bet (cosine vs softmax).
+
+    Direct prior: 004-retnet-retention (closed null at 0.94M,
+    Δ=+0.04 wrong-sign with φ=elu+1). 189 swaps the feature map
+    to exp(γx)·cos(x); a 189 null closes the linear-time
+    kernel-replacement family at 0.94M, a 189 win isolates the
+    failure mode to feature-map shape (elu+1 sharp vs cos+sin
+    diffuse).
+
+    NULL band |Δ| < 0.003. DRIFT ≥ +0.003. PASS ≤ −0.005. NOISE
+    BAND: −0.003 < Δ < −0.005 (inconclusive, treated as null).
+    See `autoresearch/ideas/189-cosformer-linear-attn/idea.md`.
+    """
+    use_cosformer: bool = True
+
+
+@dataclass
 class Tiny1M3MXPosConfig(Tiny1M3MConfig):
     """Tiny1M3M with xPos exponential decay on RoPE (174, Sun et al. 2022).
 
@@ -2464,6 +2611,51 @@ class Tiny1M3MSwigluFFNConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MPreFFNAttnMixConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Pre-FFN Attention Mixing (198, FiLM-style cross-
+    stream conditioning of the FFN input by the raw attention output;
+    Perez et al. 2018, arXiv:1709.07871).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val_mean
+    `6.3988±0.04` per `autoresearch/baseline-cache.json` box
+    `5b8a7fea8963`, n=3). The standard FFN reads `ffn_in = norm2(x)`
+    (pre-norm) where `x` is the post-attention residual. 198 instead
+    mixes the *raw* attention output (post-`self.attention(...)`,
+    before any layerscale / sub_ln / rezero / dropout wrapping) into
+    the FFN input as a learned residual:
+
+        ffn_in = norm2(x + sigmoid(γ_raw) · attn_out_raw.detach())
+
+    Init `pre_ffn_attn_mix_init=-10` ⇒ `sigmoid(-10) ≈ 4.5400e-5` ⇒
+    the mix contribution is `~4.5e-5 · O(1) ≈ 4.5e-5` in fp32 at step
+    0 ⇒ baseline path is fp32-noise bit-identical at step 0 (same
+    `sigmoid(-10)` convention as 188/201/205/206). The `.detach()`
+    keeps γ's gradient cleanly tied to FFN-side loss only (no
+    gradient through the attention path's Q/K/V/O projections at
+    step 0 — the same discipline as 021's V.detach). Per-block cost:
+    1 scalar × 12 blocks = 12 scalars (+0.0013% of the 0.94M model).
+
+    Distinct from 164-Q-carry / 168-AV-carry (cross-block, attention-
+    side): 198 is the first *intra-block* attention-to-FFN candidate.
+    The 021-value-residual WIN (cross-block V) does NOT close this:
+    V was carried *across blocks*, not into the FFN *within* a
+    block. WIN ⇒ intra-block attention-FFN information flow is a
+    binding lever at 0.94M/12L; NULL ⇒ the FFN's residual-stream
+    input is sufficient. Default off → baseline path bit-identical
+    (no Parameter registered, no forward branch taken).
+
+    @dataclass-decorated so `use_pre_ffn_attn_mix` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+    """
+    use_pre_ffn_attn_mix: bool = True
+    pre_ffn_attn_mix_init: float = -10.0
+
+
+@dataclass
 class Tiny1M3MConvFFNConfig(Tiny1M3MConfig):
     """Tiny1M3M with depthwise Conv inside FFN (ConvBERT/ConvNeXt-style).
 
@@ -2551,6 +2743,40 @@ class Tiny1M5MConfig(Tiny1M3MConfig):
 class Tiny1M3MQGainConfig(Tiny1M3MConfig):
     """Tiny1M3M with per-head Q-gain."""
     use_q_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MGroupedVConfig(Tiny1M3MConfig):
+    """Tiny1M3M with V-only soft-blend probe (Isolate V-Sharing
+    From K-Sharing).
+
+    Per head h, soft-blend per-head V with a per-group-shared V via
+    per-head `sigmoid(α_h) ∈ R^H`:
+      `V_h_eff = (1 − σ(α_h)) · V_h_local + σ(α_h) · V_group_g(x)`
+    where `g = h // v_group_size`. K is **never touched** — every
+    head keeps its own W_K_h, so the K-axis is the held-out
+    implicit control.
+
+    Init: α_h = -25.0 ⇒ `σ(α_h) ≈ 1.4e-11` (below fp32 precision) ⇒
+    `V_h_eff ≈ V_h_local` exactly at step 0 ⇒ forward is bit-
+    identical to the no-flag baseline. W_V_group_g is init to the
+    in-group elementwise mean of per-head W_V_h weights. At
+    tiny1m3m (n_heads=4, n_kv_heads=2 ⇒ num_key_value_groups=2)
+    with v_group_size=2, the mean collapses to the per-KV-head W_V
+    slice (each group contains exactly one KV-head's worth of
+    heads).
+
+    This is a **probe**, not a lever — the deciding signal is the
+    σ(α) trajectory, not val loss. See outcomes (a-d) in
+    `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). The
+    lever subclasses the plain `Tiny1M3MConfig` so the read-out
+    isolates the V-axis from a clean baseline (no compounding with
+    the active champion `Tiny1M3MAlibiConfig`).
+    """
+    use_grouped_v: bool = True
+    v_group_size: int = 2
 
 
 @dataclass
@@ -2672,6 +2898,46 @@ class Tiny1M3MAlibiConfig(Tiny1M3MConfig):
     mechanism, lever-mode pin, and zero-init rationale.
     """
     use_alibi_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MAlibiPostSoftmaxMixConfig(Tiny1M3MAlibiConfig):
+    """205 — Tiny1M3M with Per-Head Post-Softmax Convex Interpolation
+    Toward Uniform, stacked on the 175-alibi-slopes champion.
+
+    Subclasses `Tiny1M3MAlibiConfig` (val 6.2403, the current
+    champion per `autoresearch/champion.json`). The lever is a
+    per-head learnable scalar `m_h = σ(raw_h)` (init
+    `per_head_post_softmax_mix_init_raw = -4.0` ⇒ `m_h ≈ 0.018` at
+    step 0). After softmax, blend the per-head attention distribution
+    toward the per-row uniform 1/(t+1) over the active (causal)
+    positions: `attn_h_post = (1 − m_h) · attn_h + m_h · uniform`.
+    Bounded in [0, 1] via sigmoid ⇒ the optimizer can only *soften*
+    any head toward uniform, never sharpen it (asymmetric boundedness
+    vs the closed pre-softmax 155 lever).
+
+    Step-0 byte-identity: at init `m_h ≈ 0.018` ⇒ per-cell deviation
+    in `attn_w` is bounded by `0.018 · max(attn_w[s], 1/(t+1))` (avg
+    deviation ≈ 0.018 / T ≈ 9e-6, well within fp32 noise). The
+    forward branch is gated on `self.use_per_head_post_softmax_mix`,
+    the parameter is not registered when off, so the no-flag
+    baseline path is bit-identical. Forces the manual attention path
+    so SDPA's flash kernel doesn't fuse QK^T+softmax+AV.
+
+    Cost: H scalars/block × 12 blocks = 48 params (+0.005% of 0.94M).
+    Distinct from the closed per-head attention-shape nulls 152/155/
+    160 (pre-softmax bias/temp, post-AV gain) — this is the bounded
+    *post-softmax* axis. Pass-bar: WIN iff `Δ = val_loss(trt) −
+    mean(val_loss(ctrl)) ≤ −0.010` AND the lever binds
+    (`max_h m_h > 0.1` for ≥1 head/layer on average). NULL band
+    `|Δ| < 0.010`. PARTIAL WIN (lever binds, Δ inside band) counts
+    as a carry signal to 135M Phase-2 (the loss surface at 0.94M is
+    too tight to reward the lever even when it binds, per r1
+    finding 5). A/B vs the 175-alibi champion (`Tiny1M3MAlibiConfig`,
+    val 6.2403), not the bare baseline. See
+    `autoresearch/ideas/205-per-head-mult-logit-scale/idea.md`.
+    """
+    use_per_head_post_softmax_mix: bool = True
 
 
 @dataclass
@@ -6649,6 +6915,66 @@ class Tiny1M3MQKNormDepthConfig(Tiny1M3MQKNormConfig):
 
 
 @dataclass
+class Tiny1M3MQKNormScalarConfig(Tiny1M3MQKNormConfig):
+    """Tiny1M3M with Per-Layer QK-Norm (190 — scalar γ per block per
+    side, replaces 016's per-channel γ).
+
+    A/B vs the 016 WIN control (`Tiny1M3MQKNormConfig`, val 6.3906,
+    `closed.md:60`). Keeps 016's per-head `q_norm`/`k_norm` shape
+    intact and adds a single scalar `qk_norm_scalar_{q,k} =
+    nn.Parameter(torch.ones(()))` per MHA per side (12 blocks × 2 sides
+    = 24 γ params total by default, vs 016's 384 per-channel), applied
+    AFTER the per-head norm and BEFORE the QK matmul:
+        `Q ← Q · qk_norm_scalar_q; K ← K · qk_norm_scalar_k`,
+    and on the MoA `extra_K` so all K tokens entering the QK matmul
+    see the same per-block γ_K normalization strength.
+
+    Step-0 identity: `qk_norm_scalar_* = 1.0` init ⇒ `Q · 1 = Q` and
+    `K · 1 = K` exactly in fp32 ⇒ the multiplicative gain is exactly
+    the identity ⇒ forward is **byte-identical to 016's step-0**
+    (max-abs-diff = 0.0 vs the 016 control — no tolerance needed).
+    The optimizer can then learn per-side-per-block normalization
+    strength. The hypothesis: 016's WIN is driven by **per-channel**
+    γ (16 scalars/block/side, 384 total); 190 collapses this to a
+    **scalar** γ (1 scalar/block/side, 24 total) and tests whether
+    the binding axis is the per-channel resolution or the simpler
+    block-level scalar magnitude. If 190-WIN ≈ 016-WIN, block-level
+    magnitude binds (per-channel is over-parameterized at 0.94M); if
+    190-LOSS > 016 + 0.005, per-channel resolution IS binding (190
+    throws away capacity).
+
+    Default: Q/K SEPARATE scalars (preserves 016's QK symmetry 162+165
+    attributed WIN to — a closed attribution line). The Q/K-SHARED
+    variant is gated behind `qk_norm_scalar_qk_shared` and would
+    collapse to the 169 axis (per-block shared scalar — already
+    closed as null). The shared variant is a different lever and
+    is off by default. Mutually exclusive with `use_q_only_norm` /
+    `use_k_only_norm` / `use_qk_norm_post_rope` / `use_qk_norm_depth`
+    (asserted at MHA forward) — those levers restructure the norm,
+    not the gain, and combining with `use_qk_norm_depth` stacks two
+    scalar-γ multipliers (different lever, conflates 190's axis).
+
+    Cost: +24 γ params total (12 blocks × 2 sides × 1 scalar) — a
+    −360 param *reduction* vs 016's 384 per-channel γ (0.038% of
+    0.94M), but the lever is the *granularity change*, not the
+    budget change. FLOPs: ~+2 elementwise multiplies per block per
+    forward (negligible at tiny1m3m).
+
+    Transfer-risk: low — RMSNorm family production-validated at
+    LLaMA 3 / Qwen 2.5 / Mistral 1B+; QK-norm validated at LLaMA /
+    Gemma-2 / Qwen-2.5 (≥7B). The lever is a *strictly coarser*
+    parameterization of 016's per-channel γ, not a niche one.
+
+    @dataclass-decorated so `qk_norm_scalar_per_block` default is
+    properly overridden (the dataclass-inheritance pitfall documented
+    in `_arq_161-dyt-temp.py`). Inherits `use_qk_layernorm=True` from
+    `Tiny1M3MQKNormConfig` (the 016 WIN shape).
+    """
+    qk_norm_scalar_per_block: bool = True
+    qk_norm_scalar_qk_shared: bool = False
+
+
+@dataclass
 class Tiny1M3MTalkingHeadsConfig(Tiny1M3MConfig):
     """Tiny1M3M with Talking-Heads Attention (177 — Shazeer et al. 2020,
     arXiv:2003.02436). Cross-head H×H linear mix on **both** axes:
@@ -6755,6 +7081,66 @@ class Tiny1M3MEntmaxConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/173-entmax-15/{idea,plan}.md`.
     """
     use_entmax: bool = True
+
+
+@dataclass
+class Tiny1M3MTopKAttnConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Pre-Softmax Hard Top-K Sparse Attention (192).
+
+    Replaces `torch.softmax` in the manual attention path with a
+    per-row hard top-k sparsification (Touvron et al. 2021, "Going
+    Deeper with Image Transformers" / DeiT III, arXiv:2103.17239):
+    `topk_vals, topk_idx = scores.topk(k, dim=-1)`, scatter the
+    kept scores back into a `sparse_scores = -inf`-filled tensor
+    of the original shape, then `softmax(sparse_scores, dim=-1)`
+    to renormalize over the surviving k positions. `k = 512 =
+    max_seq_len/4` is the default working point (75% sparsity at
+    `max_seq_len=2048`). Distinct from:
+    - 173-entmax-1.5 (closed) — *learned* per-row support size via
+      bisection on a Lagrange multiplier. 192 is *fixed*-support
+      (k is a config int, not learned), so it drops the support-
+      size search dimension at the cost of expressivity.
+    - 022-softpick (closed) — sparse softmax via
+      `ReLU(exp(x)−1)`. 192 is a hard sort + scatter, not soft.
+    - 182-per-head-window (null) — *windowed* contiguous attention.
+      192 is score-*sorted* (non-contiguous).
+    - 154-rebased (WIN) — *soft locality* prior. 192 is *hard
+      global* sparsity. They are *competing* for the same axis
+      ("what kind of sparsity helps?"), not stacking.
+
+    Step-0 framing: NOT byte-identical when flag-on (topk of
+    random Gaussians is a non-trivially different operator than
+    full softmax). Framed as a *structural lever* in the same
+    cohort as 173 / 022 / 154. Default off → baseline path
+    bit-identical (no Parameter registered, no branch taken).
+
+    Forces the manual attention path (the topk + scatter write
+    can't go through SDPA's flash kernel). Causal-mask
+    interaction is correct: topk runs on the already-masked
+    scores, so -inf future positions are below the topk budget
+    and `scores.topk` never selects them. `k =
+    min(topk_k, scores.size(-1))` is the defensive bound.
+
+    Cost: 0 new params (k is a config int). FLOPs: per forward,
+    one `torch.topk` (T·log(k) per row, kernel is dense) + one
+    `scatter_` + one softmax over k=512 not T=2048. Net Δ < 5%
+    per step, well within the ±0.04 noise band. Memory:
+    transient `topk_vals` / `topk_idx` ([B,H,T,k] = 8·4·2048·512·4B
+    ≈ 134MB at fp32) + a one-shot `sparse_scores` of the same
+    shape as `scores` (dropped after softmax).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). The
+    lever is the strictly-more-restricted, strictly-cleaner-
+    gradient cousin of 173 (a 1-D weight search within a fixed
+    512-key budget vs 173's coupled 2-D support+weight search).
+    A 192-NULL is strictly more informative than re-running 173:
+    it confirms 173's null on a *different* parameterization
+    (1-D vs 2-D), not the same one.
+
+    See `autoresearch/ideas/192-topk-attn/{idea,plan}.md`.
+    """
+    use_topk_attn: bool = True
+    topk_k: int = 512
 
 
 @dataclass
@@ -6987,7 +7373,66 @@ class Tiny1M3MStaticKRotationConfig(Tiny1M3MConfig):
     AND clears the two-ctrl rule. NULL band |Δ| < 0.01. DRIFT >
     +0.01. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
     """
-    use_static_k_rotation: bool = True
+@dataclass
+class Tiny1M3MPreRoPEQKRotationConfig(Tiny1M3MConfig):
+    """Tiny1M3M with pre-RoPE per-head × per-pair learned Q+K
+    rotation (the "pre-RoPE placement" of the orthogonal-rebase
+    axis family).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    val 6.3988 cached at `5b8a7fea8963` ±0.04, see
+    `autoresearch/baseline-cache.json`). Each MHA head has its own
+    block-diagonal orthogonal `R_h ∈ R^{d_k × d_k}` built from
+    `d_k/2 = 8` 2D rotations on disjoint `(2i, 2i+1)` planes,
+    applied to BOTH Q and K (Q untouched in 185, K+V in 154,
+    Q+K in 192) **BEFORE** RoPE's position-dependent rotation.
+    One learnable angle `φ_{h,i} ∈ R` per (head, plane). Init
+    `φ_{h,i} = 0` ⇒ `cos(0)=1`, `sin(0)=0` in fp32 ⇒
+    `R_h = I_{d_k}` exactly ⇒ `Q = R_h @ Q = Q` and
+    `K = R_h @ K = K` exactly ⇒ step-0 forward is bit-identical
+    to the no-flag baseline. `R_h` orthogonal preserves Q, K
+    norms (softmax temperature unchanged). The lever is then
+    absorbed by BOTH Q and K's stream into RoPE — the rotation
+    acts as a *static* basis change on the (Q, K) features
+    before position is mixed in by RoPE. Per-pair breakdown
+    (8 angles per head, not 1) is the smallest version that
+    breaks the cross-pair symmetry W_O's per-channel projection
+    cannot absorb.
+
+    Distinct from:
+      - 154-rebased-attn (WIN, fixed *random shared* rebase on
+        K and V pre-softmax): 192 is *learned, per-head ×
+        per-pair, Q+K, pre-RoPE*. Different placement relative
+        to position (154 is pre-softmax, 192 is pre-position).
+      - 172-per-head-rope-base (closed null, position-dependent
+        per-head RoPE base): 192 is *position-independent*.
+      - 175-alibi-slopes (WIN, per-head additive bias on
+        scores): 192 is per-head × per-pair *rotation* of Q,K
+        pre-RoPE, not per-head *scalar* bias on scores.
+      - 185-static-per-head-k-rotation (procedurally closed,
+        per-head × per-pair, K-only, post-RoPE): 192 is
+        *Q+K pre-RoPE*. Lives in a different (Q|K, pre|post-
+        RoPE) cell of the lever grid. The "pre vs post" choice
+        is the only free axis; 192 and 185 are the two arms
+        of that bet.
+      - 200-rope-phase-offset-per-layer (per-layer × per-pair
+        K-only post-RoPE): 192 is *per-head × per-pair Q+K
+        pre-RoPE*. Different tensor, different head/headless
+        parameterization, different placement. They together
+        bound the four-cell bet:
+            (per-head vs per-layer) × (pre vs post RoPE).
+
+    Param cost: `n_heads × d_k/2 × n_layers = 4 × 8 × 12 = 384`
+    params (+0.041% of 0.94M — negligible). Compute: ~1.05M
+    flops per block per forward (8 per-pair 2D rotations on
+    each of Q and K's [B, T, H, d_k] tensor at T=2048, H=4,
+    d_k=16 — 2× the K-only cost). PASS ≤ ctrl − 0.005 AND
+    clears the two-ctrl rule (Δ ≤ −0.01 is a strong
+    confirmation). NULL band |Δ| < 0.01. DRIFT > +0.01.
+    See `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+    """
+    use_pre_rope_rotation: bool = True
+    pre_rope_rotation_init: float = 0.0
 
 
 @dataclass
@@ -7356,3 +7801,67 @@ class Tiny1M3MEmbedSqrtDConfig(Tiny1M3MAlibiConfig):
     documented in `_arq_161-dyt-temp.py`).
     """
     use_embed_sqrt_d_scaling: bool = True
+
+
+@dataclass
+class Tiny1M3MTiedWOConfig(Tiny1M3MConfig):
+    """Tiny1M3M with W_O tied across blocks via a learnable soft
+    blend (197 — Dehghani et al. "Universal Transformers" ICLR
+    2019, arXiv:1807.03819 + Lan et al. "ALBERT" arXiv:1909.11942,
+    restricted to the attention output projection only).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.40 ± 0.04 cached for this box, see
+    `autoresearch/baseline-cache.json`). Replaces the per-block
+    W_O slot with a learnable convex blend of the per-block
+    W_O_b and a single shared `W_O_shared ∈ R^{d_model × d_model}`
+    owned by the model:
+        `W_O_eff_b = (1 − σ(α_b_raw)) · W_O_b + σ(α_b_raw) · W_O_shared`
+    where `α_b_raw ∈ R` is a per-MHA 0-dim scalar, init
+    `tied_wo_alpha_init = -10.0` ⇒ `σ(−10) ≈ 4.54e-5` ⇒ the
+    blend is dominated by the block-local projection at step 0
+    (forward is bit-identical to the no-flag baseline up to fp32
+    noise of one extra multiply-add — same tolerance the
+    188-cross-block-kv-share and 204-cross-block-score-share
+    siblings accept). The shared matrix is std=0.02 normal-init
+    (matches the baseline `qkvo_proj` O-slice init).
+
+    Per-block `W_O_b` is KEPT (no per-block slot is removed), so
+    the treatment is param-*superset* of control by +4,108
+    params = +0.4% of 0.94M:
+      - +1 shared `W_O_shared` (d_model² = 4,096)
+      - +12 per-block `tied_wo_alpha_raw` scalars (12)
+    The A/B is therefore a parameter-*shape* lever (one global
+    matrix + 12 scalars, not 12 per-block matrices), not a
+    model-size lever. A smaller-model A/B (the rejected
+    hard-tying ablation: 12 × 4,096 = 49,152 params removed,
+    -5.2% of 0.94M) would produce the wrong null ("tied W_O is
+    just smaller, smaller loses, conclude W_O tying is bad").
+
+    Mutually exclusive with `use_yoco` and `use_gau` at
+    construction (the upper-half YOCO blocks and GAU blocks
+    don't take a `tied_wo_shared` kwarg — assertion lives in
+    `MinimalLLM.__init__`). Composes with 171-DropConnect and
+    207-W_O-LowRank: the blend happens BEFORE both on the
+    per-block O slice, so the 171 mask and 207 lowrank addition
+    still operate on a valid `[d_model, d_model]` tensor. The
+    `tied_wo_alpha_raw` is a free parameter of each MHA
+    (`nn.Parameter(torch.full((), -10.0))`); `α_b = σ(α_b_raw)`
+    is computed inside `MHA.forward()`. Standard AdamW on
+    `α_b_raw` is fine; no special optimizer, no LR warmup, no
+    α-schedule.
+
+    Cost: +4,108 params (+0.4%), <0.1% wall-clock overhead
+    (one element-wise add + multiply on a `[d_model, d_model]`
+    tensor per block per forward). Optimizer state +40 KB at
+    tiny1m3m. Sub-noise on every axis.
+
+    NULL band |Δ| < 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_tied_wo_across_blocks` default
+    is properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_tied_wo_across_blocks: bool = True

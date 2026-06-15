@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtune.modules import RotaryPositionalEmbeddings
-from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward, ReLU2FeedForward
+from .components import SquaredReLUFeedForward, SwiGLUFeedForward, GELUFeedForward, SaturatingReLUFeedForward, ReLU2FeedForward, MishGLUFeedForward
 from .fire_pe import FIREBias
 from .cope import CoPE
 from .deberta import DeBERTaRelativePositionBias
@@ -791,6 +791,27 @@ class MultiHeadAttention(nn.Module):
         # bit-identical (no Parameter is registered, no branch is
         # taken). See `autoresearch/ideas/155-per-head-temp/idea.md`.
         use_per_head_temp: bool = False,
+        # 195 — Tight hard QK logit clamp. Apply
+        # `torch.clamp(scores, min=-c, max=+c)` to the pre-softmax
+        # attention logits `Q·K^T / sqrt(d_k)` so no single logit
+        # can dominate the softmax. `c` is a fixed config
+        # constant (not learnable). Default off → baseline path
+        # bit-identical (the `if self.use_qk_clamp:` branch is
+        # never taken). When on, the lever is intentionally NOT
+        # bit-identical at step 0 — at Kaiming init, QK^T entries
+        # are O(1) Gaussian and a tight c (default 2.0) actively
+        # clips ~5% of the 2-sigma tail at step 0, so the
+        # regularizer effect is exercised immediately and the
+        # gradient at the boundary is discontinuous (exactly 0
+        # outside the clamp). Forces the manual attention path
+        # so SDPA's flash kernel doesn't fuse QK^T+softmax+AV
+        # (the pre-softmax logit must be exposed for clamping).
+        # Distinct from the closed `logit softcap` axis (smooth
+        # tanh at c=8 — inactive at step 0 at tiny1m3m; here
+        # it's a *hard* clip at c=2.0 — *active* at step 0).
+        # See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+        use_qk_clamp: bool = False,
+        qk_clamp_c: float = 2.0,
         # 161 — Per-layer learnable attention temperature. The actual
         # parameter `layer_temperature ∈ R^{n_layers}` lives on the
         # MODEL (`MinimalLLM`); each MHA reads `layer_temperature
@@ -917,6 +938,27 @@ class MultiHeadAttention(nn.Module):
         # forget gate, softmax stays). See
         # `autoresearch/ideas/173-entmax-15/idea.md`.
         use_entmax: bool = False,
+        # 192 — Pre-softmax per-row hard top-k sparse attention
+        # (Touvron et al. 2021, DeiT III, arXiv:2103.17239). Keep
+        # only the k largest pre-softmax scores per row, scatter
+        # -inf to the rest, then softmax-renormalize over the
+        # surviving k positions. `topk_k` is a config int (default
+        # 512 = T/4 at the tiny1m3m `max_seq_len=2048`, i.e. 75%
+        # sparsity). 0 new params, no learnable scalar. Step-0 is
+        # NOT bit-identical to baseline when flag-on (topk of
+        # random Gaussians is a different operator than full
+        # softmax) — same structural-lever category as 173 / 022
+        # / 154. Forces the manual attention path (the scatter
+        # write can't go through SDPA's flash kernel). Causal-mask
+        # interaction is correct: topk runs on the already-masked
+        # scores, so -inf future positions are below the topk
+        # budget and `scores.topk` never selects them. The
+        # defensive bound `k = min(topk_k, scores.size(-1))`
+        # handles shorter eval contexts. Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/192-topk-attn/idea.md`.
+        use_topk_attn: bool = False,
+        topk_k: int = 512,
         # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
         # per-head learnable scalar s_h that multiplies the attention
         # logits by `s_h · log(n)` pre-softmax, where n is the per-query
@@ -1175,6 +1217,25 @@ class MultiHeadAttention(nn.Module):
         # registered, no branch taken, baseline path bit-identical.
         # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
         use_qk_norm_depth: bool = False,
+        # 190 — Per-Layer QK-Norm (scalar γ per block per side, replaces
+        # 016's per-channel γ with a single scalar per side per block).
+        # Default off ⇒ no Parameter registered, no branch taken,
+        # baseline path bit-identical. When ON with init 1.0, the
+        # multiply is exactly the identity in fp32 ⇒ step-0 forward is
+        # byte-identical to 016's step-0 (max-abs-diff = 0.0). Distinct
+        # from 169 (`use_qk_norm_depth`): 190 keeps Q and K scalars
+        # SEPARATE by default (preserves 016's QK symmetry 162+165
+        # closed, 016 attributed WIN to); the shared variant
+        # `qk_norm_scalar_qk_shared` is a sub-flag. Default separate:
+        # 12 × 2 × 1 = 24 γ params (vs 016's 384 per-channel); shared
+        # variant: 12 × 1 = 12. Mutually exclusive with
+        # use_q_only_norm / use_k_only_norm / use_qk_norm_post_rope /
+        # use_qk_norm_depth (asserted in `forward`) — those levers
+        # restructure the norm, not the gain, and combining them
+        # confounds 190's axis. See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        qk_norm_scalar_per_block: bool = False,
+        qk_norm_scalar_qk_shared: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -1279,6 +1340,44 @@ class MultiHeadAttention(nn.Module):
         use_lowrank_wo: bool = False,
         wo_rank: int = 16,
         wo_lowrank_alpha_init: float = -10.0,
+        # 197 — Tied W_O Across Blocks (soft blend, Universal-
+        # Transformer-style learnable parameter sharing restricted
+        # to the attention output projection, Dehghani et al. ICLR
+        # 2019 arXiv:1807.03819 + Lan et al. ALBERT arXiv:1909.11942).
+        # When on, the MHA gets a per-block 0-dim scalar
+        # `tied_wo_alpha_raw` (init `tied_wo_alpha_init`, default
+        # −10 ⇒ `σ(−10) ≈ 4.54e-5` at step 0) and a reference to
+        # the model's shared `W_O_shared ∈ R^{d_model × d_model}`
+        # parameter (passed in via `tied_wo_shared=...`; this is the
+        # SAME parameter reference for every block — NOT a per-
+        # block copy). In `forward()`, AFTER extracting
+        # `w_o = self.qkvo_proj[self.qkv_size:]` and BEFORE the
+        # 171-DropConnect mask site, the per-block effective O
+        # projection is built as
+        #   `w_o_eff = (1 − σ(α_b_raw)) · w_o_b + σ(α_b_raw) · W_O_shared`
+        # At step 0 `σ(−10) ≈ 4.54e-5` and `W_O_shared` is std=0.02
+        # normal-init, so the contribution from `W_O_shared` is on
+        # the order of 1e-7 in std ⇒ the forward is bit-identical
+        # to the no-flag baseline up to fp32 noise of one extra
+        # multiply-add — same tolerance the 188 cross-block K/V
+        # share and 204 cross-block score share siblings accept.
+        # Per-block `w_o_b` is KEPT (treatment is param-superset of
+        # control by +4,108 params: 1 shared matrix + 12 scalars
+        # = +0.4% of 0.94M); no per-block slot is removed, so the
+        # A/B is a parameter-shape lever, not a model-size lever.
+        # Default off → no Parameter registered, no branch taken,
+        # baseline path bit-identical. Mutually exclusive with
+        # `use_yoco` / `use_gau` (asserted in `MinimalLLM.__init__`;
+        # the upper-half YOCO blocks and GAU blocks don't take the
+        # `tied_wo_shared` kwarg). Composes with 171-DropConnect
+        # (the 171 mask runs on the blended `w_o` after this
+        # branch) and 207-W_O-LowRank (the 207 addition runs on
+        # the blended `w_o` after this branch). See
+        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
+        # `plan.md`.
+        use_tied_wo_across_blocks: bool = False,
+        tied_wo_alpha_init: float = -10.0,
+        tied_wo_shared=None,  # Optional[torch.nn.Parameter]; set only when flag is on.
         # 151 — RoV (Rotary Value Embeddings, gated; Su et al. 2024
         # Hunyuan-DiT / RoV for ViT, arXiv:2403.13257 §2.3). Apply the
         # same rotary position embedding already used on Q, K to the
@@ -1337,6 +1436,28 @@ class MultiHeadAttention(nn.Module):
         # no branch taken, baseline path bit-identical. See
         # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
         use_static_k_rotation: bool = False,
+        # 200 — Static per-layer × per-pair learned K-rotation
+        # (depth-axis twin of 185, RoFormer/RoPE-parameterized).
+        # Each layer has its OWN `R_l ∈ R^{d_k × d_k}` orthogonal
+        # matrix applied to K ONLY (Q untouched), parameterized
+        # as a product of `d_k/2 = 8` 2D rotations on disjoint
+        # `(2i, 2i+1)` planes — one learnable angle `φ_{l,i} ∈ R`
+        # per (layer, plane), SHARED across heads (this is the
+        # "depth-axis" axis: 185 varies angles across heads, 200
+        # varies angles across layers). The K-only application
+        # breaks QK^T inner-product preservation (Q is in
+        # baseline basis, K is in R_l-rotated basis), so the
+        # lever has a real axis to bind on — unlike a QK-
+        # symmetric application, which would be a provable no-op.
+        # `R_l` block-diagonal-orthogonal preserves K's norm and
+        # the softmax temperature. Init `φ_{l,i} = 0` ⇒
+        # `cos(0)=1, sin(0)=0` in fp32 ⇒ `R_l = I_{d_k}` exactly
+        # ⇒ `K = R_l @ K = K` exactly ⇒ step-0 forward is bit-
+        # identical to the no-flag baseline. Default off ⇒ no
+        # Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
+        use_per_layer_k_rotation: bool = False,
         # 156 — Mixture-of-Attentions (MoA). Run `E` parallel
         # attention computations per layer with SEPARATE K_e, V_e
         # projections (Q is shared across experts, so the routing is
@@ -1639,6 +1760,16 @@ class MultiHeadAttention(nn.Module):
         self.use_entmax = use_entmax
         if use_entmax:
             self.entmax_alpha_raw = nn.Parameter(torch.zeros(self.n_heads))
+        # 192 — Pre-softmax per-row hard top-k sparse attention. The
+        # `use_topk_attn` flag is stored on self so the manual
+        # attention path can branch on it at the softmax swap site.
+        # `topk_k` is a config int, not a learnable scalar — no
+        # `nn.Parameter` is registered, so the baseline path is
+        # bit-identical when the flag is off (the forward branch
+        # is gated on `self.use_topk_attn`). See
+        # `autoresearch/ideas/192-topk-attn/idea.md`.
+        self.use_topk_attn = use_topk_attn
+        self.topk_k = topk_k
         # 025 — SSMax: one learnable per-head scalar s_h (init 1.0).
         # Built lazily; the parameter is never referenced when the
         # flag is off, so the baseline path is bit-identical. The
@@ -1730,6 +1861,51 @@ class MultiHeadAttention(nn.Module):
             # the flag is off. The forward branch is gated on
             # `self.use_qk_norm_depth` so this is never consumed.
             self.qk_norm_scale = None
+        # 190 — Per-Layer QK-Norm (scalar γ per block per side).
+        # Sits on top of 016's WIN shape: keep the per-head
+        # `q_norm`/`k_norm` and add a per-block scalar `γ_Q ∈ R^1` and
+        # `γ_K ∈ R^1` (init 1.0, applied AFTER the per-head norm and
+        # BEFORE the QK matmul). At γ=1.0 the multiply is exactly the
+        # identity in fp32 ⇒ step-0 forward is byte-identical to 016's
+        # step-0 (max-abs-diff = 0.0). Default Q/K separate (preserves
+        # 016's QK symmetry 162+165 attributed WIN to); the Q/K-shared
+        # variant collapses to one scalar (the 169 axis) and is gated
+        # behind `use_qk_norm_scalar_qk_shared`. Total: 12 blocks × 2
+        # scalars/block = 24 γ params (default) vs 016's 384 per-
+        # channel; or 12 × 1 = 12 γ params if shared. Mutually
+        # exclusive with use_q_only_norm / use_k_only_norm /
+        # use_qk_norm_post_rope (asserted in `forward`) — those
+        # restructure the norm, not the gain; combining with
+        # use_qk_norm_depth is also forbidden (190 IS the
+        # 169-style gain, not a partner). Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        self.use_qk_norm_scalar_per_block = qk_norm_scalar_per_block
+        self.use_qk_norm_scalar_qk_shared = qk_norm_scalar_qk_shared
+        if self.use_qk_norm_scalar_per_block:
+            if self.use_qk_norm_scalar_qk_shared:
+                # Shared scalar: one `γ` per block, applied to both Q
+                # and K (the 169 axis). Two attributes (`scalar_q` and
+                # `scalar_k`) point to the same Parameter so the
+                # forward code can stay side-symmetric without a
+                # branch — the gate (`use_qk_norm_scalar_qk_shared`)
+                # is read once per forward, not per multiply.
+                self.qk_norm_scalar_q = nn.Parameter(torch.ones(()))
+                self.qk_norm_scalar_k = self.qk_norm_scalar_q
+            else:
+                # Separate scalars: one γ per side per block (the 190
+                # default). Distinct Parameter objects so the
+                # optimizer can move them independently — preserves
+                # 016's QK symmetry 162+165 attributed WIN to.
+                self.qk_norm_scalar_q = nn.Parameter(torch.ones(()))
+                self.qk_norm_scalar_k = nn.Parameter(torch.ones(()))
+        else:
+            # Stubs so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_qk_norm_scalar_per_block` so these are never
+            # consumed.
+            self.qk_norm_scalar_q = None
+            self.qk_norm_scalar_k = None
         # 163 — Post-Attention V-Mix Depthwise Convolution. Stored
         # on self; the conv is applied in `forward()` AFTER the
         # `[B, H, T, D] → [B, T, d_model]` reshape and BEFORE the W_O
@@ -1879,6 +2055,42 @@ class MultiHeadAttention(nn.Module):
             self.wo_a = None
             self.wo_b = None
             self.wo_lowrank_alpha = None
+        # 197 — Tied W_O Across Blocks. When on, store the
+        # SAME per-model `W_O_shared` Parameter reference on every
+        # MHA (NOT a copy — every block reads the same parameter,
+        # so the optimizer sees a single global matrix and the
+        # cross-block gradient flows through it). Allocate one
+        # per-MHA 0-dim scalar `tied_wo_alpha_raw` (init
+        # `tied_wo_alpha_init`, default −10 ⇒ `σ(−10) ≈ 4.54e-5`
+        # at step 0). The forward computes
+        #   `w_o_eff = (1 − σ(α_b_raw)) · w_o_b + σ(α_b_raw) · W_O_shared`
+        # at the W_O application site (after the per-block O slice
+        # is extracted from `qkvo_proj`, before the 171-DropConnect
+        # mask branch). At step 0 `σ(−10) ≈ 4.54e-5` and
+        # `W_O_shared` is std=0.02 normal-init, so the contribution
+        # from `W_O_shared` is on the order of 1e-7 in std ⇒ the
+        # forward is bit-identical to baseline up to fp32 noise of
+        # one extra multiply-add. Default off → no Parameter
+        # registered, no reference stored, no branch taken, baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
+        # `plan.md`.
+        self.use_tied_wo_across_blocks = use_tied_wo_across_blocks
+        if self.use_tied_wo_across_blocks:
+            assert tied_wo_shared is not None, (
+                "use_tied_wo_across_blocks=True requires a non-None "
+                "tied_wo_shared Parameter (allocated on MinimalLLM). "
+                "The model loop is responsible for plumbing the shared "
+                "matrix down to each MHA via the TransformerBlock "
+                "constructor."
+            )
+            self.tied_wo_shared = tied_wo_shared
+            self.tied_wo_alpha_raw = nn.Parameter(
+                torch.full((), float(tied_wo_alpha_init))
+            )
+        else:
+            self.tied_wo_shared = None
+            self.tied_wo_alpha_raw = None
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
@@ -1978,6 +2190,13 @@ class MultiHeadAttention(nn.Module):
             self.attn_temperature = nn.Parameter(
                 torch.full((self.n_heads,), float(self.d_k) ** -0.5)
             )
+        # 195 — Tight hard QK logit clamp. Store the flag and
+        # the fixed `c` value as a Python float (no Parameter
+        # registered — `c` is a config constant, not learnable).
+        # Default off → no branch taken, baseline path bit-
+        # identical. See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+        self.use_qk_clamp = use_qk_clamp
+        self.qk_clamp_c = float(qk_clamp_c)
         # 161 — Per-layer learnable attention temperature `τ_l ∈ R^1`.
         # Stored on the MODEL (`MinimalLLM.layer_temperature`) — each
         # MHA reads its own slice `layer_temperature[layer_index]` at
@@ -2429,6 +2648,33 @@ class MultiHeadAttention(nn.Module):
             )
             self.k_rotation_angles = nn.Parameter(
                 torch.zeros(self.n_heads, self.d_k // 2)
+            )
+
+        # 200 — Static per-layer × per-pair learned K-rotation
+        # (depth-axis twin of 185, shared across heads). Stored
+        # on self; the rotation block in `forward()` applies a
+        # per-layer orthogonal matrix `R_l` to K (built from the
+        # angle parameter) post-GQA-repeat, post-qk_norm. The
+        # angles are shape `[d_k//2]` (NO head axis — 200 shares
+        # angles across heads and varies them across layers, the
+        # opposite axis from 185) and init 0 ⇒ `R_l = I_{d_k}`
+        # exactly ⇒ K is bit-identical to the input at step 0.
+        # When `use_per_layer_k_rotation=False` (default) the
+        # parameter is NOT built (no extra memory on the baseline
+        # path) and the forward branch is never taken — baseline
+        # forward graph is bit-identical to no-flag. Cost when
+        # on: d_k//2 × n_layers = 8 × 12 = 96 params total at
+        # tiny1m3m (+0.001% of the 0.94M model). See
+        # `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
+        self.use_per_layer_k_rotation = use_per_layer_k_rotation
+        if use_per_layer_k_rotation:
+            assert self.d_k % 2 == 0, (
+                "use_per_layer_k_rotation=True requires even d_k "
+                "(per-plane 2D rotations pair dims 2i, 2i+1); "
+                f"got d_k={self.d_k}"
+            )
+            self.per_layer_k_rotation_angles = nn.Parameter(
+                torch.zeros(self.d_k // 2)
             )
 
         # 156 — Mixture-of-Attentions (MoA). Stored on self; the
@@ -2963,6 +3209,36 @@ class MultiHeadAttention(nn.Module):
             "(169 sits on top of 016's pre-RoPE symmetric norm; combining with "
             "the post-RoPE variant restructures the lever)."
         )
+        # 190 — Per-Layer QK-Norm: sit on top of 016's pre-RoPE
+        # symmetric norm (same as 169) — so the same mutual-exclusion
+        # rules apply (Q-only / K-only / post-RoPE would restructure
+        # the lever's norm axis). Also mutually exclusive with
+        # use_qk_norm_depth: 190 IS the 169-style gain (per-block
+        # scalar γ applied after the per-head norm); combining the
+        # two stacks two scalar-γ multipliers on Q and K (a different
+        # lever — and the closed 169 null already nulled at the
+        # per-block scalar axis). See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        assert not (self.use_qk_norm_scalar_per_block and self.use_q_only_norm), (
+            "qk_norm_scalar_per_block=True is mutually exclusive with use_q_only_norm=True "
+            "(190 sits on top of 016's symmetric pre-RoPE norm; combining with 162's "
+            "Q-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_scalar_per_block and self.use_k_only_norm), (
+            "qk_norm_scalar_per_block=True is mutually exclusive with use_k_only_norm=True "
+            "(190 sits on top of 016's symmetric pre-RoPE norm; combining with 165's "
+            "K-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_scalar_per_block and self.use_qk_norm_post_rope), (
+            "qk_norm_scalar_per_block=True is mutually exclusive with use_qk_norm_post_rope=True "
+            "(190 sits on top of 016's pre-RoPE symmetric norm; combining with "
+            "the post-RoPE variant restructures the lever)."
+        )
+        assert not (self.use_qk_norm_scalar_per_block and self.use_qk_norm_depth), (
+            "qk_norm_scalar_per_block=True is mutually exclusive with use_qk_norm_depth=True "
+            "(190 is the per-side 169-style gain; combining with the 169 shared scalar "
+            "stacks two scalar-γ multipliers on Q and K — that's a different lever)."
+        )
         # 176 — Pre-AV V RMSNorm: mutually exclusive with the two
         # closed V-side norm axes (closed-029 use_v_layernorm +
         # closed-#92 v_norm_type zoo) and with v_mix_conv (a learned
@@ -3420,6 +3696,22 @@ class MultiHeadAttention(nn.Module):
         if self.use_qk_norm_depth:
             Q = Q * self.qk_norm_scale
             K = K * self.qk_norm_scale
+        # 190 — Per-Layer QK-Norm (scalar γ per block per side). At
+        # γ=1.0 init the multiply is exactly the identity in fp32
+        # (`1.0 * x = x`) ⇒ step-0 forward is byte-identical to 016's
+        # step-0 (max-abs-diff = 0.0 vs the 016 control — no tolerance
+        # needed). Placed AFTER the 169 multiply (and after the per-
+        # head norm+RoPE branches) so it composes uniformly — at
+        # γ=1.0 the multiply commutes with every downstream tweak in
+        # fp32. Placed BEFORE the QK matmul so the lever sits at the
+        # QK-norm output (mirrors 169's placement). The two scalars
+        # are independent Parameters unless `use_qk_norm_scalar_qk_shared`
+        # is True (the shared variant: both attributes point to the
+        # same Parameter — see `__init__`). See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        if self.use_qk_norm_scalar_per_block:
+            Q = Q * self.qk_norm_scalar_q
+            K = K * self.qk_norm_scalar_k
         # #37 per-head Q-gain: multiply Q by (1 + q_gain) per head after
         # RoPE. Zero-init, so step 0 == baseline.
         if self.use_q_gain:
@@ -3898,6 +4190,16 @@ class MultiHeadAttention(nn.Module):
             # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
             if self.use_qk_norm_depth:
                 extra_K_4d = extra_K_4d * self.qk_norm_scale
+            # 190 — Per-Layer QK-Norm: mirror the per-side `γ_K`
+            # multiply on the MoA extra K so all K tokens entering
+            # the QK matmul see the same per-block γ_K normalization
+            # strength. Site is after the MoA per-K norm+RoPE and
+            # before the GQA repeat / cat with K_0. At γ_K = 1.0
+            # init the multiply is exactly the identity in fp32 so
+            # step-0 is bit-identical to the no-MoA, no-190 path.
+            # See `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+            if self.use_qk_norm_scalar_per_block:
+                extra_K_4d = extra_K_4d * self.qk_norm_scalar_k
             extra_K_pre = extra_K_4d.reshape(
                 B, T, E - 1, self.n_kv_heads, self.d_k,
             )
@@ -3960,6 +4262,17 @@ class MultiHeadAttention(nn.Module):
             else:
                 scale = 1.0 / (float(self.d_k) ** 0.5)
                 scores = torch.matmul(Q, K.transpose(-1, -2)) * scale
+            # 195 — Tight hard QK logit clamp (FIRE branch). Apply
+            # `torch.clamp(scores, -c, +c)` immediately after the
+            # standard scale and BEFORE the FIRE/CoPE additive bias
+            # so the hard bound is the canonical pre-softmax
+            # invariant `|scores| ≤ c`. Default off → branch not
+            # taken, baseline path bit-identical. See
+            # `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+            if self.use_qk_clamp:
+                scores = torch.clamp(
+                    scores, min=-self.qk_clamp_c, max=self.qk_clamp_c
+                )
             fire_bias = self.fire_bias(x)  # [B, H, T, T]
             scores = scores + fire_bias
             # 013 — CoPE stacks on top of FIRE: add the content-aware
@@ -4081,6 +4394,7 @@ class MultiHeadAttention(nn.Module):
             or self.use_t5_rpe  # 166 — T5-RPE bucket bias (manual path; force SDPA off so the score-side additive bias is exact).
             or self.use_entmax  # 173 — Entmax-1.5: closed-form projection can't go through SDPA's flash kernel.
             or self.use_logit_conv  # 180 — Pre-softmax causal conv on QK^T: score-space op, must run on manual path.
+            or self.use_qk_clamp  # 195 — Tight hard QK logit clamp (manual path; force SDPA off so the pre-softmax logit is exposed for clamping).
             or self.use_anti_causal_subheads  # 179 — Per-head mask fill on the upper-triangle; SDPA flash can't apply a per-head fill, so force the manual path.
             or self.use_per_head_window  # 182 — Per-head learnable window: score-space `1e9·relu(...)` subtract, must run on manual path.
             or self.use_cross_block_score_share  # 204 — Cross-Block Attention Score Sharing: pre-softmax score blend with the previous block's `Q_{b-1}·K_{b-1}^T/√d_k`; SDPA's flash kernel fuses QK^T+softmax+AV and can't expose the pre-softmax logit for blending.
@@ -4125,6 +4439,19 @@ class MultiHeadAttention(nn.Module):
             else:
                 scale = 1.0 / (float(self.d_k) ** 0.5)
                 scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # 195 — Tight hard QK logit clamp (manual branch). Apply
+            # `torch.clamp(scores, -c, +c)` immediately after the
+            # standard scale and BEFORE any additive transforms
+            # (204 cross-block share / 152 logit bias / etc.) or
+            # downstream score-side multiplies (188 qk_rms_scaling).
+            # The hard bound is the canonical pre-softmax invariant
+            # `|scores| ≤ c`. Default off → branch not taken,
+            # baseline path bit-identical. See
+            # `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+            if self.use_qk_clamp:
+                scores = torch.clamp(
+                    scores, min=-self.qk_clamp_c, max=self.qk_clamp_c
+                )
             # 204 — Cross-Block Attention Score Sharing. Blend the
             # current block's pre-softmax scores with the previous
             # block's (detached) pre-softmax scores via a learnable
@@ -4692,6 +5019,30 @@ class MultiHeadAttention(nn.Module):
         # the same input as the un-masked W_O would. See
         # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
         w_o = self.qkvo_proj[self.qkv_size:]
+        # 197 — Tied W_O Across Blocks. Soft-blend the per-block
+        # W_O slice with the model-wide shared `W_O_shared`
+        # parameter, gated by a per-block sigmoid-bounded α. Sits
+        # at the W_O application site, BEFORE the 171-DropConnect
+        # mask branch (and therefore BEFORE the 207-LowRank
+        # addition below) so the 171 mask and 207 lowrank
+        # correction still operate on a valid `[d_model, d_model]`
+        # O-slice tensor. The blend is
+        #   `w_o_eff = (1 − σ(α_b_raw)) · w_o_b + σ(α_b_raw) · W_O_shared`
+        # At step 0 `σ(−10) ≈ 4.54e-5` and `W_O_shared` is
+        # std=0.02 normal-init ⇒ `W_O_shared`'s contribution is
+        # on the order of 1e-7 in std ⇒ `w_o_eff ≈ w_o_b` to
+        # within fp32 noise of one extra multiply-add on the
+        # O slice. This is the same step-0 tolerance accepted
+        # by the 188 / 204 cross-block siblings (and the lever
+        # is structurally identical to 188's K/V blend, just
+        # applied to the O projection). Default off → branch
+        # is gated on `self.use_tied_wo_across_blocks`, the
+        # baseline path is bit-identical. See
+        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md`
+        # / `plan.md`.
+        if self.use_tied_wo_across_blocks:
+            alpha = torch.sigmoid(self.tied_wo_alpha_raw)
+            w_o = (1.0 - alpha) * w_o + alpha * self.tied_wo_shared
         if self.use_dropconnect_wo and self.training:
             warmup = max(int(self.dropconnect_wo_warmup_steps), 1)
             step = min(int(self._dc_step_count), warmup)
@@ -4773,6 +5124,12 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `MultiHeadAttention.use_per_head_temp`
         # for the mechanism. Default off → baseline path bit-identical.
         use_per_head_temp: bool = False,
+        # 195 — Tight hard QK logit clamp pass-through to the
+        # inner MHA. See `MultiHeadAttention.use_qk_clamp` for the
+        # mechanism. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+        use_qk_clamp: bool = False,
+        qk_clamp_c: float = 2.0,
         # 180 — Pre-softmax 1D causal depthwise conv on attention
         # logits. Pass-through to the inner MHA. See
         # `MultiHeadAttention.use_logit_conv` for the mechanism
@@ -4903,6 +5260,22 @@ class TransformerBlock(nn.Module):
         # cascade runs unchanged, baseline forward graph bit-
         # identical. See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
         use_swiglu_ffn: bool = False,
+        # 198 — Pre-FFN Attention Mixing (FiLM-style cross-stream
+        # conditioning; Perez et al. 2018, arXiv:1709.07871). When
+        # True, the block registers a 0-dim scalar
+        # `pre_ffn_attn_mix_gamma_raw` (init `pre_ffn_attn_mix_init`,
+        # default −10 ⇒ sigmoid ≈ 4.5e-5) and the pre-norm2 path
+        # mixes the *raw* attention output into the FFN input:
+        #     ffn_in = norm2(x + sigmoid(γ) · attn_out_raw.detach())
+        # The `.detach()` keeps γ's gradient cleanly tied to FFN-
+        # side loss only (no gradient through the attention path's
+        # Q/K/V/O projections at step 0). At init sigmoid(−10) ≈
+        # 4.5e-5 ⇒ baseline path is fp32-noise bit-identical at
+        # step 0. Default off → no Parameter registered, no forward
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+        use_pre_ffn_attn_mix: bool = False,
+        pre_ffn_attn_mix_init: float = -10.0,
         use_qk_norm_post_rope: bool = False,
         use_sliding_window: bool = False,
         sliding_window_size: int = 512,
@@ -4961,6 +5334,19 @@ class TransformerBlock(nn.Module):
         # construction. See
         # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
         use_qk_norm_depth: bool = False,
+        # 190 — Per-Layer QK-Norm (scalar γ per block per side, replaces
+        # 016's per-channel γ with a single scalar per side per block).
+        # Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_qk_norm_scalar_per_block` for the
+        # mechanism. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        qk_norm_scalar_per_block: bool = False,
+        # 190 — Per-Layer QK-Norm (Q/K-shared scalar variant). When
+        # True together with `qk_norm_scalar_per_block`, the two
+        # side-scalars collapse to a single shared scalar (the 169
+        # axis). Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        qk_norm_scalar_qk_shared: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -5296,6 +5682,22 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
         use_cross_block_score_share: bool = False,
         score_share_alpha_init: float = -10.0,
+        # 197 — Tied W_O Across Blocks (soft blend, Universal-
+        # Transformer-style learnable parameter sharing restricted
+        # to the attention output projection, Dehghani et al. ICLR
+        # 2019 arXiv:1807.03819 + Lan et al. ALBERT arXiv:1909.11942).
+        # Pass-through to the inner MHA. The shared `tied_wo_shared`
+        # Parameter is allocated on `MinimalLLM` and plumbed through
+        # here so the MHA constructor can store the SAME reference
+        # on every block (NOT a per-block copy). See
+        # `MultiHeadAttention.use_tied_wo_across_blocks` for the
+        # forward-time mechanism. Default off → baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
+        # `plan.md`.
+        use_tied_wo_across_blocks: bool = False,
+        tied_wo_alpha_init: float = -10.0,
+        tied_wo_shared=None,  # Optional[torch.nn.Parameter]
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -5333,6 +5735,11 @@ class TransformerBlock(nn.Module):
             # path bit-identical. See
             # `autoresearch/ideas/155-per-head-temp/idea.md`.
             use_per_head_temp=use_per_head_temp,
+            # 195 — Tight hard QK logit clamp pass-through to the
+            # inner MHA. Default off → baseline path bit-identical.
+            # See `autoresearch/ideas/195-qk-clamp-min-max/idea.md`.
+            use_qk_clamp=use_qk_clamp,
+            qk_clamp_c=qk_clamp_c,
             # 180 — Pre-softmax 1D causal conv pass-through.
             use_logit_conv=use_logit_conv,
             logit_conv_kernel_size=logit_conv_kernel_size,
@@ -5453,6 +5860,13 @@ class TransformerBlock(nn.Module):
             # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
             use_cross_block_score_share=use_cross_block_score_share,
             score_share_alpha_init=score_share_alpha_init,
+            # 197 — Tied W_O Across Blocks pass-through. Default off
+            # → baseline path bit-identical. See
+            # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md`
+            # / `plan.md`.
+            use_tied_wo_across_blocks=use_tied_wo_across_blocks,
+            tied_wo_alpha_init=tied_wo_alpha_init,
+            tied_wo_shared=tied_wo_shared,
             # 129 — YOCO shared KV pass-through to the MHA. Default
             # off → standard path. See `autoresearch/ideas/129-yoco/idea.md`.
             use_shared_kv=use_shared_kv,
@@ -5497,6 +5911,15 @@ class TransformerBlock(nn.Module):
             # MHA registers `qk_norm_scale = nn.Parameter(torch.ones(()))`
             # per block — see MultiHeadAttention.use_qk_norm_depth.
             use_qk_norm_depth=use_qk_norm_depth,
+            # 190 — Per-Layer QK-Norm (scalar γ per block per side) pass-
+            # through: when set, MHA registers per-side scalar γ
+            # Parameters — see MultiHeadAttention.qk_norm_scalar_per_block.
+            qk_norm_scalar_per_block=qk_norm_scalar_per_block,
+            # 190 — Per-Layer QK-Norm (Q/K-shared scalar variant) pass-
+            # through: when set together with `qk_norm_scalar_per_block`,
+            # both side-scalars point to the same Parameter — see
+            # MultiHeadAttention.qk_norm_scalar_qk_shared.
+            qk_norm_scalar_qk_shared=qk_norm_scalar_qk_shared,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,
@@ -5708,6 +6131,21 @@ class TransformerBlock(nn.Module):
         if self.use_re_zero:
             self.re_zero_alpha_attn = nn.Parameter(torch.zeros(1))
             self.re_zero_alpha_ffn = nn.Parameter(torch.zeros(1))
+        # 198 — Pre-FFN Attention Mixing. One 0-dim scalar per block
+        # `pre_ffn_attn_mix_gamma_raw`, init `pre_ffn_attn_mix_init`
+        # (default −10 ⇒ sigmoid(γ_raw) ≈ 4.5e-5 at step 0). Mirrors
+        # the ReZero wiring above: declared as `nn.Parameter` so it
+        # gets routed to AdamW by the optimizer setup. When the flag
+        # is off, the attribute is `None` and the forward branch is
+        # never taken (baseline path bit-identical). See
+        # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+        self.use_pre_ffn_attn_mix = use_pre_ffn_attn_mix
+        if self.use_pre_ffn_attn_mix:
+            self.pre_ffn_attn_mix_gamma_raw = nn.Parameter(
+                torch.tensor(float(pre_ffn_attn_mix_init))
+            )
+        else:
+            self.pre_ffn_attn_mix_gamma_raw = None
         self._init_resid(resid_mode, d_model, n_layers)
         # 111 — DropPath reads `self.n_layers` in `forward` to schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)`. The kwarg was
@@ -6120,6 +6558,15 @@ class TransformerBlock(nn.Module):
                 attn_out = self.focal_mod(self.norm1(x))
             else:
                 attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
+            # 198 — Pre-FFN Attention Mixing. Capture the *raw*
+            # attention output (post-`self.attention(...)`, before any
+            # layerscale / sub_ln / rezero / dropout wrapping). The
+            # mix below uses this raw tensor — `.detach()` keeps γ's
+            # gradient cleanly tied to FFN-side loss only (no
+            # gradient through the attention path's Q/K/V/O
+            # projections at step 0). See
+            # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+            attn_out_raw = attn_out
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -6191,7 +6638,33 @@ class TransformerBlock(nn.Module):
                 # the Q/K/V projections grow.
                 x = x_pre_ffn + torch.tanh(self.xlayer_gate) * y_xa
 
-            ffn_in = self.norm2(x)
+            # 198 — Pre-FFN Attention Mixing. Pre-norm2 placement
+            # (A) per the r1 review pin: the mix is added INSIDE the
+            # norm2 input, so the mix is renormalized by RMSNorm
+            # (matches the spec's plain reading `ffn_input =
+            # attn_residual + γ·attn_block(x).detach()` and the
+            # reviewer's `ffn_in = norm2(x + sigmoid(γ)·
+            # attn_out.detach())` recommendation — placement (B)
+            # outside RMS would change the mix's effective magnitude
+            # by `1/RMS(x+mix)`, an uncontrolled dynamic). At init
+            # `sigmoid(γ_raw) ≈ 4.5e-5` ⇒ the perturbation to `x`
+            # is on the order of `4.5e-5 · O(1) ≈ 4.5e-5` in fp32
+            # ⇒ baseline path is fp32-noise bit-identical at step
+            # 0 (same `sigmoid(-10)` convention as 188/201/205/206).
+            # `.detach()` on `attn_out_raw` keeps γ's gradient tied
+            # to FFN-side loss only. Scope: pre-norm2 path only.
+            # The parallel-block / post-norm paths are alternative
+            # architectures off by default; the lever is silently
+            # shadowed on those paths when the user combines 198
+            # with `use_parallel_block=True` / `use_post_norm=True`.
+            if self.use_pre_ffn_attn_mix:
+                pre_mix = (
+                    torch.sigmoid(self.pre_ffn_attn_mix_gamma_raw)
+                    * attn_out_raw.detach()
+                )
+                ffn_in = self.norm2(x + pre_mix)
+            else:
+                ffn_in = self.norm2(x)
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in)

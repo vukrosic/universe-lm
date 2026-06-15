@@ -529,6 +529,18 @@ class MinimalLLM(nn.Module):
         # branch runs, baseline FFN path bit-identical. See
         # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
         self.use_swiglu_ffn = getattr(config, "use_swiglu_ffn", False)
+        # 198 — Pre-FFN Attention Mixing. Default off → no Parameter
+        # registered per block, no forward branch taken, baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md` and
+        # `models/layers.py` for the per-block γ parameter and
+        # the pre-norm2 splice site.
+        self.use_pre_ffn_attn_mix = getattr(
+            config, "use_pre_ffn_attn_mix", False
+        )
+        self.pre_ffn_attn_mix_init = float(
+            getattr(config, "pre_ffn_attn_mix_init", -10.0)
+        )
         # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
         # when on, each block builds a per-token `MoDRouter` and gates
         # the block's residual update to the top-k = `mod_capacity · T`
@@ -589,6 +601,56 @@ class MinimalLLM(nn.Module):
         # bounding the per-head logit. Default off → bit-identical
         # baseline. See autoresearch/ideas/016-qk-norm/plan.md.
         self.use_qk_layernorm = getattr(config, "use_qk_layernorm", False)
+        # 197 — Tied W_O Across Blocks (soft blend, Universal-
+        # Transformer-style learnable parameter sharing restricted
+        # to the attention output projection, Dehghani et al. ICLR
+        # 2019 arXiv:1807.03819 + Lan et al. ALBERT arXiv:1909.11942).
+        # When on, allocate a single shared `W_O_shared` Parameter
+        # on the model (shape `[d_model, d_model]`, std=0.02 normal-
+        # init to match the baseline `qkvo_proj` O-slice init) and
+        # plumb the SAME reference to every block's MHA. The MHA
+        # registers a per-block 0-dim scalar `tied_wo_alpha_raw`
+        # (init `tied_wo_alpha_init`, default −10 ⇒ `σ(−10) ≈
+        # 4.54e-5`); the forward computes
+        #   `W_O_eff_b = (1 − σ(α_b_raw)) · W_O_b + σ(α_b_raw) · W_O_shared`
+        # at the W_O application site, BEFORE the 171-DropConnect
+        # mask branch. At step 0 `σ(−10) ≈ 4.54e-5` and `W_O_shared`
+        # is std=0.02 normal-init ⇒ the contribution from the shared
+        # matrix is on the order of 1e-7 in std ⇒ the forward is
+        # bit-identical to baseline up to fp32 noise of one extra
+        # multiply-add — same tolerance the 188 / 204 cross-block
+        # siblings accept. Mutually exclusive with `use_yoco` and
+        # `use_gau` (the upper-half YOCO blocks and GAU blocks don't
+        # take a `tied_wo_shared` kwarg — the assertion is right
+        # below). Composes with 171-DropConnect and 207-W_O-LowRank
+        # (the blend is applied first on the O slice; 171 then masks
+        # the blended slice; 207 then adds a lowrank correction on
+        # top). Default off → no `tied_wo_shared` Parameter, no
+        # per-MHA `tied_wo_alpha_raw` Parameter, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md` /
+        # `plan.md`.
+        self.use_tied_wo_across_blocks = getattr(
+            config, "use_tied_wo_across_blocks", False
+        )
+        if self.use_tied_wo_across_blocks:
+            if self.use_yoco or self.use_gau:
+                raise ValueError(
+                    "use_tied_wo_across_blocks=True is mutually exclusive "
+                    "with use_yoco=True / use_gau=True (YOCO upper-half "
+                    "blocks and GAU blocks do not take a tied_wo_shared "
+                    "kwarg — the W_O sharing assumption is incoherent on "
+                    "those block types)."
+                )
+            self.tied_wo_shared = nn.Parameter(
+                torch.empty(config.d_model, config.d_model)
+            )
+            with torch.no_grad():
+                torch.nn.init.normal_(
+                    self.tied_wo_shared, mean=0.0, std=0.02
+                )
+        else:
+            self.tied_wo_shared = None
         # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
         # top of 016's WIN). When True, each MHA registers a single
         # scalar `qk_norm_scale = nn.Parameter(torch.ones(()))` and
@@ -600,6 +662,21 @@ class MinimalLLM(nn.Module):
         # ⇒ no `qk_norm_scale` registered, baseline path bit-identical.
         # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
         self.use_qk_norm_depth = getattr(config, "use_qk_norm_depth", False)
+        # 190 — Per-Layer QK-Norm (scalar γ per block per side, replaces
+        # 016's per-channel γ). When True, each MHA registers per-side
+        # scalar γ Parameters (default separate Q and K; collapse to
+        # one with `qk_norm_scalar_qk_shared`) and multiplies Q, K (and
+        # MoA extra_K) by them AFTER the per-head norm and BEFORE the
+        # QK matmul. Init 1.0 ⇒ step-0 forward is byte-identical to
+        # 016's step-0 (max-abs-diff = 0.0). Default off ⇒ no
+        # Parameter registered, baseline path bit-identical. See
+        # `autoresearch/ideas/190-per-layer-qk-norm/idea.md`.
+        self.qk_norm_scalar_per_block = getattr(
+            config, "qk_norm_scalar_per_block", False
+        )
+        self.qk_norm_scalar_qk_shared = getattr(
+            config, "qk_norm_scalar_qk_shared", False
+        )
         # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
         # when True, add a per-head `nn.LayerNorm(d_head)` on V before
         # the AV product, the symmetric partner of 016's QK-Norm. Default
@@ -896,6 +973,12 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
                         use_swiglu_ffn=self.use_swiglu_ffn,
+                        # 198 — Pre-FFN Attention Mixing pass-through
+                        # to the YOCO upper-half block. Default off
+                        # → baseline path bit-identical. See
+                        # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+                        use_pre_ffn_attn_mix=self.use_pre_ffn_attn_mix,
+                        pre_ffn_attn_mix_init=self.pre_ffn_attn_mix_init,
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
                         mod_router_hidden=self.mod_router_hidden,
@@ -929,10 +1012,25 @@ class MinimalLLM(nn.Module):
                         # 169 — Depth-Conditional QK-Norm pass-through
                         # to the block. See MHA use_qk_norm_depth.
                         use_qk_norm_depth=self.use_qk_norm_depth,
+                        # 190 — Per-Layer QK-Norm pass-through to the
+                        # block. See MHA qk_norm_scalar_per_block /
+                        # qk_norm_scalar_qk_shared.
+                        qk_norm_scalar_per_block=self.qk_norm_scalar_per_block,
+                        qk_norm_scalar_qk_shared=self.qk_norm_scalar_qk_shared,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
                         use_sub_ln=self.use_sub_ln,
+                        # 197 — Tied W_O Across Blocks pass-through.
+                        # The shared `tied_wo_shared` Parameter is
+                        # allocated on the model (asserted above for
+                        # YOCO/GAU mutual exclusion) and plumbed
+                        # through to every MHA. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md`
+                        # / `plan.md`.
+                        use_tied_wo_across_blocks=self.use_tied_wo_across_blocks,
+                        tied_wo_shared=self.tied_wo_shared,
                         q_norm_type=self.q_norm_type,
                         use_alibi_bias=self.use_alibi_bias,
                         use_q_temp_token=self.use_q_temp_token,
@@ -1233,6 +1331,12 @@ class MinimalLLM(nn.Module):
                         # block. Default off → FFN path bit-identical.
                         # See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
                         use_swiglu_ffn=self.use_swiglu_ffn,
+                        # 198 — Pre-FFN Attention Mixing pass-through
+                        # to the standard block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+                        use_pre_ffn_attn_mix=self.use_pre_ffn_attn_mix,
+                        pre_ffn_attn_mix_init=self.pre_ffn_attn_mix_init,
                         # 118 — Mixture-of-Depths pass-through to the block.
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
@@ -1280,10 +1384,25 @@ class MinimalLLM(nn.Module):
                         # 169 — Depth-Conditional QK-Norm pass-through
                         # to the block. See MHA use_qk_norm_depth.
                         use_qk_norm_depth=self.use_qk_norm_depth,
+                        # 190 — Per-Layer QK-Norm pass-through to the
+                        # block. See MHA qk_norm_scalar_per_block /
+                        # qk_norm_scalar_qk_shared.
+                        qk_norm_scalar_per_block=self.qk_norm_scalar_per_block,
+                        qk_norm_scalar_qk_shared=self.qk_norm_scalar_qk_shared,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
                         use_sub_ln=self.use_sub_ln,
+                        # 197 — Tied W_O Across Blocks pass-through.
+                        # The shared `tied_wo_shared` Parameter is
+                        # allocated on the model (asserted above for
+                        # YOCO/GAU mutual exclusion) and plumbed
+                        # through to every MHA. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/197-tied-wo-across-blocks/idea.md`
+                        # / `plan.md`.
+                        use_tied_wo_across_blocks=self.use_tied_wo_across_blocks,
+                        tied_wo_shared=self.tied_wo_shared,
                         q_norm_type=self.q_norm_type,
                         use_alibi_bias=self.use_alibi_bias,
                         use_q_temp_token=self.use_q_temp_token,
