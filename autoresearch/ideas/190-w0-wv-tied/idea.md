@@ -1,8 +1,8 @@
 ---
 id: 190-w0-wv-tied
-status: needs-taste
+status: tasting
 round: 1
-updated: 2026-06-15T08:30:00Z
+updated: 2026-06-15T08:23:42Z
 transfer-risk: low
 plain: Share the weights between the attention "value" projection and the "output" projection, like tying the input and output embeddings — it cuts ~10% of attention params and forces the two projections to share representation.
 ---

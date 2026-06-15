@@ -1,1 +1,2 @@
 {"ts":"2026-06-15T08:21:11Z","agent":"taste","idea":"192-topk-attn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:23:29Z","agent":"taste","idea":"192-topk-attn","from":"tasting","to":"needs-repitch","round":1,"note":"revise: pitch bundles two parameterizations, no magnitude, ignores 173-entmax + 177-talking-heads + 154-rebased priors — see taste.md r1"}

@@ -1,8 +1,8 @@
 ---
 id: 192-topk-attn
-status: tasting
+status: needs-repitch
 round: 1
-updated: 2026-06-15T08:21:11Z
+updated: 2026-06-15T08:23:29Z
 transfer-risk: med
 plain: Keep only the top-k largest attention scores per row, zero out the rest, and renormalize — it forces the model to attend to a small fixed number of tokens.
 ---

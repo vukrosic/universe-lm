@@ -1,8 +1,8 @@
 ---
 id: 193-mup-init
-status: needs-taste
+status: tasting
 round: 1
-updated: 2026-06-15T08:30:00Z
+updated: 2026-06-15T08:22:44Z
 transfer-risk: low
 plain: Use μP (μ-Transfer) base parameter initialization, which sets per-layer scales so a small model behaves like a slice of a large model — making the tiny1m3m initial conditions more representative.
 ---

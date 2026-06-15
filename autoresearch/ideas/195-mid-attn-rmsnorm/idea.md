@@ -1,50 +1,55 @@
 ---
 id: 195-mid-attn-rmsnorm
-status: repitching
-round: 1
-updated: 2026-06-15T08:21:49Z
+status: needs-taste
+round: 2
+updated: 2026-06-15T08:23:08Z
 transfer-risk: low
-plain: Normalize the attention scores themselves (after Q·K, before softmax) with a single RMS gain per head, starting at 1 so step-0 matches the baseline — a way to re-scale the raw attention logits without changing what they point at.
+plain: RMS-normalize the attention scores themselves (after Q·K, before softmax) along the key axis, with per-head γ_h init at 1 (the lever's value is in the fixed per-query RMS reshape, NOT the γ_h scalar which is the closed-null axis).
 ---
 
 # 195 — Mid-Attention RMSNorm (RMSNorm on Pre-Softmax Scores)
 
 ## Source
 - 016-qk-norm (in-repo WIN Δ=−0.0138) — symmetric RMSNorm on Q and K *pre*-QK^T product. Operates on the inputs to the attention product.
+- 190-per-layer-qk-norm (in-repo reviewing) — *granularity* axis of 016 (per-block vs per-head γ), tests whether 016's WIN was block-level scale control or head-level specialization.
 - 162-q-only-norm (closed null Δ=−0.0043) — Q-only RMSNorm.
 - 165-k-only-norm (closed null Δ=−0.0293) — K-only RMSNorm.
-- 169-qk-norm-depth (closed null) — depth variation of 016.
 - 184-logit-scale (in-repo needs-run) — global logit scale *post*-LM-head, not attention.
-- 152-attn-logit-bias (closed null) — per-head additive bias on attention logits. 195 is multiplicative normalization, not additive bias.
 - Shleifer et al., "NormFormer" (arXiv:2110.09423) — extra LN at attention output; 195 is on attention scores, different placement.
 
 ## Mechanism
-Standard attention scores: `scores = Q · K^T / √d_k`, shape `[B, H, T, T]`.
-
-Mid-attention RMSNorm: per-head, per-query, normalize the scores over the key axis (`dim=-1`) BEFORE softmax:
+Per-head, per-query, RMS-normalize the scores over the key axis (`dim=-1`) BEFORE softmax:
 ```
 scores_pre = Q · K^T / √d_k                      # [B, H, T, T]
-scores_rms = RMSNorm(scores_pre, dim=-1) · γ_h    # γ_h per-head scalar, init 1
+scores_rms = (scores_pre / RMS(scores_pre, dim=-1, keepdim=True)) · γ_h
 attn = softmax(scores_rms)
 ```
-At init `γ_h = 1.0`, the post-RMSNorm scores have unit RMS along the key axis (not unit std; RMSNorm doesn't subtract the mean). The softmax is invariant to *additive* shifts but not to *multiplicative* shifts along the key axis, so `γ_h = 1.0` is not byte-identical to baseline (the RMS of baseline scores is not 1).
+with `γ_h = 1.0` init (one per head, per block; H×L = 48 params total, +0.005% of 0.94M).
 
-To preserve step-0 byte-identity: `γ_h = sqrt(var(scores_pre) + eps)` per-query (i.e., a *learnable* multiplier that starts matching the post-RMSNorm RMS to baseline). Alternatively, set `γ_h` such that the post-RMSNorm RMS matches the baseline: `γ_h = 1.0` AND apply the inverse-scale after RMSNorm: `scores_rms = (RMSNorm(scores_pre) - 1.0) · γ_h + baseline_rms` — too complex.
+**Step-0 identity (chosen formulation, ONE):** `γ_h = 1.0` is *not* bit-identical to baseline (RMS of pre-softmax scores is generally not 1, so the normalized-and-rescaled scores differ from `scores_pre`). The A/B is therefore a *non-bit-identity* treatment, evaluated with the standard ctrl-pair protocol (gate: Δ < 0.005 = null, Δ ≤ −0.01 = WIN) — same protocol used for 160-post-AV-gain, 152-logit-bias, 155-per-head-temp. No first-batch stat collection, no inverse-scale-then-rescale, no "auto-init". The control is the same fresh-ctrl mean this queue uses elsewhere.
 
-**Simpler formulation**: `scores_post = RMSNorm(scores_pre) · (baseline_rms_estimate)` where `baseline_rms_estimate = sqrt(E[(scores_pre)²])` is computed once on the first batch and frozen. At step 0, this matches baseline. Then `γ_h = 1.0` is a per-head learnable scale around this estimate. Still complex.
-
-**Cleanest formulation (proposed for 195)**: use a per-head learnable scalar `γ_h` init such that `γ_h · E[RMS(scores_pre)] = √d_k` (matches the standard scale). At init, `γ_h_init = √d_k / E[RMS(scores_pre)]`. The lever is then per-head deviation from this baseline scale — bit-identical at step 0 if `γ_h_init` is computed correctly from the first batch's statistics.
-
-## Design sketch
-- **File**: `models/layers.py` — add a `mid_attn_rmsnorm` block to the manual attention path.
-- **Config flag**: `use_mid_attn_rmsnorm: bool = False`, `mid_attn_rmsnorm_gain_init: float = "auto"` (compute γ_h_init from baseline statistics on first batch).
-- **Compute**: per head h, per query t, compute `RMS(scores_pre[t, :]) = sqrt(mean(scores_pre[t, :]²))`. Normalize: `scores_norm[t, :] = scores_pre[t, :] / (RMS(scores_pre[t, :]) + eps)`. Multiply by `γ_h · baseline_rms_h` where `baseline_rms_h` is the expected RMS from the baseline (≈ √d_k = 4).
-- **Bit-identical at step 0**: with `γ_h_init` correctly computed, the normalized-then-rescaled scores match `scores_pre` exactly.
-- **Params**: H × L = 4 × 12 = 48 γ scalars (+0.005% of 0.94M).
-- **Intuition**: 016's WIN was at the QK-norm input level. 195 tests a different placement: at the *output* of QK^T (pre-softmax). The bet is that RMS-normalizing the attention logits over the key axis lets the softmax operate on a more uniform scale, preventing any single key from dominating due to magnitude alone.
-
-## Scale evidence
-016 WIN at tiny1m3m; NormFormer extra LN at attention output at BERT-base / ViT-base. No direct "RMSNorm on attention scores" paper I can cite — this is a placement variant of 016. Transfer-risk: low (lever is a strict variant of QK-norm with the same mechanism family).
+**Two-line math summary:**
+- Operation: `scores_rms[t, :] = scores_pre[t, :] / sqrt(mean(scores_pre[t, :]²) + eps) · γ_h`
+- At step 0 with γ_h=1: pre-softmax scores become unit-RMS along the key axis (still differ from baseline; not byte-identical).
 
 ## Why it's worth a slot
-**Attribution insight**: 016-QK-norm WIN was attributed to *block-level* scale control (190). 195 tests a different placement: post-QK^T, pre-softmax. The bet: normalizing the scores themselves (not the QK inputs) lets the optimizer control the *relative* magnitude of attention scores per query, distinct from 016's *absolute* scale control. A 195 WIN would suggest the binding axis is on the attention-output side; a 195 NULL would confirm 016's WIN is uniquely a QK-input mechanism.
+**Positive WIN hypothesis (magnitude-bounded):** target val loss Δ ≤ −0.01 at tiny1m3m (same bar as 016-qk-norm WIN). The mechanism is that *per-query* score normalization — not the per-head γ_h scalar — is the binding lever: forcing the pre-softmax scores to live on a fixed RMS scale (≈1 per query) prevents the dominant key from monopolizing the softmax via magnitude alone, regardless of head. Three closed per-head scalars (155 temp, 152 bias, 160 post-AV gain) suggest the per-head axis binds weakly at 0.94M; the per-query-variance reshape is a *different* axis (no learnable parameter per query) and is the only one in queue that re-scales the softmax's *input distribution shape* before the per-head γ_h ever sees it.
+
+**Unique contribution vs 016/190 (the placement triangle):**
+- 016-qk-norm WIN — *pre*-product QK normalization (normalizes Q and K inputs).
+- 190-per-layer-qk-norm (reviewing) — *granularity* axis of 016 (per-block vs per-head γ).
+- **195 — *post*-product QK normalization** (normalizes the QK^T output, pre-softmax).
+
+The three together partition the QK-axis attribution: 016 = placement-pre, 190 = granularity, 195 = placement-post. A 195 WIN would suggest 016's WIN is about *score distribution* control, not QK-input control; a 195 NULL would confirm 016's WIN is uniquely a QK-input mechanism and the post-product axis is closed at 0.94M. Either result is informative AND distinct from 190's question (which is about γ granularity within the pre-product placement).
+
+**Score-distribution bet:** the lever's value is the *fixed* per-query RMS reshape, not γ_h. γ_h init at 1.0 is the closest thing to "no parameter" we can offer while still letting the definition gate choose a learnable scale — but the strongest reading of the bet is that the Δ < 0.005 null pattern is *what we'd expect* if γ_h has no binding power, and any Δ ≤ −0.01 would be evidence the fixed per-query normalization (not the γ_h) is doing the work. If the post-RMS variance per query is too small a signal at d_k=16, lever is null; if the signal is sufficient, lever is at least a 016-magnitude match.
+
+## Design sketch (mechanism-level only — code gate's job to implement)
+- **File**: `models/layers.py` — add RMSNorm-on-scores block in the manual attention path, between QK^T and softmax.
+- **Config flag**: `use_mid_attn_rmsnorm: bool = False`, `mid_attn_rmsnorm_eps: float = 1e-6` (default), `mid_attn_rmsnorm_gain_init: float = 1.0`.
+- **Compute**: per (batch, head, query), `r = sqrt(mean(scores_pre[t, :]²) + eps)`; `scores_post[t, :] = scores_pre[t, :] / r * γ_h` with γ_h init 1.0.
+- **Params**: H × L = 48 γ scalars (+0.005% of 0.94M); no other params.
+- **A/B protocol**: standard ctrl-pair (gate Δ ≤ −0.01 for WIN, |Δ| < 0.005 for null), 92-step horizon, seed 42, 1M3M tier.
+
+## Scale evidence
+016 WIN at tiny1m3m (Δ=−0.0138); QK-norm literature validated at LLaMA / Gemma-2 / Qwen-2.5 (≥7B) for the *pre*-product placement. No direct "RMSNorm on attention scores" paper at any scale. Transfer-risk: low (placement is mathematically the same family, but the post-product variant is novel at any scale). The T×T per-query RMS compute is a real cost (~2048 elements reduced per head per query) — tier-mismatch hedge: at 135M, the per-head γ_h axis is also weak per the closed pattern, so a 195 NULL at tiny1m3m is *not* a 135M verdict; the lever should re-enter the queue at 135M Phase-2 where H=12+ and per-query variance carries more head-specific signal.
