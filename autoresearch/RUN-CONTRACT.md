@@ -1,7 +1,9 @@
 # Run contract — the deterministic GPU handoff
 
 The GPU last-mile (run → poll → pull → judge → flip) is drained by a **plain
-script**, [`bin/queue-daemon.sh`](bin/queue-daemon.sh) — no LLM in the hot loop.
+script**, the shared `queue-daemon.sh` (one source of truth, lives in voidspark's
+`tools/autoresearch/`; run against this repo with `--repo <path>`) — no LLM in the
+hot loop. Only `flip.sh` and this repo's `autoresearch/` data live here.
 That is only possible because every `needs-run` idea arrives in a **fixed,
 machine-readable shape**. The implementer ([`prompts/code-implementer.md`](prompts/code-implementer.md))
 produces that shape; the daemon consumes it. This file is the contract between
