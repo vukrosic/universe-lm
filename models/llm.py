@@ -305,6 +305,29 @@ class MinimalLLM(nn.Module):
         # See `autoresearch/ideas/156-moa/idea.md`.
         self.use_moa = getattr(config, "use_moa", False)
         self.moa_num_experts = max(2, int(getattr(config, "moa_num_experts", 2))) if self.use_moa else 1
+        # 178 — Gated Multi-Query Attention. Per-KV-head scalar gate
+        # β_k, β_v blending per-head K, V with a shared K, V
+        # projection. Init 0 ⇒ step-0 forward is bit-identical to
+        # the no-flag baseline. Default off ⇒ baseline path bit-
+        # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        self.use_mqa_gated = getattr(config, "use_mqa_gated", False)
+        # 182 — Per-head learnable attention window. Init
+        # `head_window_logit = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈
+        # T − 0.00005·T > T − 1 = max|t − s|` ⇒ penalty identically 0
+        # at fp32 ⇒ step-0 forward is byte-identical to the no-flag
+        # baseline. Default off ⇒ baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        self.use_per_head_window = getattr(config, "use_per_head_window", False)
+        # 179 — Anti-Causal Sub-Heads. Per-head learnable scalar
+        # `γ_h = sigmoid(γ_raw_h)` attenuates the upper-triangle
+        # fill by `(1 − γ_h)`. Init `γ_raw_h = -10` ⇒
+        # `γ_h ≈ 4.5e-5` ⇒ fill `≈ -9.99955e8` ⇒ softmax row
+        # bitwise 0 on masked positions ⇒ step-0 byte-identical
+        # to baseline. Default off ⇒ baseline path bit-identical.
+        # See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        self.use_anti_causal_subheads = getattr(
+            config, "use_anti_causal_subheads", False
+        )
         # 174 — xPos exponential decay on RoPE (Sun et al. 2022).
         # When on, the block's MHA multiplies the rotated K by
         # `exp(-xpos_gamma · t)` (per-position decay), biasing
@@ -685,6 +708,24 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 178 — Gated MQA pass-through to the YOCO
+                        # upper-half block. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+                        use_mqa_gated=self.use_mqa_gated,
+                        # 182 — Per-head learnable attention window
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/182-per-head-window/idea.md`.
+                        use_per_head_window=self.use_per_head_window,
+                        # 179 — Anti-Causal Sub-Heads pass-through to
+                        # the YOCO upper-half block. Per-head γ_h
+                        # attenuates the upper-triangle fill. Init
+                        # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to
+                        # baseline. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                        use_anti_causal_subheads=self.use_anti_causal_subheads,
                         # 166 — T5-RPE pass-through to the YOCO upper-
                         # half block. Default off → baseline path bit-
                         # identical. See
@@ -937,11 +978,22 @@ class MinimalLLM(nn.Module):
                         # bit-identical. See
                         # `autoresearch/ideas/155-per-head-temp/idea.md`.
                         use_per_head_temp=getattr(config, "use_per_head_temp", False),
+                        # 180 — Pre-softmax 1D causal depthwise conv on
+                        # attention logits. Pass-through to the block.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+                        use_logit_conv=getattr(config, "use_logit_conv", False),
+                        logit_conv_kernel_size=getattr(config, "logit_conv_kernel_size", 3),
                         # 160 — Per-head RMS gain on the attention output.
                         # Pass-through to the block. Default off →
                         # baseline path bit-identical. See
                         # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
                         use_head_gain=getattr(config, "use_head_gain", False),
+                        # 181 — Cross-Head Channel RMSNorm.
+                        # Pass-through to the block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+                        use_cross_head_rmsnorm=getattr(config, "use_cross_head_rmsnorm", False),
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
@@ -970,6 +1022,24 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 178 — Gated MQA pass-through to the standard
+                        # block. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+                        use_mqa_gated=self.use_mqa_gated,
+                        # 182 — Per-head learnable attention window
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/182-per-head-window/idea.md`.
+                        use_per_head_window=self.use_per_head_window,
+                        # 179 — Anti-Causal Sub-Heads pass-through to
+                        # the standard block. Per-head γ_h attenuates
+                        # the upper-triangle fill. Init
+                        # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to
+                        # baseline. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                        use_anti_causal_subheads=self.use_anti_causal_subheads,
                         # 174 — xPos exponential decay on RoPE pass-
                         # through to the standard block. When on, the
                         # block's MHA multiplies the rotated K by

@@ -174,6 +174,26 @@ class LLMConfig:
     # path bit-identical (no Parameter registered, no branch taken).
     # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
     use_head_gain: bool = False
+    # 181 — Cross-Head Channel RMSNorm (normalize attention output
+    # across the H head dim within each d_k slice, so all H heads
+    # land on the same per-(t, k) scale before the W_O projection).
+    # Per-head scalar gate `α_h = relu(α_raw_h)` (init `−1e-3` ⇒
+    # `relu(−1e-3) = 0` exactly ⇒ identity blend at step 0) and a
+    # per-(h, k) post-normalization gain
+    # `γ_h[k] = 1 + tanh(γ_raw_h[k])` (init 0 ⇒ γ=1 exactly at
+    # step 0). Mixed output:
+    # `out = (1 − α_h)·out + α_h·(out / rms)·γ_h` where
+    # `rms[b, t, k] = sqrt(mean_h(out[b, h, t, k]²) + ε)`. At init
+    # α=0, γ=1 ⇒ step-0 forward is byte-identical to baseline
+    # (max-abs-diff = 0.0). Distinct from 160 (per-head scalar
+    # gain, no cross-head coupling), 176 (V-pre-AV per-head
+    # RMSNorm, normalizes each head independently along d_k),
+    # 162/165 (pre-softmax Q/K RMSNorm). Cross-head coupling is a
+    # qualitatively different lever axis from any closed lever.
+    # Default off → no Parameter registered, no branch taken,
+    # baseline path bit-identical. See
+    # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+    use_cross_head_rmsnorm: bool = False
     # #107 Exclusive self-attn: subtract the component of the attention
     # output that lies along the current token's value vector. Zero-init
     # per-head coefficient → step-0 is baseline; default off keeps the
@@ -2737,6 +2757,46 @@ class Tiny1M3MVPreAVNormConfig(Tiny1M3MConfig):
     `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
     """
     use_v_rmsnorm: bool = True
+
+
+@dataclass
+class Tiny1M3MCrossHeadRMSNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Cross-Head Channel RMSNorm (181).
+
+    A/B vs the unmodded `Tiny1M3MConfig` ctrl (the daemon owns the
+    ctrl). For each token's attention output `out ∈ R^{B×H×T×d_k}`,
+    normalize ACROSS HEADS within each d_k slice so all H heads land
+    on the same per-(t, k) scale before the W_O projection. Per-head
+    scalar gate `α_h = relu(α_raw_h)` (init `−1e-3` ⇒ `relu(−1e-3)
+    = 0` exactly ⇒ identity blend at step 0) and per-(h, k) gain
+    `γ_h[k] = 1 + tanh(γ_raw_h[k])` (init 0 ⇒ γ=1 at step 0).
+    Output:
+      `out = (1 − α_h)·out + α_h·(out / rms)·γ_h`,
+      `rms[b, t, k] = sqrt(mean_h(out[b, h, t, k]²) + ε)`.
+
+    Init α=0, γ=1 ⇒ `out` unchanged exactly ⇒ step-0 forward is
+    byte-identical to baseline (max-abs-diff = 0.0 — algebraic
+    identity from `relu(−1e-3) = 0`, not fp32 tolerance).
+
+    Distinct from closed 160 (per-head scalar gain, no cross-head
+    coupling), 176 (V-pre-AV per-head RMSNorm normalizes each head
+    independently along d_k), 162/165 (pre-softmax Q/K RMSNorm).
+    Cross-head coupling is qualitatively new at this tier: the
+    160-null confirmed the per-head axis is exhausted; 181 probes
+    whether *joint* head-magnitude coupling is the binding
+    constraint. A null closes the post-AV-magnitude family at
+    0.94M; a win unlocks the cross-head coupling axis for Phase-2.
+
+    Cost: 12 blocks × 68 params = 816 params (+0.087% of 0.94M).
+    Same as 176.
+
+    PASS ≤ ctrl − 0.005 (i.e. ≤ 6.3938) AND clears the ±0.04
+    noise band by ≥8×. NULL band |Δ| < 0.005 (inside
+    [6.3938, 6.4038]). DRIFT > +0.005 (≥ 6.4038). Sub-noise is
+    INCONCLUSIVE on one seed — do not re-run with extra seeds.
+    See `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+    """
+    use_cross_head_rmsnorm: bool = True
 
 
 @dataclass
@@ -6140,3 +6200,161 @@ class Tiny1M3MEntmaxConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/173-entmax-15/{idea,plan}.md`.
     """
     use_entmax: bool = True
+
+
+@dataclass
+class Tiny1M3MLogitConvConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Pre-Softmax 1D Causal Depthwise Conv on QK^T (180).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Per-head kernel `w_h ∈ R^K` is convolved along the key axis of
+    the attention score tensor `[B, H, T, S]` between the causal
+    mask and softmax: `scores_conv[b, h, t, s] = Σ_{k=0..K-1} w_h[k] ·
+    scores[b, h, t, s+k]` (left-padded so the first valid input at
+    s=0 contributes to output s=0 via the center weight, giving a
+    strict causal form). K=3 by default. Init `w_h[:, K//2] = 1`,
+    all others 0 ⇒ delta kernel ⇒ conv is identity on scores ⇒
+    softmax unchanged ⇒ step-0 forward is byte-identical to baseline
+    (max-abs-diff = 0.0 — verified in the build smoke). The
+    optimizer can grow any kernel shape (smoothing, sharpening,
+    anything) over training.
+
+    Param count: H=4, K=3, n_layers=12 ⇒ 4·3 = 12 params/block, 144
+    total (+0.015% of 0.94M). Different from closed shortconv (143,
+    pre-attention conv on x) and from softmax-scalar levers (152,
+    155, 160, 166 — those are scalar per-head ops, not structural
+    smoothing). Tests whether a soft local-attention prior applied
+    directly to QK^T helps at our 0.94M tier.
+
+    Cost: +144 params total, ~5% per-forward FLOP overhead, <5%
+    memory overhead. Forces manual attention path (SDPA flash kernel
+    can't apply pre-softmax score-space ops). Default off → no
+    Parameter registered, no branch taken, baseline path bit-
+    identical. See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+    """
+    use_logit_conv: bool = True
+
+
+@dataclass
+class Tiny1M3MPerHeadWindowConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Per-Head Learnable Attention Window (182).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.3988 cached 2026-06-15 — see `autoresearch/baseline-cache.json`).
+    One learnable scalar `w_h ∈ R^H` per MHA maps (via sigmoid) to
+    a window half-size `half_w_h = T · sigmoid(w_h)`. Applied as
+    `score -= 1e9 · relu(|t − s| − half_w_h)` in the manual attention
+    branch — equivalent to a hard per-head window but fp32-clean
+    (no `−∞`, no NaN risk, matches 154-rebased-attn's rebased-softmax
+    style). Init `w_h = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈ T −
+    0.00005·T > T − 1 = max|t − s|`, so the penalty is identically 0
+    at fp32 at step 0 ⇒ step-0 forward is byte-identical to the
+    no-flag baseline (max-abs-diff = 0.0 — verified in the build
+    smoke). The optimizer can grow any per-head mix of local/global
+    attention: some heads may keep the full-T window (sigmoid(w_h)
+    stays near 1) while others shrink toward a 512-token SWA (the
+    closed SWA-sweep winner). Distinct from the closed fixed-window
+    sweep (256/384/512/768/1024/2048 → 512) and the closed per-head
+    scalar family (152/155/160/166/172): 182 changes the **spatial
+    pattern** of attention, not just score magnitudes, and lets the
+    per-head gradient find the right mix instead of forcing a global
+    hyperparameter. Total cost: n_heads × n_layers = 48 extra
+    params at tiny1m3m (+0.005% of 0.94M). Forces manual attention
+    path (SDPA flash kernel can't apply the per-head
+    `1e9·relu(...)` penalty). Default off → no Parameter registered,
+    no branch taken, baseline path bit-identical. The
+    `Tiny1M3MPerHeadWindowConfig` subclass flips it on. See
+    `autoresearch/ideas/182-per-head-window/idea.md`.
+    """
+    use_per_head_window: bool = True
+
+
+@dataclass
+class Tiny1M3MMQAGatedConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Gated Multi-Query Attention (178).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Per-KV-head scalar gate β_k, β_v blends between the head-local
+    K, V projection and a single shared K, V projection:
+    `K_h = K_local_h + β_k_h · (K_shared_h − K_local_h)`, same for V.
+    β init 0 ⇒ step-0 forward is bit-identical to the no-flag
+    baseline (max-abs-diff = 0.0 — verified in the build smoke).
+    The shared K, V projection is one `nn.Linear(d_model, d_model)`
+    per block (2·d_model² extra params/layer); at β→1 the head-local
+    K, V becomes dead weight, recovering standard MQA's K/V param
+    savings. At tiny1m3m (n_kv_heads = 2, n_heads = 4) the gate is
+    naturally per-KV-head (2 scalars/layer = 24 total at 12L depth,
+    +0.003% of 0.94M) — within each GQA group both heads see the
+    same β and the same K_local / K_shared.
+
+    The lever is a smooth interpolation between MHA (β=0, default
+    init) and MQA (β→1, post-training); the optimizer can grow β
+    per-head to share K, V when it helps and keep per-head K, V
+    when it doesn't. Tests whether K/V sharing is a parameter-
+    efficiency win at our 0.94M / 3M-token scale where the closed
+    MHA-vs-GQA arch-sweep (fixed group sizes only) returned null
+    — the gated form is the missing "smooth" version of the same
+    family.
+
+    Cost: +2·d_model² shared K, V (8192 params/layer) + 2·n_kv_heads
+    gate scalars (4/layer). Total at tiny1m3m 12L: ~98,328 params
+    (~+10.5% of 0.94M). When β=0 the head-local K, V is in use and
+    the shared projection is dead weight; as the optimizer grows
+    β the head-local K, V becomes dead and the shared projection
+    takes over. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+
+    Default off → baseline path bit-identical. The
+    `Tiny1M3MMQAGatedConfig` subclass flips it on.
+    """
+    use_mqa_gated: bool = True
+
+
+@dataclass
+class Tiny1M3MAntiCausalSubHeadsConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Anti-Causal Sub-Heads (179).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Per-head learnable scalar `γ_h = sigmoid(γ_raw_h)`
+    (init `γ_raw_h = -10` ⇒ `γ_h ≈ 4.5e-5` at step 0) attenuates
+    the upper-triangle fill per head: `fill_h = -1e9 · (1 − γ_h)`.
+    `γ_h = 0` ⇒ effectively masked (causal), `γ_h = 1` ⇒ no fill
+    (fully bidirectional), and intermediate `γ_h` smoothly
+    interpolate the mask magnitude. The repo convention uses a
+    finite mask sentinel `-1e9` (NOT `-∞`) — using `-∞` would
+    degenerate the lever (the r1 review closed the `-∞`
+    interpretation). At init the fill is `≈ -9.99955e8` (a
+    0.005% attenuation of `-1e9`), and the softmax row on the
+    upper-triangle is bitwise 0 in fp32 (`exp(-9.99955e8) < 1e-300`),
+    so the step-0 forward is byte-identical to the no-flag
+    baseline.
+
+    The optimizer can grow any subset of heads into "global"
+    heads on a continuous spectrum. The inference schedule
+    keeps γ_h as trained at both train and eval — the trained
+    γ_h IS the eval-time mask shape (this measures real
+    deployment behavior, not a contrived γ_h=0 override). This
+    is a *train/inference distribution shift* no other closed
+    lever in the recent batch has; a winning run at 0.94M would
+    need a γ_h=0 inference override for strict causal-LM
+    service (documented in `idea.md` as a Phase-2 risk).
+
+    Param count: H=4, n_layers=12 ⇒ 4 · 12 = 48 params total
+    (+0.005% of 0.94M). Forces the manual attention path so
+    SDPA's flash kernel doesn't perturb the per-head fill
+    (same pattern as the closed 152/155/166/180 levers).
+
+    Different from the closed `Multiscale heads / parallel
+    block / attn sink (2026-06-04 batch)` (layer-level mix,
+    closed) and from the closed per-head-attention-shape trio
+    152/155/166 (additive/multiplicative on logits, NOT on the
+    mask shape). 179 is the first filing to put the per-head
+    lever on the *mask* itself. Per-head QK-norm 162/165 also
+    closed null at 0.94M — the prior on this axis at tiny1m3m
+    is honest `Δ ∈ [−0.02, +0.005]` per the r1 reviewer.
+
+    Default off → baseline path bit-identical. The
+    `Tiny1M3MAntiCausalSubHeadsConfig` subclass flips it on.
+    Inherits `use_fire_pe=False` from `Tiny1M3MConfig`.
+    See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+    """
+    use_anti_causal_subheads: bool = True

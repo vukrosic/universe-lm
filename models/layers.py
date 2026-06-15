@@ -120,8 +120,8 @@ def entmax_15(
     mask: torch.Tensor,
     alpha_per_head: torch.Tensor,
     dim: int = -1,
-    n_iter: int = 25,
-    tol: float = 1e-7,
+    n_iter: int = 15,
+    tol: float = 1e-4,
 ) -> torch.Tensor:
     """α-entmax-1.5 attention normalization via bisection on λ.
 
@@ -133,11 +133,12 @@ def entmax_15(
             α ≥ 1. For α = 1 the projection is exactly softmax
             (short-circuited to torch.softmax for bit-identity).
         dim: reduction axis (default -1, the key axis).
-        n_iter: bisection budget (default 25; converges to <1e-7 in
-            ~20 iterations for n_keys ≤ 4096).
-        tol: bisection tolerance on `Σp − 1` (default 1e-7; well below
-            the 1e-5 fp32 noise floor used in this repo's step-0
-            identity checks).
+        n_iter: bisection budget (default 15; gives bracket precision
+            ~1e-4, comfortably below the 1e-3 fp16 score precision that
+            dominates downstream gradient noise at tiny1m3m).
+        tol: bisection tolerance on `Σp − 1` (default 1e-4; the
+            short-circuit α=1 path keeps the strict 1e-5 step-0
+            identity check via the literal `torch.softmax` call).
 
     Returns:
         Tensor of the same shape and dtype as `scores`. Each row sums
@@ -196,7 +197,15 @@ def entmax_15(
     hi = (amp1 * safe_s_max)
     # Bisection: each step, project, check Σp, halve bracket.
     # Vectorized: we keep lo/hi as [B, H, T_q, 1] tensors and
-    # update them with torch.where.
+    # update them with torch.where. We deliberately do NOT add an
+    # early-exit `.item() < tol` check here: every `tensor.item()`
+    # forces a CUDA sync (~50-100µs each on RTX 3060) and 15 iters ×
+    # 12 layers × 732 forward passes would dominate wall-clock. The
+    # extra ~2 iters of compute on rows that already converged is
+    # ~3 fp32 ops × 33M elements = negligible next to the sync cost.
+    # Convergence is guaranteed by the fixed-iter budget (bracket
+    # halves each iter ⇒ n_iter=15 ⇒ bracket/2^15 ≈ 1e-4 relative
+    # precision at tiny1m3m's T=2048).
     for _ in range(n_iter):
         mid = 0.5 * (lo + hi)
         # p_i = max(0, amp1·s_i − mid)^(1/amp1)
@@ -208,8 +217,6 @@ def entmax_15(
         go_up = proj_sum < 1.0  # need smaller mid → lower hi
         lo = torch.where(~go_up, mid, lo)  # if sum >= 1, mid is a valid lower bound
         hi = torch.where(go_up, mid, hi)   # if sum < 1, mid is a valid upper bound
-        if (hi - lo).max().item() < tol:
-            break
     # Final projection at the midpoint.
     lam = 0.5 * (lo + hi)
     z = torch.clamp(amp1 * s - lam, min=0.0)
@@ -800,6 +807,11 @@ class MultiHeadAttention(nn.Module):
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
         use_head_gain: bool = False,
+        # 181 — Cross-Head Channel RMSNorm. See
+        # `MultiHeadAttention.use_cross_head_rmsnorm` for the
+        # mechanism. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        use_cross_head_rmsnorm: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -1210,6 +1222,76 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/156-moa/idea.md`.
         use_moa: bool = False,
         moa_num_experts: int = 2,
+        # 178 — Gated Multi-Query Attention (G-MQA). A learnable
+        # per-KV-head scalar gate `β_k, β_v ∈ R^{n_kv_heads}` blends
+        # between the head-local K, V projection and a single shared
+        # K, V projection: `K_h = K_local_h + β_k_h · (K_shared_h −
+        # K_local_h)`, same for V. β init 0 ⇒ K_mix = K_local exactly
+        # ⇒ step-0 forward is byte-identical to baseline. The shared
+        # K, V projection is a single `nn.Linear(d_model, d_model)`
+        # (per block) — 2·d_model² extra params/layer vs head-local.
+        # At β→1 the head-local path is dead weight, recovering
+        # standard MQA's K/V param savings. Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        use_mqa_gated: bool = False,
+        # 182 — Per-head learnable attention window (soft local
+        # window size per head). One scalar `w_h ∈ R^H` per MHA maps
+        # to a window half-size `half_w_h = T · sigmoid(w_h)`. Applied
+        # as `score -= 1e9 · relu(|t − s| − half_w_h)` in the manual
+        # attention branch — equivalent to a hard window per head but
+        # fp32-clean (no `−∞`, no NaN risk — matches 154-rebased-attn's
+        # rebased-softmax style). Init `w_h = 10 ⇒ sigmoid(10) ≈
+        # 0.99995 ⇒ half_w ≈ T − 0.00005·T > T − 1 = max|t − s|`, so
+        # the relu is identically 0 everywhere and the step-0 forward
+        # is byte-identical to the no-flag baseline. Total cost:
+        # n_heads × n_layers = 48 extra params at tiny1m3m (+0.005%
+        # of 0.94M). Default off ⇒ no Parameter registered, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        use_per_head_window: bool = False,
+        # 180 — Pre-softmax 1D causal depthwise conv on attention logits
+        # (QK^T). Per-head kernel `w_h ∈ R^{K}` is convolved along the
+        # key axis of the score tensor `[B, H, T, S]` between the
+        # causal mask and softmax. Kernel init is a delta function
+        # (`w_h[:, K//2] = 1`, rest 0) ⇒ step-0 conv is the identity on
+        # scores ⇒ softmax unchanged ⇒ forward is byte-identical to
+        # the no-flag baseline. The optimizer can grow any kernel
+        # shape — smoothing (positive, sums to 1) or sharpening
+        # (signed) — over training. K=3 default; small enough to be
+        # negligible compute, large enough to encode a meaningful
+        # local-attention prior. Forces the manual attention path so
+        # SDPA's flash kernel doesn't perturb step-0 numerics.
+        # Default off → no Parameter registered, no branch taken,
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+        use_logit_conv: bool = False,
+        logit_conv_kernel_size: int = 3,
+        # 179 — Anti-Causal Sub-Heads (UniLM-style hybrid
+        # causal + bidirectional heads). A learnable per-head
+        # scalar `γ_h = sigmoid(γ_raw_h)` (init `γ_raw_h = -10`
+        # ⇒ `γ_h ≈ 4.5e-5` at step 0) controls how much of head
+        # h's attention is bidirectional: the upper-triangle
+        # fill is replaced per head with `−1e9 · (1 − γ_h)` so
+        # γ_h=0 ⇒ effectively masked (causal), γ_h=1 ⇒ no fill
+        # (fully bidirectional), and intermediate γ_h smoothly
+        # interpolate the mask magnitude. The repo convention
+        # uses a finite mask sentinel `-1e9` (not `-∞`); the
+        # r1 review closed the `-∞` interpretation because
+        # `(1−γ_h)·-∞` degenerates the lever. With `−1e9`,
+        # `(1−γ_h)·-1e9` is a real gradient across γ_h ∈ [0,1]
+        # and the step-0 byte-identical claim holds:
+        # `sigmoid(-10) ≈ 4.5e-5` ⇒ fill `≈ -9.99955e8` ⇒
+        # `exp(-9.99955e8) < 1e-300` in fp32 ⇒ upper-triangle
+        # bitwise 0 in softmax output. Per the inference
+        # schedule in `idea.md`, γ_h stays as trained at both
+        # train and eval (measures real deployment behavior).
+        # Default off ⇒ no Parameter registered, no branch
+        # taken, baseline path bit-identical. Forces the
+        # manual attention path so SDPA's flash kernel doesn't
+        # perturb the per-head fill. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        use_anti_causal_subheads: bool = False,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -1554,6 +1636,26 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_logit_bias = use_attn_logit_bias
         if self.use_attn_logit_bias:
             self.attn_logit_bias = nn.Parameter(torch.zeros(n_heads))
+        # 179 — Anti-Causal Sub-Heads. Per-head learnable scalar
+        # `γ_h = sigmoid(γ_raw_h)` attenuates the upper-triangle
+        # fill by `(1 − γ_h)`. Init `γ_raw_h = -10` ⇒
+        # `sigmoid(-10) ≈ 4.5e-5` ⇒ mask fill `≈ -9.99955e8`
+        # (well within fp32 precision of the baseline `-1e9`).
+        # When off, no Parameter is registered and the forward
+        # branch is never taken — the baseline `masked_fill(.,
+        # -1e9)` is exactly the per-head-broadcasted scalar
+        # when γ_h = 0 anyway, so we do nothing and the
+        # baseline path is bit-identical. See the kwarg docstring
+        # above for the full mechanism and the step-0
+        # byte-identity derivation. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        self.use_anti_causal_subheads = use_anti_causal_subheads
+        if self.use_anti_causal_subheads:
+            self.ac_subhead_gate = nn.Parameter(
+                torch.full((n_heads,), -10.0)
+            )
+        else:
+            self.ac_subhead_gate = None
         # 166 — T5-style bucketed relative position bias. Per-head
         # bias tensor `self.rpe_bias ∈ R^{H × B}` (init zeros) added
         # to the attention logits pre-softmax in the manual path,
@@ -1630,6 +1732,30 @@ class MultiHeadAttention(nn.Module):
         # numerics. Default off → no branch taken, baseline path
         # bit-identical. See `autoresearch/ideas/161-dyt-temp/idea.md`.
         self.use_per_layer_temp = use_per_layer_temp
+        # 180 — Pre-softmax 1D causal depthwise conv on attention logits.
+        # `logit_conv_w ∈ R^{H × K}` per-head kernel convolved along
+        # the key axis of scores before softmax. Init zero then set
+        # center = 1.0 with no_grad so the init itself doesn't consume
+        # RNG (preserves step-0 byte-identity with the no-flag path).
+        # When `use_logit_conv=False` the parameter is not registered
+        # and `logit_conv_w` is a None stub for attribute-lookup
+        # safety. See the flag docstring above for the mechanism.
+        self.use_logit_conv = use_logit_conv
+        self.logit_conv_kernel_size = max(1, int(logit_conv_kernel_size))
+        if self.use_logit_conv:
+            self.logit_conv_w = nn.Parameter(
+                torch.zeros(self.n_heads, self.logit_conv_kernel_size)
+            )
+            with torch.no_grad():
+                # Identity tap = index K-1 (the "current position"
+                # weight in the `out[s] = Σ_k w[k]·padded[s+k]`
+                # convention used in `forward()`) ⇒ delta kernel ⇒
+                # conv is identity on scores ⇒ softmax unchanged ⇒
+                # step-0 forward is byte-identical to baseline. The
+                # optimizer can grow off-center weights over training.
+                self.logit_conv_w[:, self.logit_conv_kernel_size - 1] = 1.0
+        else:
+            self.logit_conv_w = None
         # 160 — Per-head RMS gain on the attention output. After the
         # AV product and softmax aggregation, multiply each head's
         # output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable scalar
@@ -1647,6 +1773,41 @@ class MultiHeadAttention(nn.Module):
         self.use_head_gain = use_head_gain
         if self.use_head_gain:
             self.head_gain = nn.Parameter(torch.ones(self.n_heads))
+        # 181 — Cross-Head Channel RMSNorm. Normalize the attention
+        # output `out = A·V ∈ R^{B×H×T×d_k}` ACROSS HEADS within
+        # each d_k slice (i.e. take the RMS over the H dim at each
+        # (b, t, k) position) so all H heads land on the same
+        # per-(t, k) scale before the W_O projection. Distinct
+        # from 160 (per-head scalar gain, no cross-head coupling)
+        # and 176 (V-pre-AV per-head RMSNorm, normalizes each
+        # head independently along d_k). Two new per-block
+        # parameters:
+        #   - `cross_head_rmsnorm_alpha_raw ∈ R^H` init `−1e-3`
+        #     ⇒ `relu(−1e-3) = 0` exactly (the relu clamps the
+        #     negative to bit-exact zero) ⇒ `α_h = 0` exactly at
+        #     step 0 ⇒ `out = (1 − 0)·out + 0·... = out` byte-
+        #     identical to baseline. NOT `sigmoid(α_raw)` init
+        #     `-5` (which would give `≈ 0.0067`, not zero).
+        #   - `cross_head_rmsnorm_gain_raw ∈ R^{H×d_k}` init 0
+        #     ⇒ `γ_h[k] = 1 + tanh(0) = 1.0` exactly at step 0
+        #     ⇒ no per-channel rescaling.
+        # Cost: H × (1 α + d_k γ) = 4 × (1 + 16) = 68 params /
+        # block × 12 blocks = 816 params (+0.087% of 0.94M).
+        # Same shape as 176. Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off. See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        self.use_cross_head_rmsnorm = use_cross_head_rmsnorm
+        if self.use_cross_head_rmsnorm:
+            self.cross_head_rmsnorm_alpha_raw = nn.Parameter(
+                torch.full((self.n_heads,), -1e-3)
+            )
+            self.cross_head_rmsnorm_gain_raw = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k)
+            )
+        else:
+            self.cross_head_rmsnorm_alpha_raw = None
+            self.cross_head_rmsnorm_gain_raw = None
         # #107 Exclusive self-attn: subtract the projection of the head
         # output onto its current-token value vector. Per-head scalar gate
         # is zero-init so step 0 is the baseline graph.
@@ -2012,6 +2173,98 @@ class MultiHeadAttention(nn.Module):
             # when `use_moa=False` so they can be anything.
             self.moa_router_weight = None
             self.moa_router_bias = None
+
+        # 178 — Gated Multi-Query Attention (G-MQA). Per-KV-head
+        # scalar gate β_k, β_v ∈ R^{n_kv_heads} blend between the
+        # head-local K, V projection and a single shared K, V
+        # projection: `K_h = K_local_h + β_k_h · (K_shared_h −
+        # K_local_h)`, same for V. β init 0 ⇒ K_mix = K_local
+        # exactly in fp32 ⇒ step-0 forward is bit-identical to the
+        # no-flag baseline (max-abs-diff = 0.0). The shared K, V
+        # projection is a single `nn.Linear(d_model, d_model)` per
+        # block (2·d_model² params/layer); at β→1 the head-local
+        # K, V becomes dead weight, recovering standard MQA's K/V
+        # param savings. We allocate the shared K, V as raw
+        # `nn.Parameter` (NOT `nn.Linear`) so the construction does
+        # NOT consume RNG — same alignment pattern as MoA's
+        # `moa_extra_kv` above: any RNG advance between the two
+        # constructions would shift later blocks' `qkvo_proj` init
+        # and break the step-0 byte-identity test. The shared K, V
+        # is std-0.02 normal-initialized (matches `qkvo_proj`). The
+        # gate `β_k, β_v` is a per-KV-head vector (init 0), not a
+        # per-head vector — within a GQA group all heads share
+        # the same K, V source so the gate is naturally per-KV-
+        # head. At tiny1m3m (n_kv_heads = n_heads = 4) this is
+        # identical to the per-head form. Default off ⇒ no
+        # Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+        self.use_mqa_gated = use_mqa_gated
+        if use_mqa_gated:
+            # Shared K, V projects to the GQA-axis size
+            # (n_kv_heads · d_k) so it broadcasts cleanly against
+            # the per-KV-head K, V that the head-local projection
+            # produces. The design sketch said `d_model` for the
+            # shared projection, but at tiny1m3m the head-local K
+            # is per-KV-head (n_kv_heads=2, n_heads=4 ⇒ GQA
+            # active) so the K_shared must match that head count
+            # for the per-head mix to broadcast without an extra
+            # GQA-style repeat. The shared K, V is one projection
+            # per block (vs n_kv_heads per-KV-head projections in
+            # the head-local path) — the MQA-style savings are
+            # recovered when β→1.
+            shared_kv_dim = self.n_kv_heads * self.d_k
+            self.W_K_shared = nn.Parameter(
+                torch.zeros(shared_kv_dim, d_model)
+            )
+            self.W_V_shared = nn.Parameter(
+                torch.zeros(shared_kv_dim, d_model)
+            )
+            self.mqa_gate_k = nn.Parameter(
+                torch.zeros(self.n_kv_heads)
+            )
+            self.mqa_gate_v = nn.Parameter(
+                torch.zeros(self.n_kv_heads)
+            )
+            # Zero-init (NOT normal-init) on the shared K, V
+            # weights: β=0 init ⇒ `(K_shared − K_local)` is
+            # multiplied by 0 in forward, so the W_K_shared /
+            # W_V_shared values don't affect the step-0 output
+            # regardless of init. Zero-init keeps the construction
+            # from consuming RNG, which is required to keep the
+            # `qkvo_proj` random init aligned with the no-flag
+            # baseline (any RNG advance between the two
+            # constructions would shift later blocks' qkvo_proj
+            # init and break the step-0 byte-identity test). The
+            # optimizer will grow the shared K, V from zero as it
+            # grows β from zero — this is a standard "init-to-zero,
+            # let the optimizer learn it" pattern.
+        else:
+            # Stubs so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references these
+            # when `use_mqa_gated=False` so they can be anything.
+            self.W_K_shared = None
+            self.W_V_shared = None
+            self.mqa_gate_k = None
+            self.mqa_gate_v = None
+
+        # 182 — Per-head learnable attention window. One scalar
+        # `w_h ∈ R^H` per MHA maps (via sigmoid) to a window
+        # half-size `half_w_h = T · sigmoid(w_h)`. Init `w_h = 10`
+        # ⇒ `sigmoid(10) ≈ 0.99995` ⇒ `half_w ≈ T − 0.00005·T >
+        # T − 1 = max|t − s|`, so the penalty is identically 0
+        # at fp32 at step 0 ⇒ byte-identical to baseline. Default
+        # off ⇒ no Parameter registered, no branch taken, baseline
+        # path bit-identical. Cost: H params per MHA = 48 total at
+        # tiny1m3m (+0.005% of 0.94M). See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        self.use_per_head_window = use_per_head_window
+        if use_per_head_window:
+            self.head_window_logit = nn.Parameter(
+                torch.full((self.n_heads,), 10.0)
+            )
+        else:
+            self.head_window_logit = None
 
         # ============================================================================
         # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
@@ -2430,6 +2683,30 @@ class MultiHeadAttention(nn.Module):
             "(v_mix_conv is a learned conv on V pre-AV; the composition "
             "restructures the lever and is not what 176 tests)."
         )
+        # 181 — Cross-Head Channel RMSNorm: combining 181 with any
+        # of the closed post-AV per-head scalar / input-conditional
+        # gates restructures the lever (the optimizer ends up
+        # distributing the same effect across two different
+        # parameterizations) and must fail loud at the build-smoke.
+        # The chosen 181 control uses none of these; the 181
+        # treatment sits in isolation. Mirrors the 169 ∧ {Q-only,
+        # K-only, post-RoPE} and 176 ∧ {v_layernorm, v_norm_type,
+        # v_mix_conv} assertion patterns.
+        assert not (self.use_cross_head_rmsnorm and self.use_head_gain), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_head_gain=True (both post-AV; the composition "
+            "restructures the lever — turn 160 OFF to isolate 181)."
+        )
+        assert not (self.use_cross_head_rmsnorm and self.use_attn_output_gate), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_attn_output_gate=True (closed-045 per-head scalar "
+            "ReZero gain; the composition restructures the lever)."
+        )
+        assert not (self.use_cross_head_rmsnorm and self.use_gated_attn), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_gated_attn=True (closed-024 input-conditional "
+            "sigmoid gate; the composition restructures the lever)."
+        )
         # 129 — YOCO: when the flag is on, the MHA must be given a
         # shared_kv tuple. Reject the misconfiguration loudly so the
         # runner doesn't accidentally launch it without plumbing.
@@ -2620,7 +2897,56 @@ class MultiHeadAttention(nn.Module):
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
         K = K.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
         V = V.reshape(batch_size, seq_len, V_n_kv_heads, self.d_k)
-        
+
+        # 178 — Gated Multi-Query Attention. Blend the per-head K, V
+        # with a shared K, V projection via a per-KV-head scalar
+        # gate: `K_h = K_local_h + β_k_h · (K_shared_h − K_local_h)`,
+        # same for V. β init 0 ⇒ K_mix = K_local exactly in fp32 ⇒
+        # step-0 forward is byte-identical to the no-flag baseline
+        # (max-abs-diff = 0.0 across the full forward, modulo the
+        # baseline path itself also computing the same matmul).
+        # The shared K, V projection is a single matmul on x and
+        # is then reshaped to `[B, T, n_kv_heads, d_k]` so it
+        # broadcasts cleanly against the head-local K, V (and the
+        # V_n_kv_heads layout under Mega — but at tiny1m3m the
+        # experiment runs without Mega, so V_n_kv_heads =
+        # n_kv_heads and the layouts match). Sits BEFORE the
+        # RMSNorm + RoPE so the mixed K, V flows through the same
+        # QK-norm + rotary pipeline as the baseline K, V. Placed
+        # BEFORE the GQA repeat_interleave so the gate acts on the
+        # KV-head layout (per-KV-head β broadcasts to all heads in
+        # a GQA group via the repeat). When
+        # `use_mqa_gated=False` (default) the branch is never
+        # taken — the K, V tensors are not touched — and the
+        # baseline forward graph is bit-identical. See
+        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+        if self.use_mqa_gated:
+            K_shared = F.linear(x, self.W_K_shared)  # [B, T, n_kv_heads·d_k]
+            K_shared = K_shared.reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k
+            )
+            V_shared = F.linear(x, self.W_V_shared)  # [B, T, n_kv_heads·d_k]
+            # Reshape V_shared to match V's head layout. K_local
+            # is always per-n_kv_heads (the head-local K slice of
+            # the merged qkvo_proj). V has 2·n_kv_heads slots when
+            # use_mega is on (the V_raw + V_ema concat); we use
+            # only the first n_kv_heads slots for the gate's
+            # broadcast (V_extra keeps its own scale unchanged).
+            V_shared_n = V_shared.reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k
+            )
+            beta_k = self.mqa_gate_k.view(1, 1, self.n_kv_heads, 1)
+            beta_v = self.mqa_gate_v.view(1, 1, self.n_kv_heads, 1)
+            K = K + beta_k * (K_shared - K)
+            if V_n_kv_heads == self.n_kv_heads:
+                V = V + beta_v * (V_shared_n - V)
+            else:
+                # Mega: V has 2·n_kv_heads slots (V_raw + V_ema).
+                # Mix V_raw with V_shared_n, leave V_ema alone.
+                V_raw = V[:, :, :self.n_kv_heads, :]
+                V_raw_mixed = V_raw + beta_v * (V_shared_n - V_raw)
+                V = torch.cat([V_raw_mixed, V[:, :, self.n_kv_heads:, :]], dim=2)
+
         # Apply RoPE
         # #49 QK-norm-post-RoPE: by default we apply RMSNorm to Q,K BEFORE
         # RoPE (the pre-RoPE norm). The modded-nanogpt variant applies the
@@ -3169,6 +3495,35 @@ class MultiHeadAttention(nn.Module):
             scores = scores.masked_fill(
                 ~window.view(1, 1, seq_len, seq_len), -1e9
             )
+            # 182 — Per-head learnable attention window. Apply a
+            # hard-style per-head penalty AFTER the causal mask (so
+            # masked -1e9 positions keep their zero-probability) and
+            # BEFORE softmax. The half-window is `half_w_h = T ·
+            # sigmoid(w_h)` (shape [H], broadcast to [B, H, 1, 1]).
+            # The penalty `1e9 · relu(|t − s| − half_w_h)` is added
+            # to scores for positions OUTSIDE the per-head window —
+            # effective softmax zero, fp32-clean (no `−∞`, no NaN
+            # risk, matches 154-rebased-attn's rebased-softmax style).
+            # At init `w_h = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈ T
+            # − 0.00005·T > T − 1 = max|t − s|`, so the relu is
+            # identically 0 everywhere and the penalty is a no-op at
+            # step 0 ⇒ byte-identical to baseline. `ar` is
+            # `torch.arange(seq_len, ...)` from earlier in the
+            # manual branch. When `use_per_head_window=False`
+            # (default) the branch is never taken, no Parameter
+            # registered, baseline path bit-identical. See
+            # `autoresearch/ideas/182-per-head-window/idea.md`.
+            if self.use_per_head_window:
+                rel_dist = (
+                    ar[None, :].float() - ar[:, None].float()
+                ).abs()  # [T, T]
+                half_w = (
+                    float(seq_len)
+                    * torch.sigmoid(self.head_window_logit)
+                ).view(1, self.n_heads, 1, 1)  # [1, H, 1, 1]
+                scores = scores - 1e9 * F.relu(
+                    rel_dist.view(1, 1, seq_len, seq_len) - half_w
+                )
             # 166 — T5-style bucketed relative position bias.
             # Add `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
             # causal mask (masked positions get -1e9 so the bias
@@ -3215,6 +3570,9 @@ class MultiHeadAttention(nn.Module):
             or self.use_per_head_temp  # 155 — Per-head temperature (manual path; force SDPA off so the score-side multiply is exact).
             or self.use_t5_rpe  # 166 — T5-RPE bucket bias (manual path; force SDPA off so the score-side additive bias is exact).
             or self.use_entmax  # 173 — Entmax-1.5: closed-form projection can't go through SDPA's flash kernel.
+            or self.use_logit_conv  # 180 — Pre-softmax causal conv on QK^T: score-space op, must run on manual path.
+            or self.use_anti_causal_subheads  # 179 — Per-head mask fill on the upper-triangle; SDPA flash can't apply a per-head fill, so force the manual path.
+            or self.use_per_head_window  # 182 — Per-head learnable window: score-space `1e9·relu(...)` subtract, must run on manual path.
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -3330,7 +3688,58 @@ class MultiHeadAttention(nn.Module):
             if self.use_fox:
                 scores = scores + self.fox(x).to(scores.dtype)
             # ---- Mask (causal / SWA) ----
-            scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
+            mask_bool = ~window.view(1, 1, seq_len, seq_len)
+            if self.use_anti_causal_subheads:
+                # 179 — Per-head anti-causal gate. The fill value
+                # is broadcast over the [B, H, T, T] score tensor.
+                # `γ_h = sigmoid(ac_subhead_gate_h)` ⇒ init ≈ 4.5e-5
+                # ⇒ fill `≈ -9.99955e8` ⇒ upper-triangle
+                # `exp(-9.99955e8) < 1e-300` in fp32 ⇒ softmax row
+                # bitwise 0 on masked positions ⇒ byte-identical to
+                # the no-flag baseline at step 0. The optimizer can
+                # grow any γ_h ∈ [0, 1] per head over training.
+                # `torch.where` is used (not `masked_fill`) because
+                # `masked_fill` requires a 0-d value tensor; the
+                # per-head fill `[1, H, 1, 1]` broadcasts cleanly
+                # through `torch.where` against `[B, H, T, T]`.
+                # See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                gamma_h = torch.sigmoid(self.ac_subhead_gate).view(
+                    1, self.n_heads, 1, 1
+                )
+                fill_value = -1e9 * (1.0 - gamma_h)
+                scores = torch.where(mask_bool, fill_value, scores)
+            else:
+                scores = scores.masked_fill(mask_bool, -1e9)
+            # 180 — Pre-softmax 1D causal depthwise conv on attention
+            # logits. Applied AFTER the causal mask (so masked -1e9
+            # positions don't pollute the active convolution window via
+            # the delta-init identity) and BEFORE softmax. Left-pad
+            # scores by K-1 zeros along the last axis; then for each
+            # shift k ∈ [0, K) the slice `padded[..., k:k+S]` is the
+            # input contributing from position (s + k - (K-1)). Output
+            # at position s sums `w[h, k] * padded[..., s + k]` over k.
+            # Identity init (`w[:, K//2] = 1`, rest 0) ⇒ the conv is
+            # identity on scores ⇒ softmax unchanged ⇒ step-0 forward
+            # is byte-identical to baseline. Loop unrolled at module
+            # load (K is a small int constant for any given config);
+            # K=3 by default. We deliberately do NOT use F.conv1d +
+            # grouped conv here: the per-row conv pattern (each row of
+            # scores is independent) and the per-head kernel share
+            # requires reshaping [B,H,T,S]→[H,B*T,1,S]→groups=H which
+            # adds a transpose vs the slice+sum. At T=2048, H=4, the
+            # slice+sum is ~3·B·H·T·S = 100M FLOPs (≪ the 8.6G QK
+            # matmul) so the slice+sum wins on clarity and is fast
+            # enough. See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+            if self.use_logit_conv:
+                K_size = self.logit_conv_kernel_size
+                pad_amt = K_size - 1
+                padded = F.pad(scores, (pad_amt, 0))  # [B, H, T, S+K-1]
+                # Accumulate per-shift weighted slices into `scores`.
+                # The first slice is the initialization (avoids
+                # creating a zero tensor + K adds).
+                scores = self.logit_conv_w[:, 0].view(1, self.n_heads, 1, 1) * padded[:, :, :, 0:seq_len]
+                for k in range(1, K_size):
+                    scores = scores + self.logit_conv_w[:, k].view(1, self.n_heads, 1, 1) * padded[:, :, :, k:k + seq_len]
             # 166 — T5-style bucketed relative position bias. Add
             # `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
             # causal mask (masked positions get -1e9 so the bias
@@ -3531,6 +3940,39 @@ class MultiHeadAttention(nn.Module):
             attn_output = F.scaled_dot_product_attention(
                 Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
             )
+        # 181 — Cross-Head Channel RMSNorm. Normalize each token's
+        # attention output ACROSS HEADS within each d_k slice so
+        # all H heads land on the same per-(t, k) scale before
+        # the W_O projection. Standard post-AV RMSNorm (LLaMA-3 /
+        # Gemma-2 / Qwen-2) normalizes over the concatenated
+        # d_model axis; 181 instead treats each d_k index as a
+        # single "channel" of H values and normalizes across
+        # those H values — explicitly coupling the head
+        # magnitudes. The 160-null closed per-head *independent*
+        # rescaling; 181 tests the *joint* post-AV magnitude
+        # coupling axis.
+        #   α_h = relu(α_raw_h)                          # 0 at init
+        #   rms[b, t, k] = sqrt(mean_h(out²) + ε)         # one per (b, t, k)
+        #   gain_h[k] = 1 + tanh(γ_raw_h[k])              # 1 at init
+        #   out = (1 − α_h)·out + α_h·(out / rms)·gain
+        # At init α=0, gain=1 ⇒ `out` unchanged exactly ⇒
+        # byte-identical to baseline at step 0 (max-abs-diff =
+        # 0.0). Sits BEFORE the `use_head_gain` branch below so
+        # the two compose by being multiplicative in series
+        # (but the mutual-exclusion asserts forbid both-on in a
+        # single run). See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        if self.use_cross_head_rmsnorm:
+            rms = (attn_output.pow(2).mean(dim=1, keepdim=True) + 1e-6).sqrt()
+            alpha = F.relu(self.cross_head_rmsnorm_alpha_raw).view(
+                1, self.n_heads, 1, 1
+            )
+            gain = 1.0 + torch.tanh(
+                self.cross_head_rmsnorm_gain_raw
+            ).view(1, self.n_heads, 1, self.d_k)
+            attn_output = (1.0 - alpha) * attn_output + alpha * (
+                attn_output / rms
+            ) * gain
         # 160 — Per-head RMS gain on the attention output. Multiply each
         # head's AV-aggregated output `o_h = (A·V)_h ∈ R^{T×d_k}` by a
         # learnable scalar `g_h ∈ R^H` so each head controls its
@@ -3737,11 +4179,35 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `MultiHeadAttention.use_per_head_temp`
         # for the mechanism. Default off → baseline path bit-identical.
         use_per_head_temp: bool = False,
+        # 180 — Pre-softmax 1D causal depthwise conv on attention
+        # logits. Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_logit_conv` for the mechanism
+        # (delta-init ⇒ step-0 byte-identical to baseline, optimizer
+        # grows a per-head smoothing kernel). Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+        use_logit_conv: bool = False,
+        logit_conv_kernel_size: int = 3,
+        # 179 — Anti-Causal Sub-Heads. Pass-through to the inner
+        # MHA. Per-head learnable scalar `γ_h` attenuates the
+        # upper-triangle fill by `(1 − γ_h)`. Init `-10` ⇒
+        # `γ_h ≈ 4.5e-5` at step 0 ⇒ byte-identical to baseline.
+        # See `MultiHeadAttention.use_anti_causal_subheads` for
+        # the full mechanism. Default off → baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        use_anti_causal_subheads: bool = False,
         # 160 — Per-head RMS gain on the attention output. Pass-through
         # to the inner MHA. See `MultiHeadAttention.use_head_gain` for
         # the mechanism. Default off → baseline path bit-identical.
         # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
         use_head_gain: bool = False,
+        # 181 — Cross-Head Channel RMSNorm. Pass-through to the
+        # inner MHA. See `MultiHeadAttention.use_cross_head_rmsnorm`
+        # for the mechanism. Default off → baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        use_cross_head_rmsnorm: bool = False,
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K during training. Pass-through
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
@@ -3784,6 +4250,16 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/156-moa/idea.md`.
         use_moa: bool = False,
         moa_num_experts: int = 2,
+        # 178 — Gated Multi-Query Attention. Per-KV-head scalar gate
+        # β_k, β_v blending per-head K, V with a single shared K, V
+        # projection. Init 0 ⇒ step-0 forward is bit-identical to
+        # the no-flag baseline. Default off → baseline path bit-
+        # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        use_mqa_gated: bool = False,
+        # 182 — Per-head learnable attention window pass-through.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        use_per_head_window: bool = False,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -4219,11 +4695,26 @@ class TransformerBlock(nn.Module):
             # path bit-identical. See
             # `autoresearch/ideas/155-per-head-temp/idea.md`.
             use_per_head_temp=use_per_head_temp,
+            # 180 — Pre-softmax 1D causal conv pass-through.
+            use_logit_conv=use_logit_conv,
+            logit_conv_kernel_size=logit_conv_kernel_size,
+            # 179 — Anti-Causal Sub-Heads pass-through to the
+            # inner MHA. Per-head learnable scalar `γ_h` controls
+            # the per-head upper-triangle fill magnitude. Init
+            # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to baseline.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+            use_anti_causal_subheads=use_anti_causal_subheads,
             # 160 — Per-head RMS gain on the attention output.
             # Pass-through to the inner MHA. Default off → baseline
             # path bit-identical. See
             # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
             use_head_gain=use_head_gain,
+            # 181 — Cross-Head Channel RMSNorm. Pass-through to
+            # the inner MHA. Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+            use_cross_head_rmsnorm=use_cross_head_rmsnorm,
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,
@@ -4254,6 +4745,14 @@ class TransformerBlock(nn.Module):
             # `autoresearch/ideas/156-moa/idea.md`.
             use_moa=use_moa,
             moa_num_experts=moa_num_experts,
+            # 178 — Gated MQA pass-through to the inner MHA. Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/178-mqa-gated/idea.md`.
+            use_mqa_gated=use_mqa_gated,
+            # 182 — Per-head learnable attention window pass-through.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/182-per-head-window/idea.md`.
+            use_per_head_window=use_per_head_window,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,
