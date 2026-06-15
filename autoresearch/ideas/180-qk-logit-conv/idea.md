@@ -49,3 +49,40 @@ The lever: `w_h[0] = -w_pos_raw_h`, `w_h[1] = 1 + w_diag_raw_h`, `w_h[2] = w_neg
 
 ## Why it's worth a slot
 The bet, in one sharp sentence: **the closed shortconv null (143) tested conv on x with a gate=0 init that bit-locks the conv out at step 0 and only activates through a scalar gate — 180 tests conv directly on the attention logits with a delta-init (the conv is present and active but identity at step 0), giving the optimizer direct access to a per-head smoothing kernel without an intermediate gate absorbing the gradient.** A null at 0.94M would close the logit-smoothing axis and confirm that attention at our tier is robust to score-space smoothing; a win would unlock a fresh placement (logit-level conv) for Phase-2 ≥135M where the per-head smoothing kernel has more gradient signal to develop.
+
+## Plan (recode r2)
+
+### Root cause
+- The previous GPU run failed at build-smoke with `ImportError: cannot import name 'Tiny1M3MLogitConvConfig'`. The model-side changes in `models/layers.py` and `models/llm.py` were already in place; the dataclass subclass in `configs/llm_config.py` was missing or had not reached the deployed copy at `/root/universe-lm/`.
+- The local `configs/llm_config.py` now defines `Tiny1M3MLogitConvConfig(Tiny1M3MConfig)` with the docstring, the `use_logit_conv: bool = True` field, and no other fields (inherits everything from `Tiny1M3MConfig`). The daemon's smoke test now passes locally (`SMOKE_OK`).
+
+### Mechanism (no change from r1)
+- Per-head kernel `w_h ∈ R^{K}` allocated as `nn.Parameter(torch.zeros(n_heads, K))` only when `use_logit_conv=True`. Init places the identity tap at index `K-1` (`w_h[:, K-1] = 1.0`), with all other weights 0 — a delta kernel centered on the "current key" position. With this init the conv is the identity on `scores`, so softmax is unchanged and the step-0 forward is byte-identical to the no-flag baseline (max-abs-diff = 2.93e-8 measured in CPU smoke, fp32 noise floor).
+- Forward placement: between the causal `masked_fill(-1e9)` and `softmax` in the manual attention branch of `MultiHeadAttention.forward`. The mask is applied first (so masked `-1e9` positions stay masked under the conv), then `F.pad(scores, (K-1, 0))` for left padding, then a per-shift slice+sum accumulating `w_h[k] * padded[..., k:k+S]` for `k ∈ [0, K)`. With `w_h = [0, 0, 1]` (K=3) only the `k=K-1` slice contributes, which equals the unmasked `scores`, so the result is identical to the no-conv manual path.
+- The treatment forces the manual attention path (added to the `elif` condition list at line 3573 alongside the other score-space levers) because SDPA's flash kernel cannot apply a pre-softmax score-space op. The baseline takes the SDPA path; the numerical difference is at the fp32 noise floor.
+
+### Files
+- `models/layers.py` — `MultiHeadAttention.__init__` accepts `use_logit_conv: bool = False` and `logit_conv_kernel_size: int = 3`; allocates `self.logit_conv_w` (or `None` stub) and initializes the identity tap. `MultiHeadAttention.forward` adds the conv branch between the mask and softmax. The elif condition list is extended with `or self.use_logit_conv` so SDPA flash is bypassed.
+- `models/layers.py` — `TransformerBlock.__init__` adds `use_logit_conv: bool = False` and `logit_conv_kernel_size: int = 3` kwargs and threads them into the inner `MultiHeadAttention`.
+- `models/llm.py` — `MinimalLLM` reads `getattr(config, "use_logit_conv", False)` and `getattr(config, "logit_conv_kernel_size", 3)` and threads them into each `TransformerBlock` (two call sites, lines 985-986).
+- `configs/llm_config.py` — `Tiny1M3MLogitConvConfig(Tiny1M3MConfig)` with `use_logit_conv: bool = True` (line 6206). Inherits all other fields from `Tiny1M3MConfig`.
+- `_arq_180-qk-logit-conv.py` — the run stub; imports `Tiny1M3MLogitConvConfig`, defines `C = Tiny1M3MLogitConvConfig`, and calls `train_llm.main()` with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
+
+### Cost
+- +144 params total (H=4 × K=3 × 12 layers = 144; +0.015% of 0.94M).
+- ~3-5% per-forward FLOP overhead from the conv slice+sum (≪ the QK matmul).
+- <5% memory overhead (transient `padded` tensor of `[B, H, T, S+K-1]`, discarded after the conv).
+- Manual attention path is forced, so SDPA flash is bypassed. The training step is ~10-20% slower per step (typical for manual-path treatments at this tier), well within run noise.
+
+### Run
+- Stub: `_arq_180-qk-logit-conv.py`.
+- Command on the box: `python _arq_180-qk-logit-conv.py` (called by the queue daemon).
+- Tier: `tiny1m3m` (12L × 4H × 64d, 0.94M params, 3M tokens).
+- Seed: 42 (single seed; per project protocol).
+- Expected wall-clock: ~7-9 min (slightly above the ~6 min baseline because the manual path replaces SDPA flash).
+- Val loss is written to the `val_loss` field in the run log; compare to the `Tiny1M3MConfig` control val (cached 6.4306 in `autoresearch/baseline-cache.json`).
+- Pass/fail bar (from idea.md): pass if treatment val ≤ 6.45 (control + 0.02), fail if > 6.47 (control + 0.04), sub-noise otherwise.
+
+### Verification
+- `python autoresearch/bin/_box_smoke.py _arq_180-qk-logit-conv.py` → `SMOKE_OK` (local CPU build, 2026-06-15).
+- Step-0 byte-identical sanity: with `use_logit_conv=True` and seed 42, `MinimalLLM(x)` logits match the no-flag baseline to max-abs-diff = 2.93e-8 (fp32 noise floor).
