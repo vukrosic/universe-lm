@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T07:23:47Z","agent":"code-impl","idea":"183-pre-lm-head-rmsnorm","from":"planning","to":"needs-run","round":1,"note":"plan+code done; pre-LM-head RMSNorm stacked on 175-alibi champion; gated scale=0 ⇒ step-0 byte-identical"}
 {"ts":"2026-06-15T07:26:26Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T07:28:58Z","agent":"reset-button","idea":"183-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T07:48:52Z","agent":"daemon","idea":"183-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"repair: OK on box but UI stale-sweep clobbered to needs-run; restore so finalize judges it"}

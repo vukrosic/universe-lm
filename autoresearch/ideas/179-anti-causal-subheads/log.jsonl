@@ -29,3 +29,4 @@
 {"ts":"2026-06-15T07:23:38Z","agent":"human","idea":"179-anti-causal-subheads","from":"rejected","to":"needs-run","round":1,"note":"re-queue: was rejected on a code-sync bug (config class missing on box), not a real failure; box now has the code"}
 {"ts":"2026-06-15T07:26:26Z","agent":"daemon","idea":"179-anti-causal-subheads","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T07:28:58Z","agent":"reset-button","idea":"179-anti-causal-subheads","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T07:48:52Z","agent":"daemon","idea":"179-anti-causal-subheads","from":"needs-run","to":"running","round":1,"note":"repair: OK on box but UI stale-sweep clobbered to needs-run; restore so finalize judges it"}

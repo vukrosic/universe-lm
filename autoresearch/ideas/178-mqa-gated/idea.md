@@ -1,8 +1,8 @@
 ---
 id: 178-mqa-gated
-status: needs-run
+status: running
 round: 1
-updated: 2026-06-15T07:29:29Z
+updated: 2026-06-15T07:48:52Z
 transfer-risk: low
 plain: Test whether the per-head K/V gate moves off zero or collapses to zero — a probe, not a lever: if the optimizer never moves β, it mechanistically closes the GQA/MQA family for tiny tier with a causal explanation; if it does, the GQA arch-sweep's null was a fixed-group artifact, not a smooth-interp artifact.
 ---
