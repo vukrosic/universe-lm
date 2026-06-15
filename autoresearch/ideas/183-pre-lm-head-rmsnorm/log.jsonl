@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T07:15:05Z","agent":"implement-button","idea":"183-pre-lm-head-rmsnorm","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-15T07:15:30Z","agent":"taste","idea":"183-pre-lm-head-rmsnorm","from":"implementing","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:15:53Z","agent":"taste","idea":"183-pre-lm-head-rmsnorm","from":"tasting","to":"needs-review","round":1,"note":"accept: pre-LM-head norm is the most-adopted 2024-25 frontier arch convention (Gemma2/LLaMA3/Qwen2.5/OLMo2 all use it), distinct from 159 input-side DRIFT, scale-free mechanism with sharp win/null/DRIFT signal; cheap to run, carries to 135M"}
+{"ts":"2026-06-15T07:19:19Z","agent":"reviewer","idea":"183-pre-lm-head-rmsnorm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
