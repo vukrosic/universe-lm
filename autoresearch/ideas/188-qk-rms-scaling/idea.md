@@ -1,8 +1,8 @@
 ---
 id: 188-qk-rms-scaling
-status: needs-taste
+status: needs-repitch
 round: 1
-updated: 2026-06-15T08:30:00Z
+updated: 2026-06-15T08:21:04Z
 transfer-risk: low
 plain: Multiply the pre-softmax attention dot-product at every layer by one learned scalar (a per-block temperature), starting at 1 so step-0 is byte-identical to the baseline.
 ---

@@ -1,8 +1,8 @@
 ---
 id: 204-cross-block-attn-score-share
-status: needs-taste
+status: needs-review
 round: 1
-updated: 2026-06-15T09:00:00Z
+updated: 2026-06-15T08:20:56Z
 transfer-risk: med
 plain: Blend the attention scores from the previous block with the current block's scores using a learnable per-block scalar (init 0 so step-0 is byte-identical), so each block can softly re-use the previous block's attention pattern.
 ---

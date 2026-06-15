@@ -1,8 +1,8 @@
 ---
 id: 196-block-residual-ema
-status: tasting
+status: rejected
 round: 1
-updated: 2026-06-15T08:20:08Z
+updated: 2026-06-15T08:20:50Z
 transfer-risk: low
 plain: Blend each block's residual stream with the previous block's residual stream using a learned per-block EMA coefficient (init so the contribution is 0 at step 0, byte-identical baseline).
 ---
