@@ -4,3 +4,4 @@
 {"ts":"2026-06-15T10:17:36Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691977m)"}
 {"ts":"2026-06-15T10:17:54Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T10:18:47Z","agent":"reset-button","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T10:20:54Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
