@@ -1,8 +1,8 @@
 ---
 id: 186-v-carry-block
-status: needs-recode
+status: needs-run
 round: 2
-updated: 2026-06-15T08:07:36Z
+updated: 2026-06-15T08:09:38Z
 transfer-risk: med
 plain: Let each attention head carry a small fraction of its own previous value vector forward in time (a learned per-head scalar, starting at 0 so step-0 is byte-identical), like a tiny recurrent filter on V.
 ---
@@ -66,14 +66,14 @@ The bet, in one sharp sentence: **154's WIN established the K/V rebase axis at 0
 - 012-gated-deltanet / 008-gated-deltanet (closed) — full linear attention with delta rule. 186 is a single learned scalar α_h, not a full delta rule. Different lever shape.
 - 004-retnet-retention (null) — RetNet's full retention mechanism. 186 is a single learned scalar α_h, not the full retention. Different lever shape.
 
-## Plan (recode r1)
+## Plan (recode r2)
 - **Files**:
-  - `configs/llm_config.py` — `use_v_carry_block: bool = False` already on `LLMConfig` (base). The `Tiny1M3MVCarryBlockConfig` subclass now extends **`Tiny1M3MLogitConvConfig`** (the current champion from `autoresearch/champion.json`) so the lever stacks on top of the 180 axis. `use_v_carry_block: bool = True` in the subclass.
+  - `configs/llm_config.py` — `use_v_carry_block: bool = False` already on `LLMConfig` (base). The `Tiny1M3MVCarryBlockConfig` subclass now extends **`Tiny1M3MAlibiConfig`** — the actual current champion from `autoresearch/champion.json` (val 6.2403, line 4-5). The earlier r1 draft referenced `Tiny1M3MLogitConvConfig`, but 180-qk-logit-conv was REVERTED as a causal-mask LEAK (val 0.984 ⇒ not a real win; see `autoresearch/closed.md:11` and `champion.json:rejected_promotions`), so it is NOT the champion — subclassing it would inherit the leak. `use_v_carry_block: bool = True` in the treatment subclass.
   - `models/layers.py` — `MultiHeadAttention(use_v_carry_block=False)` already threads through (allocates `self.v_carry_alphas = nn.Parameter(zeros(H))` only when flag on; the forward branch is gated so the param is never consumed when off).
   - `models/llm.py` — `self.use_v_carry_block = getattr(config, "use_v_carry_block", False)` already plumbs the flag through both `TransformerBlock` construction sites.
 - **Config flag**: `use_v_carry_block: bool = False` on `LLMConfig`; treatment class sets it `True`.
-- **Step-0 byte-identity**: with the flag OFF, the subclass is `Tiny1M3MLogitConvConfig(use_v_carry_block=False)` ⇒ parameter-for-parameter the same as the champion (949200 params) and `MinimalLLM` forward logits match the champion with `max_abs_diff == 0.0` (verified locally on seed 42).
+- **Step-0 byte-identity**: with the flag OFF, the subclass is `Tiny1M3MAlibiConfig(use_v_carry_block=False)` ⇒ parameter-for-parameter the same as the champion (949104 params) and `MinimalLLM` forward logits match the champion with `max_abs_diff == 0.0` (verified locally on seed 42 with `PYTHONPATH=. python3 autoresearch/bin/_box_smoke.py _arq_186-v-carry-block.py` → `SMOKE_OK`). With the flag ON, `v_carry_alphas` adds 48 scalars (4 heads × 12 layers) but is init to 0 ⇒ tanh(0)=0 ⇒ the recurrence collapses to identity ⇒ forward logits also match the champion exactly until the optimizer moves α off zero.
 - **Param count**: H=4, n_layers=12 ⇒ 48 scalars (+0.005% of 0.94M).
-- **Recode r1 fix**: previous run failed at `_box_smoke.py` with `ImportError: cannot import name 'Tiny1M3MVCarryBlockConfig'`. Root cause: subclass was missing. This recode adds the subclass (stacking on the 180 champion) and re-verifies that `MinimalLLM(C())` constructs on CPU (`SMOKE_OK`). Import path is `from configs.llm_config import Tiny1M3MVCarryBlockConfig`.
+- **Recode r2 fix**: r0/r1 failed at `_box_smoke.py` with `ImportError: cannot import name 'Tiny1M3MVCarryBlockConfig'` because the subclass was missing. This recode adds the subclass (stacking on the **175-alibi champion** — not the leaked 180 config), and re-verifies that `MinimalLLM(C())` constructs on CPU (`SMOKE_OK`). Import path is `from configs.llm_config import Tiny1M3MVCarryBlockConfig`.
 - **Run command**: daemon picks the idea up via `autoresearch/bin/queue-daemon.sh`; the arq stub is `_arq_186-v-carry-block.py` which references `Tiny1M3MVCarryBlockConfig` (no changes needed there).
-- **Final val readout**: daemon greps `Final Val Loss:` from `train_llm.py` stdout and judges against `autoresearch/baseline-cache.json` (val_mean = 6.3988 ± 0.04 on `5b8a7fea8963`); also compare to champion `Tiny1M3MLogitConvConfig` (val 0.984 in `autoresearch/champion.json`).
+- **Final val readout**: daemon greps `Final Val Loss:` from `train_llm.py` stdout and judges against `autoresearch/baseline-cache.json`; compare to champion `Tiny1M3MAlibiConfig` (val 6.2403 in `autoresearch/champion.json`). Pass bar ≤ ctrl − 0.005 (clears two-ctrl rule); null band |Δ| < 0.01; drift > +0.01.
