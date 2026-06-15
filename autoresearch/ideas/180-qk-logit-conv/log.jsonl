@@ -21,3 +21,4 @@
 {"ts":"2026-06-15T07:28:58Z","agent":"reset-button","idea":"180-qk-logit-conv","from":"running","to":"needs-run","round":3,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-15T07:49:05Z","agent":"daemon","idea":"180-qk-logit-conv","from":"needs-run","to":"running","round":3,"note":"repair: OK on box this batch; restore so finalize judges it"}
 {"ts":"2026-06-15T07:50:35Z","agent":"daemon","idea":"180-qk-logit-conv","from":"running","to":"done","round":3,"note":"WIN: trt=0.9840 vs champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ-5.2563)"}
+{"ts":"2026-06-15T07:54:29Z","agent":"daemon","idea":"180-qk-logit-conv","from":"done","to":"rejected","round":3,"note":"LEAK: val 0.984/acc 0.878 vs baseline 6.24 = broken causal mask, not a win; champion reverted to 175"}

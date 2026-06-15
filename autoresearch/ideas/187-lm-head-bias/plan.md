@@ -2,15 +2,15 @@
 
 ## Flag
 - `use_vocab_bias: bool = False` — default OFF
-- File: `configs/llm_config.py:545` (declaration on `LLMConfig` base, OH5 docstring block at lines 541-544). **Already wired** — this plan does not add a new LLMConfig field.
-- New subclass `Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig)` at `configs/llm_config.py:2497` (immediately after the 183 `Tiny1M3MPreLMHeadRMSNormConfig` subclass at line 2463, before the 147 DropConnect subclass at line 2497) with `use_vocab_bias: bool = True`. Stacks on the current ALiBi champion, matching the 184 / 183 subclass-on-champion pattern.
+- File: `configs/llm_config.py:559` (declaration on `LLMConfig` base, OH5 docstring block at lines 553-558). **Already wired** — this plan does not add a new LLMConfig field.
+- New subclass `Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig)` at `configs/llm_config.py:2512` (immediately after the 183 `Tiny1M3MPreLMHeadRMSNormConfig` subclass at line 2478, before the DropConnect subclass at line 2565) with `use_vocab_bias: bool = True`. Stacks on the current ALiBi champion, matching the 184 / 183 subclass-on-champion pattern.
 
 ## Change
 - `configs/llm_config.py`:
-  - **No new LLMConfig field.** `use_vocab_bias` already exists at L545.
-  - Add `Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig)` subclass with `use_vocab_bias: bool = True`, modeled after the 184 `Tiny1M3MLogitScaleConfig` and 183 `Tiny1M3MPreLMHeadRMSNormConfig` precedent subclasses.
+  - **No new LLMConfig field.** `use_vocab_bias` already exists at L559.
+  - `Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig)` subclass with `use_vocab_bias: bool = True` is in place at L2512-2561, modeled after the 184 `Tiny1M3MLogitScaleConfig` and 183 `Tiny1M3MPreLMHeadRMSNormConfig` precedent subclasses.
 - `models/llm.py`:
-  - **No model changes.** Allocation at L1311-1313 (`if self.use_vocab_bias: self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))`) and forward hook at L1883-1884 (`if self.use_vocab_bias: logits = logits + self.vocab_bias`) are already in place. OH5 VocabBias is fully wired.
+  - **No model changes.** Allocation at L1344-1346 (`self.use_vocab_bias = getattr(...) ; if self.use_vocab_bias: self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))`) and forward hook at L1915-1917 (`if self.use_vocab_bias: logits = logits + self.vocab_bias`) are already in place. OH5 VocabBias is fully wired.
 - `_arq_187-lm-head-bias.py` (repo root): `class C(Tiny1M3MAlibiLMHeadBiasConfig): pass`, calls `train_llm.main()` with the standard tiny1m3m / seed-42 args.
 
 ## Control
@@ -23,6 +23,20 @@
 - Params Δ: +49,152 (1 fp32 scalar per vocab token; `vocab_size = 49152` at `configs/llm_config.py:26`). +5.23% of 0.94M. Routes to AdamW under the existing 1-D-parameter rule.
 - FLOPs Δ: one fp32 add per (B, T, V) cell — negligible compute (plan row OH5 explicitly tags this "many params but trivial compute").
 - Memory Δ: 49,152 fp32 scalars = ~192 KB of param storage + ~192 KB of optimizer state (AdamW: m, v in fp32) — negligible.
+
+## Recode-fix (r1 → r2)
+- **Failure (r1)**: daemon's CPU build-smoke returned
+  `SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MAlibiLMHeadBiasConfig' from 'configs.llm_config'`
+  at 07:51:06Z. Root cause: the prior code-impl claimed "plan+code done" at 07:39:24Z but the
+  `Tiny1M3MAlibiLMHeadBiasConfig` subclass had not actually been appended to `configs/llm_config.py`
+  at that time — the config file was modified *after* the daemon ran its smoke check, so the
+  treatment class was absent on the box when the daemon tried to import `C`.
+- **Fix (r2)**: subclass `Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig): use_vocab_bias = True`
+  is now in place at `configs/llm_config.py:2512-2561`. `_box_smoke.py`-equivalent check passes
+  locally: `C = Tiny1M3MAlibiLMHeadBiasConfig()` constructs, `MinimalLLM(C())` builds on CPU with
+  `vocab_bias.shape = (49152,)` and `vocab_bias.abs().max() == 0.0` (init zeros, step-0 byte-identity).
+- **No flag or config moved**: only the missing class definition was added. The arq stub and
+  `run.json` are unchanged.
 
 ## Run
 - Command: `/venv/main/bin/python _arq_187-lm-head-bias.py` on the RTX 3060 box
