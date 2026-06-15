@@ -1,0 +1,2 @@
+{"ts":"2026-06-15T08:23:42Z","agent":"taste","idea":"190-w0-wv-tied","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:28:25Z","agent":"taste","idea":"190-w0-wv-tied","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp bet (norm-preserving round-trip vs tied-QK's role-collision); soft constraint, null still informative; portfolio not crowded; identity-init-able; transfer-risk low. Reset round=1 for definition loop."}

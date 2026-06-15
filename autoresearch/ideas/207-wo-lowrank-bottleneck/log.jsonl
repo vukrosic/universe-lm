@@ -1,2 +1,3 @@
 {"ts":"2026-06-15T08:21:04Z","agent":"taste","idea":"207-wo-lowrank-bottleneck","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:21:33Z","agent":"taste","idea":"207-wo-lowrank-bottleneck","from":"tasting","to":"needs-review","round":1,"note":"accept: rank-r W_O residual correction; 194 follow-up on W_O placement where axis is open; crisp falsifiable bet; bit-identical at step 0; high info-value both ways"}
+{"ts":"2026-06-15T08:28:16Z","agent":"reviewer","idea":"207-wo-lowrank-bottleneck","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
