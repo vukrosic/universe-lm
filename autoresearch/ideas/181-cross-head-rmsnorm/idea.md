@@ -1,8 +1,8 @@
 ---
 id: 181-cross-head-rmsnorm
-status: needs-review
+status: needs-revision
 round: 1
-updated: 2026-06-15T05:47:51Z
+updated: 2026-06-15T05:54:08Z
 transfer-risk: med
 plain: Normalize each token's attention output across heads (so all four heads land on the same scale) before mixing back into the residual stream, starting with the per-head gain at 1 so step-0 is byte-identical.
 ---

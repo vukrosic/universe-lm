@@ -1,1 +1,3 @@
 {"ts":"2026-06-15T05:47:51Z","agent":"taste","idea":"181-cross-head-rmsnorm","from":"needs-taste","to":"needs-review","round":1,"note":"accept: novel cross-head coupling axis, not closed by 160 (per-head gain) or 162/165 (QK pre-softmax); null is informative (closes post-AV family at 0.94M); mechanism + identity-init via tanh gate"}
+{"ts":"2026-06-15T05:54:01Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T05:54:08Z","agent":"reviewer","idea":"181-cross-head-rmsnorm","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise — gate-α canonicalization + plan section + pass-bar"}

@@ -9,3 +9,4 @@
 {"ts":"2026-06-14T00:49:17Z","agent":"runner","idea":"154-rebased-attn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (round 1, CACHED path, box 5b8a7fea8963 baseline 6.4394±0.04; re-queued after box refresh + ReLU2FeedForward patch)"}
 {"ts":"2026-06-14T01:10:12Z","agent":"reset-button","idea":"154-rebased-attn","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-14T01:19:02Z","agent":"runner","idea":"154-rebased-attn","from":"needs-run","to":"done","round":1,"note":"WIN: trt=2.9628 vs cached mean=6.4394±0.04 (Δ=-3.4766; record break); evidence.md written from box log 154-rebased-attn_52674.log"}
+{"ts":"2026-06-15T05:53:53Z","agent":"human","idea":"154-rebased-attn","from":"done","to":"needs-run","round":1,"note":"re-run on fresh split: val 2.96 vs 6.4 baseline is leak-level; confirm or retract"}

@@ -1,8 +1,8 @@
 ---
 id: 154-rebased-attn
-status: done
+status: needs-run
 round: 1
-updated: 2026-06-14T01:19:02Z
+updated: 2026-06-15T05:53:53Z
 transfer-risk: med
 plain: Project the keys and values through a small learned "rebase" matrix so attention can re-mix positions cheaply, like a soft lookup with a learned codebook.
 ---
