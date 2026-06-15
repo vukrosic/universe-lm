@@ -1,0 +1,15 @@
+{"ts":"2026-06-14T09:20:11Z","agent":"implement-button","idea":"170-swiglu-ffn","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T09:22:58Z","agent":"taste","idea":"170-swiglu-ffn","from":"implementing","to":"needs-taste","round":1,"note":"reset: prior implement claim left stale 'implementing' lock without saved artifact; running taste gate as instructed"}
+{"ts":"2026-06-14T09:23:06Z","agent":"taste","idea":"170-swiglu-ffn","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:23:22Z","agent":"taste","idea":"170-swiglu-ffn","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp gating-structure bet (Δval ~ -0.01..-0.04), mech vs HP, gate-zero-init is clean, not in closed axes (153 closed only FFN-activation-shape), low transfer risk (validated 7B-540B)"}
+{"ts":"2026-06-14T09:25:12Z","agent":"reviewer","idea":"170-swiglu-ffn","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:25:38Z","agent":"reviewer","idea":"170-swiglu-ffn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T09:26:42Z","agent":"code-impl","idea":"170-swiglu-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T09:27:34Z","agent":"implement-button","idea":"170-swiglu-ffn","from":"planning","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T09:29:43Z","agent":"code-impl","idea":"170-swiglu-ffn","from":"needs-run","to":"needs-run","round":1,"note":"plan+code done; gate zero-init fix re-applied after _init_weights"}
+{"ts":"2026-06-14T10:05:10Z","agent":"runner","idea":"170-swiglu-ffn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (170 stub + SwiGLUZeroInitFeedForward + plumbing synced to box; smoke MinimalLLM(CtrlConfig) and MinimalLLM(Tiny1M3MSwigluFFNConfig) both OK)"}
+{"ts":"2026-06-14T10:10:49Z","agent":"reset-button","idea":"170-swiglu-ffn","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T10:13:22Z","agent":"runner","idea":"170-swiglu-ffn","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux"}
+{"ts":"2026-06-14T10:14:53Z","agent":"reset-button","idea":"170-swiglu-ffn","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T10:24:14Z","agent":"run-button","idea":"170-swiglu-ffn","from":"needs-run","to":"running","round":1,"note":"claimed by Run-next"}
+{"ts":"2026-06-14T10:28:45Z","agent":"runner","idea":"170-swiglu-ffn","from":"running","to":"done","round":1,"note":"NULL: trt=6.4247 vs session ctrl mean 6.4417 (Δ=-0.0170); cache verdict NULL -0.020 (inside mean=6.4447±0.0488); train=6.3893 (right sign by ~0.05) but val inside noise band — same FFN-activation null pattern as 153-relu2-ffn; closes FFN-gating axis at 0.94M"}

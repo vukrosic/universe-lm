@@ -1,0 +1,15 @@
+{"ts":"2026-06-15T08:18:36Z","agent":"taste","idea":"191-token-attn-gain","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:19:11Z","agent":"taste","idea":"191-token-attn-gain","from":"tasting","to":"needs-review","round":1,"note":"accept: per-token granularity (T scalars/block) is a real axis distinct from closed 142 per-channel/160 per-head/176 V-pre-av — bit-identity at step 0, falsifiable bet (per-token escapes W_O absorption that 160 didn't), NULL still informative (closes post-AV family), transfer-risk low"}
+{"ts":"2026-06-15T08:22:04Z","agent":"reviewer","idea":"191-token-attn-gain","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:23:17Z","agent":"reviewer","idea":"191-token-attn-gain","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T08:29:14Z","agent":"code-impl","idea":"191-token-attn-gain","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:49:38Z","agent":"code-impl","idea":"191-token-attn-gain","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-15T08:51:02Z","agent":"daemon","idea":"191-token-attn-gain","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T08:51:08Z","agent":"daemon","idea":"191-token-attn-gain","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MTokenAttnGainConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T08:57:21Z","agent":"daemon","idea":"191-token-attn-gain","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T08:59:24Z","agent":"reset-button","idea":"191-token-attn-gain","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T09:03:47Z","agent":"daemon","idea":"191-token-attn-gain","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T09:11:15Z","agent":"daemon","idea":"191-token-attn-gain","from":"running","to":"done","round":1,"note":"NULL: trt=6.2681 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0278)"}
+{"ts":"2026-06-15T09:12:34Z","agent":"reset-button","idea":"191-token-attn-gain","from":"done","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T09:12:44Z","agent":"daemon","idea":"191-token-attn-gain","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T09:18:25Z","agent":"daemon","idea":"191-token-attn-gain","from":"running","to":"done","round":1,"note":"NULL: trt=6.2681 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2403±0.04 (Δ0.0278)"}

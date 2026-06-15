@@ -17,6 +17,21 @@ repo. The idea to implement is:
 > flag, **off by default**, and **byte-identical to the baseline at step 0**
 > (zero/identity init).
 
+> ## 🔴 THE BASELINE IS THE CHAMPION — always check `autoresearch/champion.json`
+> The baseline is **not** the bare model — it is the current **champion** (the
+> best architecture so far, the stack of every promoted win). Read
+> `autoresearch/champion.json` and use its `config_class` as your starting point:
+> - Your treatment config `C` **subclasses the champion's `config_class`** (e.g.
+>   `class C(Tiny1M3MAlibiConfig)`), **not** the bare base config — so your change
+>   stacks *on top of* the champion.
+> - "Byte-identical at step 0" and the control both mean **vs the champion**, not
+>   the bare model. With your flag off, the output must equal the champion's.
+> - If `champion.json` has an empty `stub`, fall back to the bare base config.
+>
+> This is how wins compound: each new idea = champion + one new lever. The daemon
+> judges you against the champion's `val` and, if you beat it, promotes you to the
+> new champion automatically.
+
 **Repo:** `/Users/vukrosic/my-life/llm-research-kit-scaling`
 
 Before you start: `git status` and `git diff` (another agent may be editing the
@@ -50,10 +65,9 @@ baseline path is untouched. Keep it minimal and < 200 LoC. Then confirm:
 - the flag toggles the behavior,
 - with the flag **off**, step-0 output matches the baseline.
 
-Follow the existing run convention in `prompts/runner.md` / `PIPELINE.md` so the
-experiment is ready to launch (don't necessarily run the full training here —
-just make it runnable and note the exact command in the `## Plan` section of
-`idea.md`).
+Follow the existing run convention in `PIPELINE.md` so the experiment is ready to
+launch (don't necessarily run the full training here — just make it runnable and
+note the exact command in the `## Plan` section of `idea.md`).
 
 ## Step 4 — Mark done, signal the app, and stop
 

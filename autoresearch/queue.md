@@ -14,8 +14,9 @@ human-readable view of it. Regenerate with
 
 Tracks which folder occupies which **GPU slot** — remote execution, *not* the
 pipeline `status` field. "Run state" below = idle/in-progress/done on the metal.
-Owned by the **runner** (`prompts/runner.md`): it fills/updates these rows as it
-launches and pulls. Raw results land in `remote-results/<date>-vast-<tier>/`.
+Owned by the **deterministic drain daemon** (`bin/queue-daemon.sh`): it
+fills/updates these rows as it launches and pulls. Raw results land in
+`remote-results/<date>-vast-<tier>/`.
 
 | Slot | Folder | Run | Run state |
 |---|---|---|---|

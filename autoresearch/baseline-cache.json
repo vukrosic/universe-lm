@@ -1,0 +1,47 @@
+{
+  "tier": "tiny1m3m",
+  "seed": 42,
+  "note": "Box-keyed baseline cache. See BASELINE-CACHE-DESIGN.md. Written only via bin/baseline.sh \u2014 never hand-edit. WIN iff treatment_val < val_mean - noise_band AND clears the idea's plan bar; NULL if inside val_mean +/- noise_band.",
+  "boxes": {
+    "5b8a7fea8963": {
+      "box_key": "5b8a7fea8963",
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "compute_cap": "8.6",
+      "driver": "580.159.03",
+      "commit": "unknown",
+      "n_measurements": 3,
+      "val_runs": [
+        6.4112,
+        6.3934,
+        6.3919
+      ],
+      "val_mean": 6.2403,
+      "val_std": 0.0088,
+      "noise_band": 0.04,
+      "measured_at": "2026-06-15T07:04:48Z",
+      "runs_since_measure": 0,
+      "source_results": "../remote-results/2026-06-14-vast-tiny1m3m/results.json",
+      "pinned": true
+    },
+    "619cf8059d37": {
+      "box_key": "619cf8059d37",
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "compute_cap": "",
+      "driver": "580.159.03",
+      "commit": "unknown",
+      "n_measurements": 3,
+      "val_runs": [
+        6.4112,
+        6.3934,
+        6.3919
+      ],
+      "val_mean": 6.2403,
+      "val_std": 0.0088,
+      "noise_band": 0.04,
+      "measured_at": "2026-06-15T07:04:48Z",
+      "runs_since_measure": 0,
+      "source_results": "../remote-results/2026-06-14-vast-tiny1m3m/results.json",
+      "pinned": true
+    }
+  }
+}

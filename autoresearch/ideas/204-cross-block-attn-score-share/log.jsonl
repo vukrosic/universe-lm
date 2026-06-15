@@ -1,0 +1,6 @@
+{"ts":"2026-06-15T08:20:30Z","agent":"taste","idea":"204-cross-block-attn-score-share","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:20:56Z","agent":"taste","idea":"204-cross-block-attn-score-share","from":"tasting","to":"needs-review","round":1,"note":"accept: last untested cross-block axis (scores vs V-WIN/Q-NULL/AV-NULL/proj-share-implementing); sharp bet, clean impl, high info value either way"}
+{"ts":"2026-06-15T08:22:28Z","agent":"reviewer","idea":"204-cross-block-attn-score-share","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:28:35Z","agent":"reviewer","idea":"204-cross-block-attn-score-share","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T08:32:46Z","agent":"code-impl","idea":"204-cross-block-attn-score-share","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:51:50Z","agent":"orchestrator","idea":"204-cross-block-attn-score-share","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (18m)"}

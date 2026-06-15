@@ -1,0 +1,13 @@
+# Taste log — 183 pre-lm-head-rmsnorm
+
+## r1 — 2026-06-15 — verdict: accept
+- **Leverage / transfer are real, not vibes.** Four independent frontier families (Gemma 2, LLaMA 3, Qwen 2.5, OLMo 2) all converged on the pre-LM-head norm at 0.5B–405B, and the mechanism (decouple LM-head input scale from residual-stream magnitude) is architecturally scale-free. If it binds at 0.94M, the recipe carries to 135M essentially for free. `transfer-risk: low` is honest.
+- **Information value is high in both directions.** A WIN would be a cheap + sharp lever we can stack on the 175-alibi-slopes champion (val 6.2403). A NULL inside the 0.04 noise band cleanly closes the *output-side* extra-norm axis distinct from 159's *input-side* DRIFT (+0.0712, `pre-block LN on embedding rescaled N(0,σ_c²) the factorized 0.94M embed produces`); a DRIFT in the same direction as 159 would broaden closure to "any extra LN/RMSNorm at this tier is a re-fit cost". Either way the A/B is informative — no "meh inconclusive" branch.
+- **Distinct from the in-repo prior art (defensive).** 181-cross-head-rmsnorm is per-head *inside* attention; the closed norm zoo (pnorm/manhattan/center/squash/clip/channelscale) modifies the *operation* of the existing norm; 017/111/116/130/142 are depth-conditional residual levers (all null at 12L); 016-qk-norm is pre-softmax. 183 is the *only* candidate that adds a new norm at a new *global output* location. Not a dupe.
+- **Step-0 lever is sound.** `gain=1, bias=0` ⇒ `RMSNorm(x) = x * rsqrt(mean(x²) + ε)`, not byte-identical but loss/gradient-equivalent at step 0 (the rescaling factor ≈ 1/σ per token is absorbed by the tied LM head's weight magnitudes). Matches the 175-alibi-slopes "step-0 ≈ baseline" pattern. No need for the `scale` gate-form; keep it simple.
+- **Niche fit is clean.** Mechanism (yes), identity-init-able (yes, gain=1, bias=0), trivial param cost (64 gain, 0.007% of 0.94M), single-line forward edit. Easy to run, easy to revert.
+- **Crisp bet (one sentence, in the idea):** "if the LM-head-conditioning benefit of the pre-LM-head norm — universal in 2024–2025 frontier LMs — can be captured at 0.94M, we'll see Δ < −0.005 vs the 175 champion inside the 0.04 noise band; a null inside band would close the output-side norm axis at this tier."
+- **Pass/fail bar is honest.** WIN bar `≤ ctrl − 0.005` matches the 175 WIN Δ of −0.1585 by a wide margin; NULL band `±0.01` is the standard pipeline rule; DRIFT = `> ctrl + 0.01` would be the 159-style re-fit-cost signal. Sub-noise is logged NULL per one-seed-only rule.
+- **Worth a slot.** Sharp bet, cheap run, clean null-vs-DRIFT signal distinct from 159, scale-free mechanism that ports to 135M.
+
+Routing: `needs-review` for the definition gate, `round=1`.

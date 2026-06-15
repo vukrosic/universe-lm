@@ -48,6 +48,19 @@ class LLMConfig:
     # #27 SmearGate: add a learned per-channel amount of the previous token's
     # embedding before the transformer stack. Causal, zero-init, costs d_model.
     use_smear_gate: bool = False
+    # 159 — Embedding pre-LayerNorm (LLaMA 3 / Gemma 2 / Mistral /
+    # Qwen 2.5 pattern). Apply a single `nn.LayerNorm(d_model)` on the
+    # scaled token embedding right before the first transformer block.
+    # Default off → baseline path bit-identical (the LN module is
+    # never built, the forward branch is never taken). When on, the
+    # LN params are init to `weight = std(x_post)`, `bias = mean(x_post)`
+    # (empirical, computed at construction) so `LN(x_post) ≈ x_post`
+    # at step 0 within fp32 rounding noise — the model starts as
+    # exactly the baseline residual stream and the LN earns its
+    # normalisation during training. Cost: 2·d_model params (128 at
+    # tiny1m3m — negligible). See
+    # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+    use_emb_layernorm: bool = False
     # #23 U-Net skips: add zero-init learned bridges from early block outputs to
     # mirrored late blocks. Helps deep narrow stacks preserve early lexical detail.
     use_unet_skips: bool = False
@@ -91,6 +104,23 @@ class LLMConfig:
     # Default off → baseline path bit-identical. See
     # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
     use_attn_logit_bias: bool = False
+    # 166 — T5-style bucketed relative position bias
+    # (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in
+    # BigBird, REALM, LongT5). Per-head learnable logit bias
+    # `rpe_bias ∈ R^{H × B}` added pre-softmax, indexed by
+    # `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max(B-1)`.
+    # B=32 (T5-XXL's spec default; clamped to ≥1 at construction).
+    # `rpe_bias = 0` init ⇒ `scores + 0` is bit-identical to the
+    # no-RPE baseline at step 0. Composes additively with RoPE /
+    # FIRE / CoPE / per-head-temp / per-head-logit-bias (all live
+    # on the score side). Forces the manual attention path so the
+    # bucket-indexed bias can't go through SDPA's flash kernel.
+    # Cost: H × B = 4 × 32 = 128 params/block at tiny1m3m
+    # (~+0.014% — negligible). Default off → baseline path bit-
+    # identical (no Parameter registered, no branch taken). See
+    # `autoresearch/ideas/166-t5-rpe/idea.md`.
+    use_t5_rpe: bool = False
+    t5_rpe_buckets: int = 32
     # 155 — Per-head learnable attention temperature
     # (PaLM 2 §arch, OLMo 2, Gemma 2). Replace the standard
     # `1/sqrt(d_k)` attention scale with a per-head learnable
@@ -106,6 +136,102 @@ class LLMConfig:
     # no branch taken). See
     # `autoresearch/ideas/155-per-head-temp/idea.md`.
     use_per_head_temp: bool = False
+    # 161 — Per-layer learnable attention temperature. Replace the
+    # standard `1/sqrt(d_k)` attention scale with a per-layer
+    # learnable scalar `τ_l ∈ R^{n_layers}` so the per-layer logit
+    # scale becomes `Q_h K_h^T * τ_l` (the same scale factor across
+    # all heads in a layer, but different across layers). Init
+    # `τ_l = 1/sqrt(d_k)` exactly ⇒ `Q_h K_h^T * (1/sqrt(d_k))`
+    # ≡ `Q_h K_h^T / sqrt(d_k)` (bit-identical to the standard
+    # pre-softmax scale) at step 0. Each layer can then adjust
+    # its own temperature — early layers can broaden attention,
+    # late layers can sharpen it. Cost: 1 scalar/layer
+    # (12 at tiny1m3m, total 12 — negligible). Forces the manual
+    # attention path so SDPA's flash/efficient backends don't
+    # perturb step-0 numerics. Distinct from `use_per_head_temp`
+    # (155): per-head varies WITHIN a layer (H scalars/layer),
+    # per-layer varies ACROSS layers (1 scalar/layer). The two
+    # are orthogonal axes. Default off → baseline path bit-
+    # identical (no Parameter registered, no branch taken). See
+    # `autoresearch/ideas/161-dyt-temp/idea.md`.
+    use_per_layer_temp: bool = False
+    # 188 — Per-block QK-rms scaling (a.k.a. per-block attention
+    # temperature, learned). One scalar `s_l ∈ R^1` per block,
+    # parameterized as `s_l = exp(s_param_l)` with `s_param_l`
+    # init 0 ⇒ `s_l = exp(0) = 1.0` exactly ⇒ `scores * s_l =
+    # scores` byte-identical to the baseline at step 0. The
+    # forward multiplies the pre-softmax `Q·K^T / sqrt(d_k)`
+    # scores by `s_l` BEFORE the causal mask + softmax so a
+    # learned `s_l` can sharpen (`> 1`) or flatten (`< 1`) the
+    # attention distribution for that block. Different from
+    # `use_per_layer_temp` (161 — not implemented in forward) and
+    # `use_per_head_temp` (155 — per-head within a block); 188
+    # is per-block (one scalar per MHA, shared across heads).
+    # Forces the manual attention path so SDPA's flash/efficient
+    # backends don't perturb step-0 numerics. Default off → no
+    # Parameter registered, no branch taken, baseline path
+    # bit-identical. See `autoresearch/ideas/188-qk-rms-scaling/
+    # idea.md`.
+    use_qk_rms_scaling: bool = False
+    # 160 — Per-head RMS gain on the attention output (Gemma 2 /
+    # Qwen 2.5). After the AV product and softmax aggregation, multiply
+    # each head's output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable
+    # scalar `g_h ∈ R^H` so each head controls the magnitude of its
+    # contribution to the residual stream without changing direction.
+    # Init `g_h = 1.0` exactly ⇒ `o_h *= 1 = o_h` byte-identical to
+    # baseline at step 0. Distinct from `use_attn_output_gate` (reparam
+    # `(1+g_h)` with g_h=0 init): that one starts at 1.0 but its
+    # magnitude reparam has the gradient concentrated in `g_h`; this
+    # one is a direct `g_h` multiplier so the magnitude *and*
+    # gradient are both `g_h`. Distinct from `use_layerscale`/
+    # `use_layer_scale`: those operate on the residual add after the
+    # O projection; this lever fires on the *head* dimension before
+    # the O projection, normalizing per-head output magnitudes
+    # independently of the residual stream. Cost: H scalars/layer
+    # (4 at tiny1m3m, total 48 — negligible). Default off → baseline
+    # path bit-identical (no Parameter registered, no branch taken).
+    # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+    use_head_gain: bool = False
+    # 181 — Cross-Head Channel RMSNorm (normalize attention output
+    # across the H head dim within each d_k slice, so all H heads
+    # land on the same per-(t, k) scale before the W_O projection).
+    # Per-head scalar gate `α_h = relu(α_raw_h)` (init `−1e-3` ⇒
+    # `relu(−1e-3) = 0` exactly ⇒ identity blend at step 0) and a
+    # per-(h, k) post-normalization gain
+    # `γ_h[k] = 1 + tanh(γ_raw_h[k])` (init 0 ⇒ γ=1 exactly at
+    # step 0). Mixed output:
+    # `out = (1 − α_h)·out + α_h·(out / rms)·γ_h` where
+    # `rms[b, t, k] = sqrt(mean_h(out[b, h, t, k]²) + ε)`. At init
+    # α=0, γ=1 ⇒ step-0 forward is byte-identical to baseline
+    # (max-abs-diff = 0.0). Distinct from 160 (per-head scalar
+    # gain, no cross-head coupling), 176 (V-pre-AV per-head
+    # RMSNorm, normalizes each head independently along d_k),
+    # 162/165 (pre-softmax Q/K RMSNorm). Cross-head coupling is a
+    # qualitatively different lever axis from any closed lever.
+    # Default off → no Parameter registered, no branch taken,
+    # baseline path bit-identical. See
+    # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+    use_cross_head_rmsnorm: bool = False
+    # 191 — Per-token attention output gain (Shleifer et al. 2021
+    # "NormFormer" / Touvron et al. 2021 "CaiT" class-attention
+    # gain, arXiv:2110.09423). After the AV product + softmax
+    # aggregation + merge-reshape, multiply the per-position
+    # attention output by a learnable per-position scalar
+    # `(1 + γ_t)` where `γ_t ∈ R^{T_max}` is shared across
+    # batch and the d_model axis. Init γ=0 ⇒ (1 + 0) = 1
+    # exactly ⇒ `attn * 1 = attn` byte-identical to baseline
+    # at step 0 (max-abs-diff = 0.0, algebraic identity).
+    # Sits BEFORE the W_O projection, alongside the post-merge
+    # `use_v_mix_conv` (163) and `use_av_carry` (168) sites.
+    # Per-token granularity (T_max=2048 scalars/block) is a
+    # different axis from the closed per-head (160: H=4
+    # scalars), per-channel (142: d_model=64 scalars), and
+    # per-(h, k) (181: H·d_k=64 scalars) levers. Cost: T_max
+    # scalars/block × 12 blocks = 24,576 params (+2.6% of
+    # 0.94M). Default off → no Parameter registered, no branch
+    # taken, baseline path bit-identical. See
+    # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+    use_token_attn_gain: bool = False
     # #107 Exclusive self-attn: subtract the component of the attention
     # output that lies along the current token's value vector. Zero-init
     # per-head coefficient → step-0 is baseline; default off keeps the
@@ -195,6 +321,19 @@ class LLMConfig:
     # path runs bit-identical to baseline at step 0. See
     # `autoresearch/ideas/153-relu2-ffn/idea.md`.
     use_relu2_ffn: bool = False
+    # 170 — SwiGLU FFN (Shazeer 2020, arXiv:2002.05202; LLaMA-family
+    # FFN). Drop-in replacement for the standard 2-projection FFN with
+    # a 3-projection gated linear unit: `y = down_proj(silu(W_gate·x)
+    # ⊙ (W_up·x))`. Built lazily as `SwiGLUZeroInitFeedForward` with
+    # `gate_proj.weight = 0` so at step 0 `silu(0) = 0` ⇒ FFN output is
+    # exactly 0 ⇒ the residual stream carries only the attention
+    # sub-block (a clean ReZero-style step 0). d_ff is scaled by the
+    # Shazeer 2/3 trick (`(2 * d_ff) // 3`) so total FFN param count
+    # matches the baseline to within ~0.4%. Default off → the new FFN
+    # class is never constructed and the standard `ffn_variant` cascade
+    # runs bit-identical to baseline. See
+    # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+    use_swiglu_ffn: bool = False
     # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style, Jiang
     # et al. 2020 arXiv:2008.02496; Woo et al. 2020). When True, each
     # block builds a `ConvFFN(d_model, kernel=k)` that applies a
@@ -210,6 +349,25 @@ class LLMConfig:
     # with k=3, +0.25%). See `autoresearch/ideas/157-conv-ffn/idea.md`.
     use_conv_ffn: bool = False
     conv_ffn_kernel: int = 3
+    # 163 — Post-Attention V-Mix Depthwise Convolution (Poli et al.
+    # "Hyena", 2023, arXiv:2302.10866). After the attention output
+    # is computed (post-SDPA, post-reshape [B,T,H,D]→[B,T,d_model],
+    # pre-W_O projection), apply a symmetric depthwise Conv1d on the
+    # time axis over the post-attention tensor. Conv weights are
+    # built as raw `nn.Parameter(zeros(d_model, 1, k))` with center
+    # tap = 1.0 set inline ⇒ the conv is a strict identity at step 0.
+    # Padding = k//2 symmetric (causal+future) — the attention
+    # sublayer has already integrated the full causal context, so the
+    # conv may look at both neighbors. `v_mix_conv_kernel` defaults to
+    # 3 (spec pin); valid range is odd integers ≥ 3. Third axis of
+    # the 3-axis locality test (143-shortconv pre-attn, 157-conv-ffn
+    # post-FFN, 163-v-mix-conv post-attention on V). Default off →
+    # baseline path bit-identical (no Parameter registered, no
+    # forward branch taken). Cost: n_layers × k × d_model extra
+    # params (12 × 3 × 64 = 2,304 at tiny1m3m, +0.25%). See
+    # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+    use_v_mix_conv: bool = False
+    v_mix_conv_kernel: int = 3
     # #49 QK-norm-post-RoPE: apply RMSNorm to Q,K AFTER RoPE (modded-
     # nanogpt variant) instead of the default BEFORE RoPE. Flag-only,
     # no extra params. The post-RoPE norm constrains post-RoPE Q,K
@@ -279,6 +437,22 @@ class LLMConfig:
     # Default off → softmax baseline path bit-identical. See
     # `autoresearch/ideas/022-softpick-attention/plan.md`.
     use_softpick: bool = False
+    # 173 — Entmax-1.5 sparse attention (Peters/Niculae/Martins,
+    # ACL 2019, arXiv:1905.09018). Replace `torch.softmax` in the
+    # manual attention path with the Tsallis α-entmax projection at
+    # α=1.5 (`p_i = max(0, 0.5·(s_i − λ))^2 / Σp`). Per-head
+    # learnable α_h is parameterized as
+    # `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`, init `α_raw_h = 0` ⇒
+    # `α_h = 1` ⇒ the helper short-circuits to `torch.softmax` for
+    # byte-identity at step 0. As training proceeds the optimizer can
+    # push `α_raw_h` positive to make the attention sparser
+    # (approaching sparsemax at α=2). Default off → baseline path
+    # bit-identical (no Parameter registered, no branch taken, no
+    # bisection in the forward). Distinct from 022-softpick (no
+    # params, fixed operator), 025-SSMax (per-head scaling on
+    # softmax, not a replacement), 020-FoX (post-softmax forget gate,
+    # softmax stays). See `autoresearch/ideas/173-entmax-15/idea.md`.
+    use_entmax: bool = False
     # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
     # per-head learnable scalar s_h that scales the attention logits
     # by `s_h · log(n)` pre-softmax, where n is the per-query causal
@@ -294,6 +468,22 @@ class LLMConfig:
     # bit-identical. See
     # `autoresearch/ideas/025-scalable-softmax/plan.md`.
     use_ssmax: bool = False
+    # 191 — ReLU Attention (Primer / Mercury-Style; So et al. 2021,
+    # arXiv:2109.08668). Replace the `torch.softmax` in the manual
+    # attention path with `F.relu(scores) / (scores.sum(-1, keepdim=True)
+    # + 1e-6)` — drop-in non-softmax operator that zeros negative
+    # logits and L1-normalizes the remaining positive scores to a
+    # convex combination. No parameters (ReLU+renormalize is purely
+    # functional). Default off → softmax baseline path bit-identical
+    # (the manual-path branch is not entered, the swap site is
+    # bypassed, no branch is taken). Forces the manual attention path
+    # (the post-normalize AV can't go through SDPA's flash kernel).
+    # When on at step 0 the distribution is *sparser* than softmax
+    # (half-zeros; the idea.md design sketch acknowledges this is a
+    # documented step-0 drift, not a bug — Primer validates the lever
+    # on language modeling at 100M-1.5B). See
+    # `autoresearch/ideas/191-relu-attn/idea.md`.
+    use_relu_attn: bool = False
     # 023 — Canon conv (Griffin / Mamba local-mixing, De/Smith/Fernando
     # 2024, arXiv:2402.19427; Allen-Zhu et al. Canon-layer line):
     # one causal depthwise Conv1d (kernel=3, left-pad 2) on the
@@ -343,6 +533,96 @@ class LLMConfig:
     # (no `nn.Parameter` created, no stash, no blend). See
     # `autoresearch/ideas/021-value-residual/plan.md`.
     use_value_residual: bool = False
+    # 167 — Output logit z-loss (PaLM-style `log(Z)²` penalty,
+    # Chowdhery et al. 2022, arXiv:2204.02311, §3.3). Auxiliary
+    # training loss term `λ · mean(log(Z)²)` where `Z =
+    # sum_v exp(logits_v)`, computed via
+    # `logits.logsumexp(dim=-1).pow(2).mean()`. Penalises logit
+    # *magnitude* so the largest logit cannot grow without bound
+    # and the softmax cannot collapse to a near-delta. Used in
+    # PaLM 540B / LLaMA 2 / OLMo 2 / Gemma with λ=1e-4. Train-only;
+    # eval stays plain CE (the term is added inside the train
+    # branch in `training/trainer.py:1599, 1702`). `use_z_loss=False`
+    # OR `z_loss_lambda=0.0` ⇒ term is exactly 0 ⇒ baseline forward
+    # + backward is bit-identical to no-z-loss. The trainer reads
+    # these via `getattr(config, "use_z_loss", False)` /
+    # `getattr(config, "z_loss_lambda", 0.0)` so adding them as
+    # proper LLMConfig fields with defaults `False` / `0.0` is
+    # drop-in compatible with existing configs that don't set
+    # them. The `Tiny1M3MZLossConfig` subclass sets them to
+    # `True` / `1e-4`. See `autoresearch/ideas/167-logit-zloss/`.
+    use_z_loss: bool = False
+    z_loss_lambda: float = 0.0
+    # 168 — AV-Output Carry (post-AV cross-block residual). For
+    # each block l ≥ 1, augment the post-SDPA/post-reshape/pre-W_O
+    # attention output with a learnable α_l-scaled carry from the
+    # previous block's same-stage tensor:
+    # `out_l = W_O @ (av_l + α_l · av_{l-1})`. `α_l` is a per-block
+    # 0-dim scalar (init 0 ⇒ identity blend at step 0). The carry
+    # is `.detach()`-ed (mirroring 021's V-residual contract). Site
+    # is post-merge-reshape (`[B, T, d_model]`), pre-W_O. Default
+    # off → baseline path bit-identical (no Parameter created, no
+    # stash, no blend). The third axis of the cross-block carry
+    # family (021 = V-side pre-AV, 164 = Q-side pre-AV, 168 = post-
+    # AV). See `autoresearch/ideas/168-av-output-carry/plan.md`.
+    use_av_output_carry: bool = False
+    # 186 — Within-Block V-Carry (per-head learnable V
+    # recurrence). Per-head scalar `α_h = tanh(v_carry_alphas_h)`
+    # (init 0 ⇒ `α_h = 0` exactly) drives a left-to-right
+    # recurrence on V: `V_new[0] = V[0];  V_new[t] = V[t] + α_h ·
+    # V_new[t-1]` for `t ≥ 1`. Closed form: `V_new[t] = Σ_{k=0}^{t}
+    # α_h^k V[t-k]`, a 1-pole IIR low-pass on V per head (the
+    # Katharopoulos 2020 linear-attention recurrence restricted to
+    # the V side). Implemented via depthwise `F.conv1d` along T.
+    # Local to each block (no cross-block stash). Default off ⇒
+    # baseline path bit-identical (α_h=0 ⇒ conv kernel is `[1, 0,
+    # …, 0]` ⇒ V is unchanged). Cost: H × n_layers = 48 scalars
+    # (+0.005% of 0.94M). See
+    # `autoresearch/ideas/186-v-carry-block/plan.md`.
+    use_v_carry_block: bool = False
+    # 188 — Cross-Block K/V Projection Sharing (Universal
+    # Transformers-style learnable parameter sharing across depth,
+    # Dehghani et al. ICLR 2019, arXiv:1807.03819). Each block's
+    # effective K, V projection is a learnable convex blend of its
+    # own (new) projection and the previous block's projection:
+    #   `W_K_eff = (1 − σ(α_K_raw)) · W_K_self + σ(α_K_raw) · W_K_prev`
+    # (same for V). Init `α_K_raw = α_V_raw = -10.0` ⇒
+    # `σ(-10) ≈ 4.5e-5` ⇒ the blend is numerically dominated by
+    # `W_K_self` at step 0, so the K, V projection is bit-
+    # identical (within fp32 noise) to the no-flag baseline.
+    # `prev_W_K` / `prev_W_V` are detached at the call site so
+    # the cross-block gradient is bounded to the 2 scalar α
+    # params per block. Default off → baseline path bit-
+    # identical. Cost: 2 scalars/block × 12 blocks = 24
+    # (+0.003% of 0.94M). See
+    # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+    use_cross_block_kv_share: bool = False
+    # 204 — Cross-Block Attention Score Sharing (Sukhbaatar et al.
+    # Memorizing Transformers ICLR 2022, arXiv:2203.08913 — within-
+    # model cross-block score-reuse lever). Each block's attention
+    # scores are blended with the previous block's pre-softmax
+    # scores via a learnable per-block scalar α:
+    #   `scores_b_eff = (1 − σ(α_raw)) · scores_b_self + σ(α_raw) · scores_{b-1}.detach()`
+    # `prev_block_scores` is the PRE-SOFTMAX logit
+    # `Q_{b-1} · K_{b-1}^T / √d_k` (NOT the post-softmax attention
+    # distribution — a different lever, see review.md finding B),
+    # `.detach()`-ed so gradients flow only through `α_raw` and
+    # the current block's Q, K (never through the previous
+    # block's QK computation, mirroring the 021 / 164 / 168
+    # cross-block detach contract). Init `α_raw = -10.0` (via
+    # `score_share_alpha_init`) ⇒ `σ(-10) ≈ 4.5e-5` ⇒
+    # `scores_eff ≈ scores_self` at step 0 (max-abs-diff across
+    # all 12 blocks < 1e-4; identity at fp32 noise of one extra
+    # multiply-add). Default off ⇒ baseline path bit-identical
+    # (forward branch gated on `use_cross_block_score_share`,
+    # `score_share_alpha_raw` not registered, `_prev_block_scores`
+    # attribute never written). Forces the manual attention path
+    # (the score-blend can't go through SDPA's flash kernel).
+    # Cost: 1 scalar/block × 12 blocks = 12 α scalars (+0.001% of
+    # 0.94M). See
+    # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+    use_cross_block_score_share: bool = False
+    score_share_alpha_init: float = -10.0
     # #55 layer tying (ALBERT-style): when tie_layer_groups=N, every
     # group of N consecutive blocks shares weights. The model creates
     # n_layers // N unique blocks and the forward pass cycles through
@@ -374,6 +654,32 @@ class LLMConfig:
     # init = no-op at step 0. 1-D parameter of size vocab_size, routes to AdamW.
     # Logit op — flows into eval CE legitimately. Re-learns token frequency.
     use_vocab_bias: bool = False
+    # 184 — Learned Logit Scale (CLIP-style, Radford et al. 2021,
+    # arXiv:2103.00020). Single learned scalar `logit_scale_param`
+    # applied as `logits = logits * exp(logit_scale_param)`. Init 0 ⇒
+    # `exp(0) = 1.0` exactly in IEEE 754 ⇒ logits unchanged ⇒ step-0
+    # byte-identical to baseline. The exp-parameterization guarantees
+    # positivity without an explicit clamp. 1 scalar param, routes to
+    # AdamW. Default off → baseline path bit-identical. See
+    # `autoresearch/ideas/184-logit-scale/idea.md`.
+    use_logit_scale: bool = False
+    # 183 — Pre-LM-Head RMSNorm (Gemma 2 §2, LLaMA 3 §3.1, Qwen 2.5
+    # §2.3, OLMo 2 §2.2: a final RMSNorm right before the tied LM
+    # head). When on, the model builds an `nn.RMSNorm(d_model)` plus
+    # a scalar gate `pre_head_scale = nn.Parameter(torch.zeros(()))`
+    # and applies `x = (1 − scale) · x + scale · RMSNorm(x)` between
+    # `output_dropout` and `lm_head`. Init `scale = 0` ⇒ the mix is
+    # exactly `x` at step 0 (byte-identical to the no-flag baseline,
+    # including the dropout interaction — the dropout divides by
+    # `(1−p)` in expectation, and the gate is a strict no-op on
+    # both the forward and the backward graph). The optimizer grows
+    # `scale` toward `1` to engage the RMSNorm during training.
+    # Cost: 1 scalar (AdamW) + `d_model` gain weights (Muon) — 65
+    # extra params at tiny1m3m (~+0.007%, negligible). Default off
+    # ⇒ no module built, no parameter registered, baseline forward
+    # path byte-identical to the champion. See
+    # `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+    use_pre_lm_head_rmsnorm: bool = False
     # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
     # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When on,
     # replace the single output softmax with `n_mos_components` parallel
@@ -437,6 +743,24 @@ class LLMConfig:
     # the standard sqrt(d_model). Tests whether the standard
     # scaling is a hidden knob.
     embedding_scale: float = -1.0
+    # 194 — Embedding 1/sqrt(d_model) scaling (Primer-style,
+    # So et al. 2021, arXiv:2109.08668). When `True`, the
+    # `_embed_input` forward substitutes `1/sqrt(d_model)` for
+    # the standard `sqrt(d_model)` emb_scale (i.e. the residual
+    # stream input is scaled DOWN by 1/d_model relative to the
+    # baseline). The lever is forward-time / init-time only —
+    # 0 new parameters, the magnitude rescaling is computed
+    # deterministically from `d_model`. Step-0 loss is
+    # approximately the same as the baseline (the initial
+    # Kaiming-init LM-head produces near-uniform logits
+    # regardless of the input scale, so cross-entropy on
+    # random labels is ~log(vocab_size) in both cases), but
+    # the gradient signal is different (a smaller-magnitude
+    # residual stream ⇒ flatter softmax ⇒ more uniform
+    # gradient across vocab tokens). `False` ⇒ the existing
+    # emb_scale path is bit-identical to the baseline. See
+    # `autoresearch/ideas/194-embed-sqrt-d/idea.md`.
+    use_embed_sqrt_d_scaling: bool = False
     # #77 Q/K dim ratio: by default Q and K have the same dim
     # (d_k). When set != 1.0, K is widened to d_k * qk_k_ratio.
     # Tests whether asymmetric Q/K dims change dynamics.
@@ -498,6 +822,23 @@ class LLMConfig:
     # residual, instead of running sequentially.
     use_multiscale_heads: bool = False
     use_parallel_block: bool = False
+    # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax normalization). Apply
+    # RMSNorm to Q only, leave K raw. nn.RMSNorm weight=1, bias=0 init
+    # ⇒ step-0 ≡ RMSNorm-rescaled Q (spec-allowed fp32 max-abs-diff < 1e-3
+    # tolerance, same trade-off as 159-emb-layernorm). Default off ⇒ no
+    # module built, baseline path bit-identical. See
+    # autoresearch/ideas/162-q-only-norm/idea.md.
+    use_q_only_norm: bool = False
+    # 165 — K-Only RMSNorm (asymmetric QK pre-softmax normalization,
+    # K-side). Apply RMSNorm to K only, leave Q raw. nn.RMSNorm
+    # weight=1, bias=0 init ⇒ step-0 ≡ RMSNorm-rescaled K (spec-allowed
+    # fp32 max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-
+    # layernorm, 162-q-only-norm). Default off ⇒ no module built,
+    # baseline path bit-identical. The K-mirror of 162 — together with
+    # 016 (symmetric) and 162 (Q-only), the three levers form a clean
+    # 3-way orthogonal attribution test for the 016 WIN. See
+    # autoresearch/ideas/165-k-only-norm/idea.md.
+    use_k_only_norm: bool = False
     # #99 Attention sink slot (softmax-off-by-one): append a zero K/V the query
     # can attend to, so it isn't forced to dump probability on a real token.
     use_attn_sink: bool = False
@@ -582,6 +923,73 @@ class LLMConfig:
     use_drop_key: bool = False
     drop_key_rate: float = 0.1
 
+    # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+    # Per-weight Bernoulli mask on the attention output projection
+    # matrix during training. Sample `M ∈ {0,1}^{d_model × d_model}`
+    # with `M_ij ~ Bernoulli(1-p)` and use `W_O_masked = W_O ⊙ M / (1-p)`
+    # (inverted-dropout rescale) for the forward pass. Distinct from
+    # DropKey (147) which masks K activations at the per-token level
+    # and from DropPath (111) which drops whole residual branches:
+    # 171 zeroes individual entries of W_O (per-weight, weight-level
+    # noise). The mask is sampled per forward pass and shared across
+    # all batch elements and positions. At eval (`self.training ==
+    # False`) and with `dropconnect_wo_rate=0.0` the branch is never
+    # taken ⇒ forward graph bit-identical to the no-DropConnect
+    # baseline. Default off ⇒ no Parameter, no branch, no RNG consumed,
+    # baseline path bit-identical. Default `dropconnect_wo_rate=0.1`
+    # matches Wan et al.'s vision-CIFAR/ImageNet sweet spot. See
+    # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+    use_dropconnect_wo: bool = False
+    dropconnect_wo_rate: float = 0.05
+    # 171 — DropConnect warmup schedule (steps). Linearly ramps the
+    # effective DropConnect rate from 0.0 to `dropconnect_wo_rate` over
+    # the first `dropconnect_wo_warmup_steps` training forwards, then
+    # holds at `dropconnect_wo_rate`. Step-0 effective rate = 0.0 ⇒ the
+    # mask branch is short-circuited before any RNG is consumed ⇒ the
+    # trt forward is bit-identical to baseline at step 0 (max-abs-diff
+    # = 0.0 across the full forward). The ramp gives the optimizer time
+    # to find a stable path through the noise before it reaches its full
+    # magnitude. Locked at 100 in `Tiny1M3MDropConnectWOConfig` (matches
+    # the `~92 remaining` step count after ramp at the 192-step
+    # tiny1m3m schedule). Default 100 to match the locked treatment
+    # (the trt subclass doesn't override). See
+    # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+    dropconnect_wo_warmup_steps: int = 100
+
+    # 207 — W_O Low-Rank Bottleneck (learnable rank-r residual
+    # correction on the W_O projection, Arora et al. "Linear
+    # Algebraic Structure of Word Senses" + LoRA-style trained-
+    # from-scratch low-rank factorization, Hu et al. 2021,
+    # arXiv:2106.09685). Replace W_O with
+    #   `W_O_eff = W_O + σ(α) · (W_O_A @ W_O_B)`
+    # where `W_O_A ∈ R^{d_model × r}`, `W_O_B ∈ R^{r × d_model}`
+    # (`r = wo_rank`, default 16), and `α` is a 0-dim learnable
+    # scalar (init `wo_lowrank_alpha_init`, default −10 ⇒
+    # `σ(α) ≈ 4.5e-5` at step 0). `W_O_A` is normal-init std=0.02
+    # (matches the existing `out_proj` / `qkvo_proj` init at
+    # line 6043); `W_O_B` is **zero-init** so the rank-r
+    # correction is exactly 0 at step 0 ⇒ `W_O_eff == W_O`
+    # bit-identical at step 0. As training proceeds, the
+    # optimizer can grow `W_O_B` and `α`, activating a learnable
+    # rank-r correction that soft-bottlenecks what each
+    # attention block can write to the residual stream.
+    # Composes with 171-DropConnect (the 171 mask runs first on
+    # `w_o`, the 207 correction adds after — both are
+    # joint-by-default and individually silent at step 0).
+    # Distinct from 197-tied-wo (sharing axis), 199-spectral-norm
+    # (Lipschitz axis), 203-pre-wo-se (pre-projection axis) —
+    # 207 is the **rank** axis on W_O. Trains A, B, and base
+    # jointly from scratch (NOT the LoRA-style frozen-base
+    # adaptation; see `autoresearch/ideas/207-wo-lowrank-bottleneck/
+    # idea.md` for the joint-training caveat). Default off → no
+    # Parameter registered, no branch taken, baseline path
+    # bit-identical. See
+    # `autoresearch/ideas/207-wo-lowrank-bottleneck/idea.md` /
+    # `plan.md`.
+    use_lowrank_wo: bool = False
+    wo_rank: int = 16
+    wo_lowrank_alpha_init: float = -10.0
+
     # 151 — RoV (Rotary Value Embeddings, gated). Apply the same rotary
     # position embedding already used on Q,K to the value vector V as
     # well, mixed in via a learnable per-block scalar gate
@@ -592,6 +1000,20 @@ class LLMConfig:
     # (the geometric lever is unavailable). Default off → baseline
     # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
     use_rov: bool = False
+    # 174 — xPos exponential decay on RoPE-magnitude (Sun et al. 2022,
+    # arXiv:2212.10554). One learnable per-layer scalar `xpos_gamma`
+    # (init 0) applied as a per-position decay on K after RoPE:
+    # `K = K · exp(-xpos_gamma · t)` (the paper's `g_t = (1 − γ)^t`,
+    # in `exp` form for numerical stability; at γ=0 both equal 1).
+    # With γ=0 (init) `K = K * 1 = K` exactly ⇒ attention scores are
+    # unchanged ⇒ forward is bit-identical to the 500k-base RoPE
+    # baseline at step 0 (max-abs-diff = 0.0). γ > 0 biases attention
+    # toward recent tokens; γ < 0 extends context. Decay applied to
+    # K only (not Q) so the score factor is `g_s = (1-γ)^s` on K's
+    # position. Default off → no Parameter created, no branch taken,
+    # baseline path bit-identical. See
+    # `autoresearch/ideas/174-xpos-decay/idea.md`.
+    use_xpos: bool = False
 
     # 156 — Mixture-of-Attentions (MoA). Run `E` parallel attention
     # computations per layer with separate K_e, V_e projections (Q
@@ -612,6 +1034,22 @@ class LLMConfig:
     use_moa: bool = False
     moa_num_experts: int = 2
 
+    # 174 — xPos exponential decay on RoPE (Sun et al. 2022,
+    # arXiv:2212.10554). One learnable per-layer scalar
+    # `xpos_gamma ∈ R` applied as `K *= exp(-xpos_gamma · t)` to
+    # the rotated K, so attention scores pick up a factor
+    # `g_s = (1-γ)^s` that shrinks with distance — biases
+    # attention toward recent tokens without altering Q.
+    # Init `xpos_gamma = 0` ⇒ `g_t = 1` for all t ⇒ forward is
+    # bit-identical to the 500k-base RoPE baseline at step 0
+    # (max-abs-diff = 0.0). The optimizer can dial γ positive
+    # (decay far-away attention) or negative (extend context).
+    # Default off → no parameter created, no branch taken,
+    # baseline path bit-identical. Cost when on: +1 scalar per
+    # MHA × n_layers = 12 scalars at tiny1m3m (~+0.001% of
+    # 0.94M). See `autoresearch/ideas/174-xpos-decay/idea.md`.
+    use_xpos: bool = False
+
     # 154 — Rebased Attention (Shi et al. 2024, arXiv:2407.06641):
     # pool K and V along the time axis with a fixed stride-R average
     # *before* the softmax, so attention reads from a learned set of R
@@ -629,6 +1067,21 @@ class LLMConfig:
     # See `autoresearch/ideas/154-rebased-attn/idea.md`.
     use_rebased_attn: bool = False
     rebase_stride: int = 8
+    # 185 — Static per-head learned K-rotation (learned orthogonal
+    # rebase of K only, position-independent). Each head has its own
+    # `R_h ∈ R^{d_k × d_k}` orthogonal matrix applied as `K_h =
+    # R_h @ K_h` pre-RoPE / pre-qk_norm, parametrized as a product of
+    # `d_k/2 = 8` 2D rotations on disjoint `(2i, 2i+1)` planes — one
+    # angle `θ_{h,i} ∈ R` per plane. Init `θ_{h,i} = 0` ⇒
+    # `R_h = I_{d_k}` exactly in fp32 ⇒ `K = R_h @ K = K` exactly
+    # ⇒ step-0 forward is byte-identical to the no-flag baseline.
+    # `R_h` orthogonal preserves norms and dot products, so QK^T
+    # magnitudes are unchanged (no softmax temperature shift) — same
+    # "preserve the dot product" property RoPE has for its position
+    # rotation and 154's fixed orthogonal rebase has. Default off ⇒
+    # no Parameter registered, no branch taken, baseline path bit-
+    # identical. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+    use_static_k_rotation: bool = False
 
     # 134 — Mega: Moving Average Equipped Gated Attention
     # (Ma et al. 2022, arXiv:2209.10655, ICLR 2023). Replaces the
@@ -1576,6 +2029,39 @@ class LLMConfig:
     # and the baseline path stays bit-identical. See
     # autoresearch/ideas/029-v-norm/plan.md.
     use_v_layernorm: bool = False
+    # 176 — Pre-AV V RMSNorm with per-head α-gate + per-head γ-gain
+    # (Wortsman et al. 2023, arXiv:2309.14322 V-norm primitive +
+    # per-head α-gating following the closed-016 family of
+    # pre-interaction normalizations). Apply RMSNorm to V along the
+    # `d_k` axis BEFORE the AV product, with a learnable per-head
+    # scalar `α_h = relu(α_raw_h)` (init 0 ⇒ identity gate at
+    # step 0) and a learnable per-head gain `γ_h ∈ R^{d_k}` (init
+    # 1.0 ⇒ identity gain at step 0). Output
+    # `V_out = (1 − α_h)·V + α_h·RMSNorm(V)·γ_h`. With α=0,γ=1 the
+    # lever is exactly identity ⇒ forward is byte-identical to
+    # baseline at step 0 (max-abs-diff = 0.0). Mutually exclusive
+    # with use_v_layernorm (closed-029 LayerNorm V) and the
+    # closed-#92 v_norm_type zoo (asserted at MHA forward).
+    # Default off → no Parameter is registered, no branch is taken,
+    # baseline path bit-identical. See
+    # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+    use_v_rmsnorm: bool = False
+    # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+    # top of 016's WIN). Keep 016's per-head `q_norm`/`k_norm` and
+    # add a single scalar `qk_norm_scale = nn.Parameter(torch.ones(()))`
+    # per MHA, init 1.0, applied AFTER the per-head norm and BEFORE
+    # the QK matmul: `Q ← Q · qk_norm_scale; K ← K · qk_norm_scale`
+    # (the MoA `extra_K` branch mirrors the same multiply). α_l = 1.0
+    # init ⇒ step-0 multiplicative gain is exactly the identity ⇒
+    # forward is byte-identical to 016's step-0 (max-abs-diff = 0.0).
+    # Mutually exclusive with use_q_only_norm / use_k_only_norm /
+    # use_qk_norm_post_rope (asserted at MHA forward). Default off →
+    # no `qk_norm_scale` Parameter is registered, no branch is taken,
+    # baseline path bit-identical. Mirrors NormFormer's per-layer
+    # attention-output gains (Shleifer et al. 2021) applied to the
+    # QK-norm output. See
+    # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+    use_qk_norm_depth: bool = False
 
     # 132 — Born-Again Networks: Self-Distillation with EMA Teacher
     # (Furlanello, Lipton, Tschiatschek, Prabhudesai, Urbach 2018,
@@ -1763,6 +2249,26 @@ class Tiny1M3MSWANConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MXPosConfig(Tiny1M3MConfig):
+    """Tiny1M3M with xPos exponential decay on RoPE (174, Sun et al. 2022).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Adds one
+    learnable per-layer scalar `xpos_gamma` (init 0) that multiplies
+    the rotated K by `exp(-xpos_gamma · t)` per position. At step 0
+    the decay is exactly 1, so the forward is bit-identical to the
+    500k-base RoPE baseline. The optimizer can then dial γ positive
+    (decay far-away attention) or negative (extend context). At
+    tiny1m3m this is the magnitude-decay lever on the locality-prior
+    family (orthogonal to 009-FIRE's additive PE, 172's per-head
+    frequency scale, 175's additive logit bias).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/174-xpos-decay/idea.md`.
+    """
+    use_xpos: bool = True
+
+
+@dataclass
 class Tiny1M3MShortConvConfig(Tiny1M3MConfig):
     """Tiny1M3M with pre-attention ShortConv (Hyena ShortConv variant).
 
@@ -1798,6 +2304,25 @@ class Tiny1M3MShortConvConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MEmbLayerNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with embedding pre-LayerNorm (159).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Adds a
+    single `nn.LayerNorm(d_model)` immediately after the scaled
+    token embedding, before the transformer stack — the LLaMA 3 /
+    Gemma 2 / Mistral / Qwen 2.5 pattern. Different from the closed
+    norm zoo (which normalizes *inside* each block); this normalizes
+    *once at the input*. The LN is init with
+    `weight = std(x_post)`, `bias = mean(x_post)` (empirical, computed
+    at construction) so `LN(x_post) ≈ x_post` at step 0 within fp32
+    rounding noise — baseline path bit-identical at step 0. Cost:
+    2·d_model params (128 at tiny1m3m, ~0.014% of the 0.94M model —
+    negligible). See `autoresearch/ideas/159-emb-layernorm/idea.md`.
+    """
+    use_emb_layernorm: bool = True
+
+
+@dataclass
 class Tiny1M3MReLU2FFNConfig(Tiny1M3MConfig):
     """Tiny1M3M with Squared-ReLU FFN activation (So et al. "Primer",
     arXiv:2109.08668, 2021; Mercury Coder / Inception Labs, 2024).
@@ -1820,6 +2345,38 @@ class Tiny1M3MReLU2FFNConfig(Tiny1M3MConfig):
     ≤ −0.01. See `autoresearch/ideas/153-relu2-ffn/idea.md`.
     """
     use_relu2_ffn: bool = True
+
+
+@dataclass
+class Tiny1M3MSwigluFFNConfig(Tiny1M3MConfig):
+    """Tiny1M3M with SwiGLU FFN (Shazeer 2020, arXiv:2002.05202;
+    LLaMA / Mistral / Qwen / Gemma / PaLM family).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4216
+    on the Vast V100 box). Replaces the FFN with a 3-projection gated
+    linear unit `y = down_proj(silu(W_gate·x) ⊙ (W_up·x))` via the
+    `use_swiglu_ffn` lever. The gate matrix is **zero-init** so at
+    step 0 `silu(0) = 0` ⇒ FFN output is exactly 0 ⇒ the residual
+    stream carries only the attention sub-block (a clean ReZero-style
+    step 0; the optimizer then grows the gate). d_ff is scaled by
+    the standard Shazeer 2/3 trick (`(2 * d_ff) // 3 = 170`) so total
+    FFN param count matches the baseline to within ~0.4% (32,640 vs
+    32,768). Default off → standard `ffn_variant` cascade runs
+    bit-identical to baseline; with `use_swiglu_ffn=True` the new
+    branch sits AHEAD of every other FFN-replacement flag so the
+    lever isn't silently shadowed.
+
+    Transfer-risk: low. SwiGLU is the standard FFN in 7B-540B open-
+    weight models (LLaMA 1/2/3, Mistral, Qwen, Gemma, OLMo, Falcon);
+    Shazeer's original paper validates at T5 1.1B-3B. Distinct from
+    153-relu2-ffn (which is an *activation-curvature* swap in a 2-
+    projection FFN — closed NULL at tiny1m3m); 170 is a *gating-
+    structure* swap with an explicit elementwise gate and a different
+    param count, so the closed-153 null does NOT close 170. NULL band
+    |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+    """
+    use_swiglu_ffn: bool = True
 
 
 @dataclass
@@ -1851,6 +2408,46 @@ class Tiny1M3MConvFFNConfig(Tiny1M3MConfig):
     """
     use_conv_ffn: bool = True
     conv_ffn_kernel: int = 3
+
+
+@dataclass
+class Tiny1M3MVMixConvConfig(Tiny1M3MConfig):
+    """Tiny1M3M with post-attention V-mix depthwise conv (163).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Each
+    block's MHA applies a symmetric depthwise Conv1d to the
+    post-attention tensor `[B, T, d_model]` BEFORE the W_O output
+    projection (post-SDPA, post-reshape, pre-W_O). Conv weights are
+    identity-initialized (center tap = 1, rest = 0) via a raw
+    `nn.Parameter(zeros(d_model, 1, k))` with the center-tap set
+    inline, so the conv is a strict identity at step 0 ⇒ the
+    block's attention output is bit-identical to baseline at step 0
+    (within fp32 rounding noise of the conv arithmetic).
+
+    Third axis of a deliberate 3-axis locality test: 143-shortconv
+    (pre-attention, closed borderline-WIN-rule), 157-conv-ffn
+    (post-FFN-activation, closed null), 163-v-mix-conv
+    (post-attention on V, this one). A WIN would localize the
+    locality prior to the post-softmax V axis; a NULL closes the
+    post-attention locality axis at 0.94M alongside the closed
+    pre-attention and post-FFN axes. Both outcomes are informative.
+
+    From Poli et al. "Hyena" (2023, arXiv:2302.10866) — the
+    Striped Hyena 7B published architecture uses gated convolutions
+    on V before the O projection; the lever is the *residual*
+    post-attn V-conv form (not the full Hyena replacement).
+    `v_mix_conv_kernel` defaults to 3 (spec pin); valid range is
+    odd integers ≥ 3. Default off → baseline path bit-identical.
+
+    @dataclass-decorated so `use_v_mix_conv`/`v_mix_conv_kernel` defaults
+    are properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+
+    NULL band |Δ| ≤ 0.01. DRIFT > +0.01. PASS ≤ −0.01. See
+    `autoresearch/ideas/163-v-mix-conv/idea.md`.
+    """
+    use_v_mix_conv: bool = True
+    v_mix_conv_kernel: int = 3
 
 
 @dataclass
@@ -1897,6 +2494,296 @@ class Tiny1M3MAttnLogitBiasConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MT5RPEConfig(Tiny1M3MConfig):
+    """Tiny1M3M with T5-style bucketed relative position bias
+    (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in BigBird,
+    REALM, LongT5). Add a per-head learnable logit bias
+    `rpe_bias ∈ R^{H × B}` (B=32 by default — T5-XXL's value,
+    clamped to ≥1 at construction) indexed by relative distance
+    `|i-j|` via the logarithmic bucket function
+    `b = floor(log2(|i-j|+1)).clamp_max(B-1)`. The bias is
+    initialized to zero so step-0 is bit-identical to the no-RPE
+    baseline.
+
+    Composes additively with RoPE / FIRE / CoPE / per-head-temp /
+    per-head-logit-bias (all live on the score side). Forces the
+    manual attention path so the bucket-indexed bias can't go
+    through SDPA's flash kernel. Cost: H × B = 4 × 32 = 128
+    params/block × 12 blocks = 1,536 params (+0.16% — negligible).
+
+    Bucket utilization at T ≤ 2048: only buckets 0..11 are ever
+    indexed (`floor(log2(2047+1))=11`); buckets 12..31 stay
+    zero-init forever — a no-op for tiny1m3m, but the spec default
+    keeps T5's parameter count unchanged for re-use at 512-token
+    seq_lens where the full range is exercised.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    cached mean 6.4346 ± 0.0458 after the 162 fresh re-cache).
+    NULL band |Δ| < 0.02 expected at tiny1m3m (box noise ≈ ±0.01
+    val loss at this tier; an effect < 0.02 is sub-noise and
+    inconclusive). PASS ≤ ctrl − 0.02.
+
+    See `autoresearch/ideas/166-t5-rpe/idea.md` and
+    `autoresearch/ideas/166-t5-rpe/plan.md` for the full
+    mechanism, lever-mode pin, and zero-init rationale.
+    """
+    use_t5_rpe: bool = True
+    t5_rpe_buckets: int = 32
+
+
+@dataclass
+class Tiny1M3MAlibiConfig(Tiny1M3MConfig):
+    """Tiny1M3M with learnable per-head ALiBi-style linear-distance
+    bias on attention scores (Press, Smith, Lewis, ICLR 2022,
+    arXiv:2108.12409; validated at BLOOM-176B by BigScience 2022).
+
+    Adds `score[b,h,t,s] -= m_h · (t − s)` pre-softmax for s ≤ t
+    (causal positions only; the rest are masked by the −1e9 causal
+    mask first so the bias has no effect on them). `m_h` is a
+    per-head `nn.Parameter(torch.zeros(self.n_heads))` — *direct
+    linear* parameterization init 0 ⇒ `m_h = 0` ⇒ bias is 0 ⇒
+    scores unchanged ⇒ softmax unchanged ⇒ AV unchanged ⇒ output
+    unchanged ⇒ **byte-identical to baseline at step 0**
+    (max-abs-diff = 0.0).
+
+    The published ALiBi paper uses *fixed* geometric-sequence slopes
+    `1/2^(8k/H)` and writes the bias as `−s_h·(i−j)`. The repo
+    implementation writes `+m_h·(i−j)` (sign-flipped; for causal
+    positions `(i−j) ≥ 0`, the effective bias is `−m_h·(i−j)`).
+    Since `m_h` is learnable and init 0, the optimizer can recover
+    ALiBi's decay behavior by learning `m_h > 0` — the sign
+    convention is irrelevant to the experiment's validity. The
+    fixed-geometric-slope recipe is not used here (we don't constrain
+    the per-head slope to a pre-set sequence); the lever is fully
+    unstructured per-head so the optimizer can pick any decay shape.
+
+    Forces the manual attention path (`models/layers.py:3096-3104`)
+    so the score-side bias can't go through SDPA's flash kernel.
+    Cost: 4 scalars/block × 12 blocks = 48 params (+0.005% — negligible).
+
+    Distinct from the closed *content-free* per-head scalars at 0.94M:
+    - 152-attn-logit-bias (NULL): free additive bias `b_h`; cancels in
+      softmax's per-row normalizer → mathematical null.
+    - 155-per-head-temp (NULL): scalar `τ_h` on Q·K/√d; identity at
+      init `τ_h=1/sqrt(d_k)`; the lever absorbed into the Q/K scales.
+    - 160-rms-gain-per-head (NULL): per-head RMS gain on V; identity
+      at init `g_h=1`.
+    - 166-t5-rpe (NULL): bucketed per-head bias indexed by
+      `floor(log2(|i-j|+1))`; identity at init `b=0`. *Closest to
+      175*, but bucketed-discrete vs 175's continuous-linear axis.
+    175 is the *position-distance-structured* member of the
+    per-head-attention-shape family — the bias is a function of
+    `(i−j)`, not a free per-head offset. The structured axis gives
+    the optimizer something to specialize (each head picks its own
+    decay rate) that the free-scalar levers lack.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    mean 6.4447±0.0244 over the box's 14 cached measurements).
+    Expected Δval ∈ [−0.005, −0.025] (modest, similar to other
+    locality-prior wins: 009-FIRE, 154-rebased-attn, 023-canon-conv).
+    NULL band |Δ| < 0.02 expected (sub-noise inconclusive).
+    PASS ≤ ctrl − 0.02.
+
+    See `autoresearch/ideas/175-alibi-slopes/idea.md` for the full
+    mechanism, lever-mode pin, and zero-init rationale.
+    """
+    use_alibi_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MLogitScaleConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M stacked on the 175-alibi champion with a learned global
+    logit temperature (idea 184, CLIP-style, Radford et al. 2021,
+    arXiv:2103.00020). Subclasses `Tiny1M3MAlibiConfig` so the lever
+    stacks on top of the current champion.
+
+    Adds one learnable scalar `logit_scale_param` (init 0). The
+    forward applies `logits = logits * exp(logit_scale_param)`. Init
+    0 ⇒ `exp(0) = 1.0` exactly ⇒ `logits * 1.0 = logits` exactly ⇒
+    **byte-identical to the 175-alibi champion at step 0**
+    (max-abs-diff = 0.0). The exp-parameterization guarantees
+    positivity without an explicit clamp.
+
+    Cost: 1 scalar (+0.0001% of 0.94M). 1-D parameter, routes to
+    AdamW under the existing rule.
+
+    Distinct from the existing `use_output_temp` (OH4) lever:
+    `use_output_temp` divides by τ (τ=1 init), this multiplies by
+    `exp(s)` (s=0 init). Mathematically equivalent parameterizations
+    of a learned temperature, but distinct flags / distinct
+    parameter shapes (0-D vs 1-D) / distinct init semantics
+    (mult-by-1 vs div-by-1). The two flags are independent and can
+    be composed.
+
+    A/B vs the 175-alibi champion (val 6.2403, seed 42). Expected
+    Δval ∈ [−0.01, +0.005] (per 167-logit-zloss null on a related
+    loss-shape lever at this tier, the prior on null is high).
+    WIN ≤ ctrl − 0.005. NULL |Δ| < 0.01. DRIFT > ctrl + 0.01.
+    """
+    use_logit_scale: bool = True
+
+
+@dataclass
+class Tiny1M3MPreLMHeadRMSNormConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with a pre-LM-Head RMSNorm (Gemma 2 / LLaMA 3 / Qwen
+    2.5 / OLMo 2 final-norm pattern).
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2403,
+    band 0.04). Stacks one `nn.RMSNorm(d_model)` plus a scalar gate
+    `pre_head_scale` between the final `output_dropout` and the
+    `lm_head`. The mix `x = (1 − scale) · x + scale · RMSNorm(x)`
+    is byte-identical to the no-flag champion at step 0 because
+    `scale = 0` at init (gated ReZero-style — same trick 130/144/175
+    use to keep step-0 bit-equality with the baseline). The
+    optimizer then grows `scale` toward `1` to engage the RMSNorm.
+
+    Architecture: 1 scalar (AdamW) + `d_model` gain weights (Muon) =
+    65 extra params at tiny1m3m (~+0.007% of 0.94M). Placed
+    *output-side* (after the residual stream, just before the LM
+    head) — distinct from 159-emb-layernorm (input-side LN, DRIFT
+    on the embedding distribution at 0.94M); 183 normalizes the
+    distribution the LM head reads from, which the head's tied
+    weight matrix then rescales by its own magnitude. The DRIFT
+    pattern from 159 (rescaling the input distribution the rest
+    of the network has to re-fit) doesn't apply on the output
+    side.
+
+    Transfer-risk: low. Validated at 0.5B-405B across four frontier
+    families (Gemma 2, LLaMA 3, Qwen 2.5, OLMo 2) per the idea spec.
+    Mechanism is scale-free (a single RMSNorm at a fixed
+    architectural location). See
+    `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+    """
+    use_pre_lm_head_rmsnorm: bool = True
+
+
+@dataclass
+class Tiny1M3MAlibiLMHeadBiasConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M stacked on the 175-alibi champion with a learnable
+    per-vocab additive LM-head bias (idea 187, OutputHead Batch 2 OH5
+    VocabBias, T5-style; see `docs/research/output_head/plan.md`).
+
+    Subclasses `Tiny1M3MAlibiConfig` so the lever stacks on top of
+    the current champion — matching the 184-logit-scale and
+    183-pre-LM-head-RMSNorm precedent subclasses. The OH5 lever
+    (`use_vocab_bias`, declared on `LLMConfig` at line 545 with the
+    OH5 docstring block at lines 541-544) is **already wired** in
+    `models/llm.py` — allocation at lines 1311-1313 and forward hook
+    at lines 1883-1884 — so this subclass only flips the flag.
+
+    Allocates `self.vocab_bias = nn.Parameter(torch.zeros(vocab_size))`
+    (49152 entries per `LLMConfig.vocab_size` at line 26). The
+    forward applies `logits = logits + vocab_bias` after softcap
+    (so it is a logit op that flows into eval CE legitimately per
+    the output_head plan's Reporting rule). Init 0 ⇒ `logits + 0 =
+    logits` exactly in fp32 ⇒ **byte-identical to the 175-alibi
+    champion at step 0** (max-abs-diff = 0.0). The gradient on
+    the bias is `softmax(logits) − onehot(target)`; non-zero at
+    step 0 because the model makes confident-but-wrong predictions
+    on the first batch, so the bias moves immediately.
+
+    Cost: vocab_size = 49152 fp32 scalars = +5.23% of 0.94M
+    (49,152 / 940k). 1-D parameter, routes to AdamW under the
+    existing rule. Compute: one fp32 add per (B, T, V) cell —
+    negligible; plan row OH5 explicitly tags this "many params
+    but trivial compute."
+
+    Distinct from the existing `use_output_temp` (OH4) and the
+    184 `use_logit_scale` levers — those are *shared* scalars (one
+    number multiplies/divides all logits); this is a *per-vocab*
+    additive shift (one number per vocab token). Mechanistically
+    orthogonal to 183 (pre-LM-head RMSNorm), 184 (logit
+    temperature), and the closed *attention-side* per-head-scalar
+    family (152, 155, 160, 166, 175). Architecturally located on
+    the LM head output, not on the attention scores.
+
+    A/B vs the 175-alibi champion (val 6.2403, band 0.04, seed
+    42, box `5b8a7fea8963`). Expected Δval ∈ [−0.005, −0.02]
+    per OH5 framing ("mostly re-learns token frequency"). WIN
+    ≤ ctrl − 0.005. NULL |Δ| < 0.01. DRIFT > ctrl + 0.01.
+
+    See `autoresearch/ideas/187-lm-head-bias/idea.md` for the full
+    mechanism, two-framing unification (output/input decoupling
+    vs learned unigram prior), and the step-0 byte-identity
+    verification contract.
+    """
+    use_vocab_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MDropConnectWOConfig(Tiny1M3MConfig):
+    """Tiny1M3M with DropConnect on W_O (Wan et al. 2013,
+    arXiv:1304.3174; Parmar et al. 2019 NeurIPS for ViT).
+
+    Per-weight Bernoulli mask on the attention output projection
+    matrix during training. Sample `M ∈ {0,1}^{d_model × d_model}`
+    with `M_ij ~ Bernoulli(1 - dropconnect_wo_rate)` and use
+    `W_O_masked = W_O ⊙ M / (1 - rate)` (inverted-dropout rescale
+    so the expected magnitude matches the un-masked baseline —
+    matches `F.dropout` and the 147-DropKey sibling's rescale).
+    The mask is sampled per forward pass and shared across all
+    batch elements and positions (one mask per layer per call, NOT
+    per-token). At eval (`self.training == False`) and with
+    `dropconnect_wo_rate=0.0` the branch is never taken ⇒ W_O is
+    used unchanged.
+
+    Distinct from the closed regularizer family at 0.94M:
+    - 147-dropkey (per-token K-mask, NULL): signal-space regularizer;
+      Q's gradient is computed against a clean K-derivative so the
+      optimizer can absorb the noise into Q's update.
+    - 111-drop-path (per-branch residual mask, NULL): the surviving
+      branches still receive clean gradients and the optimizer
+      simply up-weights the surviving paths.
+    - 115-rdrop (KL-divergence loss regularizer, NULL): distinct
+      mechanism (loss-shape, not stochastic masking).
+    DropConnect on W_O is a *parameter-space* regularizer — when
+    `W_O[i,j]` is zeroed, that same weight's gradient is computed
+    against a zeroed output, so the parameter receives a smaller-
+    magnitude update AND the gradient tells the optimizer to up-
+    weight surviving paths in W_O. The optimizer cannot route
+    around the noise by adjusting a *different* parameter, because
+    the noise is on the parameter being updated. W_O is a single
+    dense `d_model × d_model = 64 × 64 = 4096` matrix at
+    tiny1m3m — weight masking forces redundant paths in that
+    single matrix and prevents co-adaptation onto a narrow
+    subspace over the 3M-token training horizon.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4216 cached at 6.4394±0.04 / 6.4504±0.0558 for this box —
+    see `autoresearch/baseline-cache.json`). Default
+    `dropconnect_wo_rate=0.1` matches Wan et al.'s vision-CIFAR/
+    ImageNet sweet spot for dense projections. The lever is the
+    *presence* of the regularizer with a non-zero rate (and the
+    flat-rate implementation here is the simplest live test of
+    the per-weight-masking axis — a ramp schedule would be a
+    Phase-2 lever if 171-WIN clears the noise band).
+
+    NULL band |Δ| < 0.01 (expected — box noise ≈ ±0.01 val loss
+    at this tier and the regularizer family has 3 prior NULLs at
+    0.94M). PASS ≤ ctrl − 0.01. DRIFT > +0.01. A null outcome
+    completes the per-mask regularizer family exhaustion at this
+    tier (token-level 147 + path-level 111 + weight-level 171);
+    the remaining regularizer axes at this tier would need a
+    structurally new mechanism (e.g. SAM-style sharpness-seeking,
+    138-looksam, already NULL) or a different target (loss-shape,
+    closed at 066–070).
+
+    See `autoresearch/ideas/171-dropconnect-wo/idea.md` and
+    `autoresearch/ideas/171-dropconnect-wo/plan.md` for the full
+    mechanism, lever-mode pin, and zero-init rationale. The
+    `dropconnect_wo_warmup_steps` ramp implements the locked
+    treatment from `idea.md` "Treatment (locked)": effective rate
+    ramps 0.0 → 0.05 over the first 100 training forwards, then
+    holds at 0.05 for the remaining ~92 steps. Step-0 effective
+    rate = 0.0 ⇒ mask branch short-circuits ⇒ trt forward is
+    bit-identical to baseline at step 0.
+    """
+    use_dropconnect_wo: bool = True
+    dropconnect_wo_rate: float = 0.05
+    dropconnect_wo_warmup_steps: int = 100
+
+
+@dataclass
 class Tiny1M3MPerHeadTempConfig(Tiny1M3MConfig):
     """Tiny1M3M with per-head learnable attention temperature
     (PaLM 2 §arch, OLMo 2, Gemma 2). One learnable scalar `τ_h`
@@ -1923,6 +2810,79 @@ class Tiny1M3MPerHeadTempConfig(Tiny1M3MConfig):
     See `autoresearch/ideas/155-per-head-temp/idea.md`.
     """
     use_per_head_temp: bool = True
+
+
+@dataclass
+class Tiny1M3MPerLayerTempConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-layer learnable attention temperature (161).
+    One learnable scalar `τ_l` per layer (init `1/sqrt(d_k)`), so the
+    logit scale becomes `Q_h K_h^T * τ_l` — the SAME scale factor
+    across all heads in a layer, but different across layers. Each
+    layer can adjust its own attention sharpness during training.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Init `τ_l = 1/sqrt(d_k)` so the lever is byte-
+    identical to the baseline `1/sqrt(d_k)` scale at step 0
+    (no Parameter perturbation, no branch). Forces the manual
+    attention path so SDPA's flash/efficient backends don't
+    perturb step-0 numerics. Cost: 1 scalar/layer (12 at
+    tiny1m3m, total 12 — negligible).
+
+    Distinct from `use_per_head_temp` (155): per-head varies
+    WITHIN a layer (H scalars/layer, e.g. 4 at tiny1m3m); per-
+    layer varies ACROSS layers (1 scalar/layer). The two are
+    orthogonal axes — a future composition (per-head × per-
+    layer = H·L scalars) would test the full H·L grid.
+
+    Predictions: most likely a small wash (|Δ| < 0.005). The
+    `1/sqrt(d_k)` constant is the canonical default across
+    Transformers; Q/K gradients can absorb any per-layer scale
+    change. A clear win would tell us layers want different
+    attention temperatures at this scale (early broad, late
+    sharp); a clear null would close the per-layer temperature
+    axis and confirm per-block normalization absorbs the
+    variance.
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/161-dyt-temp/idea.md`.
+    """
+    use_per_layer_temp: bool = True
+
+
+@dataclass
+class Tiny1M3MHeadGainConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head RMS gain on the attention output
+    (Gemma 2 / Qwen 2.5). After the AV product and softmax
+    aggregation, multiply each head's output `o_h = (A·V)_h`
+    by a learnable scalar `g_h ∈ R^H`. Init `g_h = 1.0` exactly
+    ⇒ `o_h *= 1 = o_h` byte-identical to baseline at step 0.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    val 6.4306). Distinct from qk_norm (016, normalizes the
+    *pre*-softmax Q/K magnitudes) — this lever normalizes the
+    *post*-AV head-output magnitude instead, so it tests the
+    OTHER side of the magnitude axis. Distinct from
+    `use_attn_output_gate` (reparam `(1+g_h)` with g_h=0 init):
+    that one starts at 1.0 but its magnitude reparam has the
+    gradient concentrated in `g_h`; this one is a direct `g_h`
+    multiplier so the magnitude *and* gradient are both `g_h`.
+
+    Cost: H scalars/layer (4 at tiny1m3m, total 48 — negligible).
+
+    Prediction: small wash or marginal win (|Δ| < 0.01). The
+    post-AV magnitude axis is plausibly a redundant degree of
+    freedom given the W_O projection that follows, but heads
+    can still learn to attenuate noisy outputs. A clear win
+    would extend qk_norm's win on the pre-softmax magnitude
+    axis to the post-AV axis; a clear null would close the
+    post-AV magnitude axis. A drift (> +0.005) would mean
+    the lever is harmful at this scale (over-parameterized
+    reinit risk).
+
+    PASS ≤ ctrl − 0.005. NULL band |Δ| < 0.005. DRIFT > +0.005.
+    See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+    """
+    use_head_gain: bool = True
 
 
 @dataclass
@@ -2016,6 +2976,62 @@ class Tiny1M3MScaleNormConfig(Tiny1M3MConfig):
 
 
 @dataclass
+class Tiny1M3MPerHeadRopeConfig(Tiny1M3MConfig):
+    """Tiny1M3M with per-head learnable RoPE base frequency (RoFormer /
+    Su et al. 2024 arXiv:2104.09864, extended for head specialization).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306
+    cached at 6.4394±0.04 for this box — see
+    `autoresearch/baseline-cache.json`). Adds one learned scalar per
+    head — `per_head_rope_log[h]`, init 0 ⇒ `head_scale[h] = exp(0)
+    = 1.0` — applied as a multiplicative scale on top of the global
+    `rope_base` when building the rotary frequency spectrum
+    (`freqs *= head_scale[None, :, None, None]` at
+    `models/layers.py:2031-2034`). With the lever on AND the init
+    `per_head_rope_log = 0`, the forward is bit-identical to the
+    `rope_base=500000` baseline at step 0 (max-abs-diff = 0.0 across
+    the entire forward — `head_scale = 1.0` for every head, so the
+    per-head frequency spectrum matches the global-base spectrum
+    exactly).
+
+    The optimizer can then push each `head_scale[h]` away from 1.0:
+    values > 1 mean head `h` operates at a slightly higher-frequency
+    band (broader positional context), values < 1 mean a lower-
+    frequency band (more local). Total parameter overhead is
+    `n_heads = 4` scalars per block × `n_layers = 12` blocks = 48
+    scalars total (+0.005% of 0.94M params). The mechanism is
+    already wired (`MultiHeadAttention.use_per_head_rope_base` +
+    `MultiHeadAttention.per_head_rope_log` at `models/layers.py:1779-
+    1781`, use at `:2057-2060`); the implementation work here is
+    config-only — flag threading is already in place at
+    `models/llm.py` (`:508`/`:745`/`:1015`).
+
+    `rope_base` is pinned to 500000 (the closed-axes winner of the
+    global RoPE-base sweep, see `closed.md:22`). With
+    `use_per_head_rope_base=True` AND `rope_base=500000`, the trt
+    starts from the closed-winner 500k global base and adds per-head
+    frequency learning on top. The daemon ships the standard
+    `Tiny1M3MConfig` (rope_base=10000) as the ctrl; the A/B isolates
+    "trt (500k base + per-head learning) vs ctrl (10000 base)" —
+    which is the bet worth running at the parameter-golf tier (the
+    closed-winner base-sweep axis is settled; 172 tests whether
+    per-head learning is a real axis beyond the global base choice).
+
+    PASS ≤ ctrl − 0.01 (small/null band at tiny1m3m — gradient signal
+    per head is weak at 0.94M, so a clean null is expected; a small
+    WIN would justify a Phase-2 re-test at ≥135M). NULL band |Δ| <
+    0.01. DRIFT > +0.01. Family-fit: attention-positioning cluster
+    alongside 154-rebased-attn (WIN), 155-per-head-temp (null),
+    161-dyt-temp (null). Plan should report `head_scale[h]` values
+    at the end of training (per-head max, min, std) so a null with
+    scale spread ≥ ±0.3 is still informative for Phase-2. See
+    `autoresearch/ideas/172-per-head-rope-base/idea.md`.
+    """
+    use_per_head_rope_base: bool = True
+    rope_base: int = 500000
+
+
+@dataclass
 class Tiny1M3MVNormOnQKNormConfig(Tiny1M3MQKNormConfig):
     """Tiny1M3M with QK-Norm + V-Norm (per-head LayerNorm on V before AV).
 
@@ -2033,6 +3049,78 @@ class Tiny1M3MVNormOnQKNormConfig(Tiny1M3MQKNormConfig):
     autoresearch/ideas/029-v-norm/plan.md.
     """
     use_v_layernorm: bool = True
+
+
+@dataclass
+class Tiny1M3MVPreAVNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Pre-AV V RMSNorm (per-head α-gate + per-head γ-gain).
+
+    A/B vs the unmodded `Tiny1M3MConfig` ctrl (the daemon owns the
+    ctrl). Adds per-head RMSNorm to V along `d_k` BEFORE the AV
+    product, with a per-head scalar gate
+    `α_h = relu(α_raw_h)` (init 0 ⇒ identity blend at step 0)
+    and a per-head gain `γ_h ∈ R^{d_k}` (init 1.0 ⇒ identity gain
+    at step 0). Output
+    `V_out = (1 − α_h)·V + α_h·RMSNorm(V)·γ_h`.
+
+    Init α=0,γ=1 ⇒ step-0 forward is byte-identical to baseline
+    (max-abs-diff = 0.0 — algebraic identity, not fp32 tolerance).
+    The 016-qk-norm WIN at tiny1m3m is the closest scale evidence
+    (Δ −0.0138/−0.0185); 176 extends the pre-interaction-
+    normalization family to V, which has no symmetry partner in
+    the pre-AV stage (so the 162/165 single-side nulls are not a
+    counter-argument). The per-head α-gate lets the optimizer
+    learn *how much* V-norm to apply, parameter-light
+    (12 × 68 = 816 params, +0.087% of 0.94M).
+
+    PASS ≤ ctrl − 0.005 (i.e. ≤ 6.4397, mirrors the 016 bar and
+    clears the ±0.0488 noise band by ≥10× at one seed). NULL
+    band |Δ| < 0.005 (inside [6.4397, 6.4497]). DRIFT > +0.005
+    (≥ 6.4497). Sub-noise is INCONCLUSIVE on one seed — do not
+    re-run with extra seeds. See
+    `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+    """
+    use_v_rmsnorm: bool = True
+
+
+@dataclass
+class Tiny1M3MCrossHeadRMSNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Cross-Head Channel RMSNorm (181).
+
+    A/B vs the unmodded `Tiny1M3MConfig` ctrl (the daemon owns the
+    ctrl). For each token's attention output `out ∈ R^{B×H×T×d_k}`,
+    normalize ACROSS HEADS within each d_k slice so all H heads land
+    on the same per-(t, k) scale before the W_O projection. Per-head
+    scalar gate `α_h = relu(α_raw_h)` (init `−1e-3` ⇒ `relu(−1e-3)
+    = 0` exactly ⇒ identity blend at step 0) and per-(h, k) gain
+    `γ_h[k] = 1 + tanh(γ_raw_h[k])` (init 0 ⇒ γ=1 at step 0).
+    Output:
+      `out = (1 − α_h)·out + α_h·(out / rms)·γ_h`,
+      `rms[b, t, k] = sqrt(mean_h(out[b, h, t, k]²) + ε)`.
+
+    Init α=0, γ=1 ⇒ `out` unchanged exactly ⇒ step-0 forward is
+    byte-identical to baseline (max-abs-diff = 0.0 — algebraic
+    identity from `relu(−1e-3) = 0`, not fp32 tolerance).
+
+    Distinct from closed 160 (per-head scalar gain, no cross-head
+    coupling), 176 (V-pre-AV per-head RMSNorm normalizes each head
+    independently along d_k), 162/165 (pre-softmax Q/K RMSNorm).
+    Cross-head coupling is qualitatively new at this tier: the
+    160-null confirmed the per-head axis is exhausted; 181 probes
+    whether *joint* head-magnitude coupling is the binding
+    constraint. A null closes the post-AV-magnitude family at
+    0.94M; a win unlocks the cross-head coupling axis for Phase-2.
+
+    Cost: 12 blocks × 68 params = 816 params (+0.087% of 0.94M).
+    Same as 176.
+
+    PASS ≤ ctrl − 0.005 (i.e. ≤ 6.3938) AND clears the ±0.04
+    noise band by ≥8×. NULL band |Δ| < 0.005 (inside
+    [6.3938, 6.4038]). DRIFT > +0.005 (≥ 6.4038). Sub-noise is
+    INCONCLUSIVE on one seed — do not re-run with extra seeds.
+    See `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+    """
+    use_cross_head_rmsnorm: bool = True
 
 
 @dataclass
@@ -5069,3 +6157,939 @@ class Tiny1M3MGAUConfig(Tiny1M3MConfig):
     `autoresearch/ideas/158-gau/idea.md`.
     """
     use_gau: bool = True
+
+
+@dataclass
+class Tiny1M3MQOnlyNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Q-only RMSNorm (162 — asymmetric QK pre-softmax).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Apply
+    `nn.RMSNorm(d_head, eps=1e-6)` to Q only, leave K untouched, before
+    the QK matmul. nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the
+    lever rescales Q to unit RMS per head-dim (spec-allowed fp32
+    max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-layernorm).
+    Default off ⇒ baseline path bit-identical (no `q_only_norm`
+    module is registered, no forward branch taken).
+
+    The orthogonal ablation to 016-qk-norm (which norms BOTH Q and K).
+    Sharp 3-way test (with the K-only and QK-symmetric levers):
+    WIN ⇒ Q-side normalization is the binding axis; NULL ⇒ K-side
+    or symmetry was carrying 016's gain. Either outcome closes the
+    QK-norm-attribution axis at 0.94M.
+
+    Transfer-risk: low (RMSNorm family production-validated at LLaMA 3
+    / Qwen 2.5 / Mistral 1B+; Cohere Command-R validates asymmetric QK
+    at 35B+). See `autoresearch/ideas/162-q-only-norm/idea.md`.
+
+    @dataclass-decorated so `use_q_only_norm` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_q_only_norm: bool = True
+
+
+@dataclass
+class Tiny1M3MKOnlyNormConfig(Tiny1M3MConfig):
+    """Tiny1M3M with K-only RMSNorm (165 — asymmetric QK pre-softmax,
+    K-side).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`). Apply
+    `nn.RMSNorm(d_head, eps=1e-6)` to K only, leave Q untouched, before
+    the QK matmul. nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the
+    lever rescales K to unit RMS per head-dim (spec-allowed fp32
+    max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-layernorm
+    and 162-q-only-norm). Default off ⇒ baseline path bit-identical
+    (no `k_only_norm` module is registered, no forward branch taken).
+
+    The K-mirror of 162. Together with 162 (Q-only) and 016 (symmetric
+    QK-norm), the three levers form a clean 3-way orthogonal
+    attribution test for the 016 WIN at tiny1m3m:
+      - 016 (QK both)         ⇒ K-norm family helps, but binding axis unclear
+      - 162 (Q only)          ⇒ Q-side is the binding axis
+      - 165 (K only, this)    ⇒ K-side is the binding axis
+    WIN ⇒ K-side normalization is the binding axis; NULL ⇒ Q-side or
+    symmetry was carrying 016's gain. Either outcome closes the
+    QK-norm-attribution axis at 0.94M.
+
+    Transfer-risk: low (RMSNorm family production-validated at LLaMA 3
+    / Qwen 2.5 / Mistral 1B+; Cohere Command-R validates asymmetric QK
+    at 35B+). See `autoresearch/ideas/165-k-only-norm/idea.md`.
+
+    @dataclass-decorated so `use_k_only_norm` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_k_only_norm: bool = True
+
+
+@dataclass
+class Tiny1M3MQCarryConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Cross-Block Q Residual ("Q-Carry", 164).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    For each block l >= 1, augment the Q projection with a learnable
+    α_l-scaled carry from the previous block's MHA sublayer input
+    (LN(x_{l-1}), `.detach()`-ed):
+        `Q_l = W_Q(x_l) + α_l · W_Q(prev_x)`,
+    where `α_l = nn.Parameter(torch.zeros(()))` is a per-block 0-dim
+    scalar (init 0 ⇒ step-0 forward is bit-identical to no-carry
+    baseline within fp32 rounding noise of one extra multiply-add).
+    The stash is set on layer 0 (no previous block exists) and read
+    back by the model loop for layers 1..N-1.
+
+    Q-side dual of 021-value-residual (which carries V): tests
+    whether 021's WIN was V-specific or generalizes to "cross-block
+    residual-stream mixing." K, V, O projections are unchanged; the
+    carry is added before q_norm / RoPE so 016 and 162 still
+    rescale `Q + α·Q_carry` consistently. The Q projection of
+    `q_carry` uses the SAME W_Q slice that produced the current Q
+    (default/shared_kv/MLA: `qkvo_proj[:q_size]`; tied-QK:
+    `qk_proj[:q_size]`).
+
+    Cost: 12 scalars total (one per block, +0.001% of 0.94M). FLOPs:
+    +1 W_Q matmul per block, ~+11% per-step at tiny1m3m.
+
+    @dataclass-decorated so `use_q_carry` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_q_carry: bool = True
+
+
+@dataclass
+class Tiny1M3MZLossConfig(Tiny1M3MConfig):
+    """Tiny1M3M with PaLM-style output logit z-loss (167).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    ~6.43). Add the auxiliary penalty
+        L_z = λ · mean(log(Z)²),  Z = sum_v exp(logits_v)
+    to the training loss, where the `log(Z)` term is computed via
+    `logits.logsumexp(dim=-1)` (the partition function) and the
+    mean is over the `[B, T]` axis. Penalises logit *magnitude*
+    so the largest logit cannot grow without bound and the
+    softmax cannot collapse to a near-delta — the failure mode
+    PaLM 540B / LLaMA 2 / OLMo 2 / Gemma all guard against with
+    λ=1e-4 (Chowdhery et al. 2022, arXiv:2204.02311, §3.3).
+
+    Wiring is already present in `training/trainer.py:1464-1465,
+    1548-1552, 1654-1658, 1599, 1702, 1706` — the trainer reads
+    `getattr(config, "use_z_loss", False)` and
+    `getattr(config, "z_loss_lambda", 0.0)`, and adds
+    `z_loss_lambda * (logits.logsumexp(dim=-1) ** 2).mean()` to
+    the total train loss when both are positive. Default
+    `z_loss_lambda=0.0` ⇒ the term is exactly 0 ⇒ baseline
+    forward + backward is bit-identical to no-z-loss.
+
+    Step-0 identity (flag ON at λ=1e-4): the `logits.logsumexp`
+    reads `logits` produced by the standard head; at init with
+    ~N(0, σ²) logits, `log(Z) ≈ 0.5·log(V) + O(σ²)` where V is
+    vocab_size=49152 ⇒ `log(Z) ≈ 5.25`, `log(Z)² ≈ 27.5`,
+    `λ·log(Z)² ≈ 2.75e-3` per token per step — a small but
+    non-zero auxiliary loss. Train-only; eval stays plain CE
+    (the term is added inside the train branch and not in the
+    eval path). Logged per-step via `z_loss.detach().item()`
+    (`trainer.py:1706`) — `z_loss_val` is already in the
+    per-step log payload.
+
+    Distinct from the closed loss-shape axes 066-070 (label
+    smoothing, confidence penalty, unlikelihood, focal loss,
+    MTP head) which target *target/prediction* softening; this
+    one targets *logit magnitude*. Both branches of the
+    `if use_z_loss / else logits.new_zeros(())` ternary produce
+    a 0-dim scalar, so the `loss = ce_loss + ... + z_loss + ...`
+    accumulation at line 1599/1702 is unchanged in shape
+    whether the flag is off or on.
+
+    Transfer-risk: med — PaLM 540B / LLaMA 2 / OLMo 2 / Gemma
+    all use z-loss with λ=1e-4 (well-validated at scale), but
+    the failure mode (late-training logit explosion driving the
+    softmax toward a near-delta) is unlikely to fire at 0.94M —
+    model capacity caps logit growth. A win would suggest logit
+    magnitude *is* the binding constraint at 0.94M and z-loss
+    is a cheap regularizer; a null closes the z-loss axis at
+    this tier.
+
+    @dataclass-decorated so `z_loss_lambda` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+    """
+    use_z_loss: bool = True
+    z_loss_lambda: float = 1e-4
+
+
+@dataclass
+class Tiny1M3MAVOutputCarryConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Cross-Block AV-Output Carry (168).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    ~6.43). For each block l >= 1, augment the post-SDPA / post-
+    merge-reshape / pre-W_O attention output with a learnable
+    α_l-scaled carry from the previous block's same-stage tensor:
+        `out_l = W_O @ (av_l + α_l · av_{l-1})`,
+    where `α_l = nn.Parameter(torch.zeros(()))` is a per-block
+    0-dim scalar (init 0 ⇒ step-0 forward is bit-identical to no-
+    carry baseline within fp32 rounding noise of one extra
+    multiply-add). The stash is set on layer 0 (no previous block
+    exists) and read back by the model loop for layers 1..N-1;
+    the stash is `.detach()`-ed so the cross-block gradient is
+    structurally bounded to α_av's 0-dim scalar.
+
+    Third axis of the cross-block carry family (021 = V-side
+    pre-AV; 164 = Q-side pre-AV; 168 = AV-output-side, the only
+    axis that operates AFTER the AV product). Distinct from 021
+    and 164 in that the carry mixes on the attention output (post-
+    AV, pre-W_O) rather than the V/Q inputs. Distinct from
+    116-hyper-connections (residual stream mix, post-block) and
+    150-xlayer-feedback (full cross-block attention, rejected).
+    Site is BEFORE the W_O projection so 160/024/107/045 output-
+    side gates all run BEFORE the carry is added — those gates
+    multiply through the per-head `[B, H, T, d_k]` tensor above
+    the reshape; the carry sits on the post-reshape `[B, T,
+    d_model]` tensor. K, V projections unchanged.
+
+    Cost: 12 scalars total (one per block, +0.001% of 0.94M).
+    FLOPs: ~+1 elementwise add per block (negligible at tiny1m3m).
+
+    Transfer-risk: med — the lever is a structural cross-block
+    additive mix (residual-family, validated at 100M+ by ResNet
+    / Highway / mHC), but the AV-output-specific axis is not a
+    published production result at scale.
+
+    @dataclass-decorated so `use_av_output_carry` default is
+    properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_av_output_carry: bool = True
+
+
+@dataclass
+class Tiny1M3MQKNormDepthConfig(Tiny1M3MQKNormConfig):
+    """Tiny1M3M with Depth-Conditional QK-Norm (169 — per-block learnable
+    scale on top of the 016 WIN).
+
+    A/B vs the 016 WIN control (`Tiny1M3MQKNormConfig`, val 6.3906,
+    `closed.md:60`). Keeps 016's per-head `q_norm`/`k_norm` shape
+    intact and adds a single scalar `qk_norm_scale =
+    nn.Parameter(torch.ones(()))` per MHA (12 scalars total, one per
+    block × 12 blocks, +0.001% of 0.94M). The scalar is applied
+    AFTER the per-head norm and BEFORE the QK matmul:
+        `Q_l ← Q_l · qk_norm_scale; K_l ← K_l · qk_norm_scale`,
+    and on the MoA `extra_K` so all K tokens entering the QK matmul
+    see the same per-block normalization strength.
+
+    Step-0 identity: `qk_norm_scale = 1.0` init ⇒ `Q · 1 = Q` and
+    `K · 1 = K` exactly in fp32 ⇒ the multiplicative gain is exactly
+    the identity ⇒ forward is **byte-identical to 016's step-0**
+    (max-abs-diff = 0.0 vs the 016 control — no tolerance needed).
+    The optimizer can then learn per-block normalization strength.
+    The hypothesis: 016's WIN uses a *single shared* per-head scale;
+    different blocks may want different normalization strengths
+    (e.g. shallow blocks with broader attention vs deep blocks with
+    sharper attention). If 169-WIN > 016-WIN, the depth-conditional
+    axis is binding; if 169 ≈ 016, the per-head-shared scale is
+    sufficient at 0.94M.
+
+    Mutually exclusive with use_q_only_norm / use_k_only_norm /
+    use_qk_norm_post_rope (asserted at MHA forward) — combining any
+    of those with per-block scaling restructures the lever and
+    fails loud. Mirrors NormFormer's per-layer attention-output
+    gains (Shleifer et al. 2021, arXiv:2110.09456) applied to the
+    QK-norm output. Distinct from 016 (per-head-shared scale),
+    from 152/155 (per-head logit-side scalars — closed null), from
+    160 (post-AV per-head gain — closed null), and from 161 (per-
+    layer temperature — closed null because scale-prior fight).
+
+    Cost: +12 scalars total (+0.001% of 0.94M). FLOPs: ~+2
+    elementwise multiplies per block per forward (negligible at
+    tiny1m3m).
+
+    Transfer-risk: low — RMSNorm family production-validated at
+    LLaMA 3 / Qwen 2.5 / Mistral 1B+; NormFormer's per-layer gains
+    validated at 100M+ on long-document tasks (Shleifer et al.
+    2021). Per-block QK-norm gain is a narrow extension of a well-
+    tested primitive.
+
+    @dataclass-decorated so `use_qk_norm_depth` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`). Inherits `use_qk_layernorm=True` from
+    `Tiny1M3MQKNormConfig` (the 016 WIN shape).
+    """
+    use_qk_norm_depth: bool = True
+
+
+@dataclass
+class Tiny1M3MTalkingHeadsConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Talking-Heads Attention (177 — Shazeer et al. 2020,
+    arXiv:2003.02436). Cross-head H×H linear mix on **both** axes:
+    (1) pre-softmax attention scores (`talking_heads_M`, applied via
+    `einsum("bhst,hH->bHst", scores, M)` in
+    `MultiHeadAttention._apply_logit_op`); (2) post-softmax attention
+    output (`talking_heads_out_M`, applied via
+    `einsum("bhtd,hH->bHtd", attn_output, M_out)` in
+    `MultiHeadAttention._apply_output_op`). Both M and M_out are
+    `nn.Parameter(torch.eye(n_heads, n_heads))` ⇒ literal
+    `M @ x = x` and `M_out @ x = x` ⇒ forward is **byte-identical
+    to baseline at step 0** (max-abs-diff = 0.0 vs the cached ctrl,
+    no tolerance needed — it is a true mathematical identity, not
+    a near-identity with 1e-3 slack).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, cached
+    val ≈ 6.4306). The treatment is the **full paper form** (Q5 +
+    O1, both True). Expected Δval ∈ [-0.015, -0.035] per the idea
+    r2 verdict; **WIN** ≤ -0.025, **NULL** |Δ| < 0.015, **DRIFT**
+    |Δ| > 0.04 wrong-sign ⇒ reject the cross-head-mix family at
+    0.94M. Per the r1 closure: 152/155/160/166 are closed nulls on
+    the *per-head-scalar* axis (H params, H-dim affine subspace
+    that Q/K/W_O rescaling can absorb post-hoc — e.g.
+    `Q' = α_h^{1/2} Q`, `K' = α_h^{1/2} K`, or a per-head bias
+    injected into Q's channel direction). 177 is the *cross-head*
+    H×H mix: it spans an H²-dim subspace and the
+    `scores[b, h_new, t, s] = Σ_h M[h_new, h] · scores[b, h, t, s]`
+    coupling has **no Q/K reparameterization** — there is no
+    per-head rescale on Q or K that produces cross-head score
+    coupling. The optimizer must use the lever, not bypass it.
+    That is the specific failure mode of 152/155/160/166 that
+    177 explicitly avoids.
+
+    If 177-WIN: cross-head-mix family unlocks for Phase-2
+    (≥135M, H=12+, ~3× per-layer parameter count) where
+    talking-heads is well-validated at 220M+ translation.
+    If 177-NULL: closes the cross-head-mix sub-axis, completing
+    the per-head-attention-shape family closure (152, 155, 160,
+    166, 177 all null) — informs Phase-2 that the binding
+    bottleneck at 0.94M is not "head specialization" in any form,
+    and attention-shape gains must come from richer architectures
+    (MQA/GQA/MLA) rather than more head-shape tuning.
+
+    Cost: +2 × (H²) = +32 params per layer (H=4 ⇒ 16 each), × 12
+    layers = +384 params (+0.04% of 0.94M). FLOPs: two extra
+    einsum reductions per layer per forward (negligible at H=4).
+    Memory: ~1.5 KB. No new dependencies.
+
+    Note: `use_talking_heads_out` is *not* on `LLMConfig` itself —
+    `models/llm.py:685, 968` reads it via `getattr(config,
+    "use_talking_heads_out", False)`. The `@dataclass` decoration
+    here declares the field on the subclass; the default
+    `use_talking_heads_q = True` correctly overrides the parent's
+    `False` (the dataclass-inheritance pitfall documented in
+    `_arq_155-per-head-temp.py`).
+
+    See `autoresearch/ideas/177-talking-heads/{idea,plan}.md`.
+    """
+    use_talking_heads_q: bool = True
+    use_talking_heads_out: bool = True
+
+
+@dataclass
+class Tiny1M3MEntmaxConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Entmax-1.5 sparse attention (173 — Peters/Niculae/Martins,
+    ACL 2019, arXiv:1905.09018). Replaces `torch.softmax` in the manual
+    attention path with the Tsallis α-entmax projection at α=1.5
+    (`p_i = max(0, 0.5·(s_i − λ))^2 / Σp`). Per-head learnable α_h is
+    parameterized as `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`, init
+    `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the helper short-circuits to
+    `torch.softmax` for byte-identity at step 0. As training proceeds
+    the optimizer can push `α_raw_h` positive to make the attention
+    sparser (approaching sparsemax at α=2). Default off → baseline path
+    bit-identical (no Parameter registered, no branch taken, no
+    bisection in the forward). Distinct from 022-softpick (no params,
+    fixed operator), 025-SSMax (per-head scaling on softmax, not a
+    replacement), 020-FoX (post-softmax forget gate, softmax stays).
+
+    Step-0 ≡ baseline (exact, not approximate): the alpha=1 short-circuit
+    in `entmax_15` returns the literal `torch.softmax` output, so
+    max-abs-diff against the no-flag forward path is 0.0. Forces the
+    manual attention path (entmax-1.5's per-row projection can't go
+    through SDPA's flash kernel). Per-head granularity lives in the
+    param layout; the bisection averages α_h across heads for
+    vectorization (documented in `models/layers.py:160-163`).
+
+    A/B vs the plain tiny1m3m baseline. The treatment is the canonical
+    α=1.5 sweet spot (Lorena et al. 2023, arXiv:2307.13011). Expected
+    Δval ∈ [-0.005, -0.020] per the r1 plan, but the r2 committed bar
+    is tighter: **WIN** Δ ≤ −0.015, **DRIFT** Δ ≥ +0.05, anything inside
+    |Δ| < 0.01 is the in-band null (clean close; ~70% prior). The
+    lever is the only post-init lever in the softmax-shape family that
+    is *non-perturbative* (a single bit of α_h crossing 1.0 introduces
+    a hard-zero mass regime), so a null here is a stronger null than
+    the smooth siblings (152/155/160/162/165/166).
+
+    Cost: +H = +4 scalars (`entmax_alpha_raw ∈ R^H`) per MHA, × 12
+    layers = +48 params (+0.005% of 0.94M). FLOPs: bisection runs 25
+    fp32 iters per row; converges to tol=1e-7 in ~18-22 iters in
+    practice. End-to-end ~+10-15% per step at this tier (data loading
+    dominates; bisection is dwarfed). Memory: ~256 KB extra for the
+    bisection brackets per layer (dwarfed by activations).
+
+    See `autoresearch/ideas/173-entmax-15/{idea,plan}.md`.
+    """
+    use_entmax: bool = True
+
+
+@dataclass
+class Tiny1M3MLogitConvConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Pre-Softmax 1D Causal Depthwise Conv on QK^T (180).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Per-head kernel `w_h ∈ R^K` is convolved along the key axis of
+    the attention score tensor `[B, H, T, S]` between the causal
+    mask and softmax: `scores_conv[b, h, t, s] = Σ_{k=0..K-1} w_h[k] ·
+    scores[b, h, t, s+k]` (left-padded so the first valid input at
+    s=0 contributes to output s=0 via the center weight, giving a
+    strict causal form). K=3 by default. Init `w_h[:, K//2] = 1`,
+    all others 0 ⇒ delta kernel ⇒ conv is identity on scores ⇒
+    softmax unchanged ⇒ step-0 forward is byte-identical to baseline
+    (max-abs-diff = 0.0 — verified in the build smoke). The
+    optimizer can grow any kernel shape (smoothing, sharpening,
+    anything) over training.
+
+    Param count: H=4, K=3, n_layers=12 ⇒ 4·3 = 12 params/block, 144
+    total (+0.015% of 0.94M). Different from closed shortconv (143,
+    pre-attention conv on x) and from softmax-scalar levers (152,
+    155, 160, 166 — those are scalar per-head ops, not structural
+    smoothing). Tests whether a soft local-attention prior applied
+    directly to QK^T helps at our 0.94M tier.
+
+    Cost: +144 params total, ~5% per-forward FLOP overhead, <5%
+    memory overhead. Forces manual attention path (SDPA flash kernel
+    can't apply pre-softmax score-space ops). Default off → no
+    Parameter registered, no branch taken, baseline path bit-
+    identical. See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+    """
+    use_logit_conv: bool = True
+
+
+@dataclass
+class Tiny1M3MPerHeadWindowConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Per-Head Learnable Attention Window (182).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.3988 cached 2026-06-15 — see `autoresearch/baseline-cache.json`).
+    One learnable scalar `w_h ∈ R^H` per MHA maps (via sigmoid) to
+    a window half-size `half_w_h = T · sigmoid(w_h)`. Applied as
+    `score -= 1e9 · relu(|t − s| − half_w_h)` in the manual attention
+    branch — equivalent to a hard per-head window but fp32-clean
+    (no `−∞`, no NaN risk, matches 154-rebased-attn's rebased-softmax
+    style). Init `w_h = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈ T −
+    0.00005·T > T − 1 = max|t − s|`, so the penalty is identically 0
+    at fp32 at step 0 ⇒ step-0 forward is byte-identical to the
+    no-flag baseline (max-abs-diff = 0.0 — verified in the build
+    smoke). The optimizer can grow any per-head mix of local/global
+    attention: some heads may keep the full-T window (sigmoid(w_h)
+    stays near 1) while others shrink toward a 512-token SWA (the
+    closed SWA-sweep winner). Distinct from the closed fixed-window
+    sweep (256/384/512/768/1024/2048 → 512) and the closed per-head
+    scalar family (152/155/160/166/172): 182 changes the **spatial
+    pattern** of attention, not just score magnitudes, and lets the
+    per-head gradient find the right mix instead of forcing a global
+    hyperparameter. Total cost: n_heads × n_layers = 48 extra
+    params at tiny1m3m (+0.005% of 0.94M). Forces manual attention
+    path (SDPA flash kernel can't apply the per-head
+    `1e9·relu(...)` penalty). Default off → no Parameter registered,
+    no branch taken, baseline path bit-identical. The
+    `Tiny1M3MPerHeadWindowConfig` subclass flips it on. See
+    `autoresearch/ideas/182-per-head-window/idea.md`.
+    """
+    use_per_head_window: bool = True
+
+
+@dataclass
+class Tiny1M3MMQAGatedConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Gated Multi-Query Attention (178).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val 6.4306).
+    Per-KV-head scalar gate β_k, β_v blends between the head-local
+    K, V projection and a single shared K, V projection:
+    `K_h = K_local_h + β_k_h · (K_shared_h − K_local_h)`, same for V.
+    β init 0 ⇒ step-0 forward is bit-identical to the no-flag
+    baseline (max-abs-diff = 0.0 — verified in the build smoke).
+    The shared K, V projection is one `nn.Linear(d_model, d_model)`
+    per block (2·d_model² extra params/layer); at β→1 the head-local
+    K, V becomes dead weight, recovering standard MQA's K/V param
+    savings. At tiny1m3m (n_kv_heads = 2, n_heads = 4) the gate is
+    naturally per-KV-head (2 scalars/layer = 24 total at 12L depth,
+    +0.003% of 0.94M) — within each GQA group both heads see the
+    same β and the same K_local / K_shared.
+
+    The lever is a smooth interpolation between MHA (β=0, default
+    init) and MQA (β→1, post-training); the optimizer can grow β
+    per-head to share K, V when it helps and keep per-head K, V
+    when it doesn't. Tests whether K/V sharing is a parameter-
+    efficiency win at our 0.94M / 3M-token scale where the closed
+    MHA-vs-GQA arch-sweep (fixed group sizes only) returned null
+    — the gated form is the missing "smooth" version of the same
+    family.
+
+    Cost: +2·d_model² shared K, V (8192 params/layer) + 2·n_kv_heads
+    gate scalars (4/layer). Total at tiny1m3m 12L: ~98,328 params
+    (~+10.5% of 0.94M). When β=0 the head-local K, V is in use and
+    the shared projection is dead weight; as the optimizer grows
+    β the head-local K, V becomes dead and the shared projection
+    takes over. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+
+    Default off → baseline path bit-identical. The
+    `Tiny1M3MMQAGatedConfig` subclass flips it on.
+    """
+    use_mqa_gated: bool = True
+
+
+@dataclass
+class Tiny1M3MAntiCausalSubHeadsConfig(Tiny1M3MConfig):
+    """Tiny1M3M with Anti-Causal Sub-Heads (179).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.4306). Per-head learnable scalar `γ_h = sigmoid(γ_raw_h)`
+    (init `γ_raw_h = -10` ⇒ `γ_h ≈ 4.5e-5` at step 0) attenuates
+    the upper-triangle fill per head: `fill_h = -1e9 · (1 − γ_h)`.
+    `γ_h = 0` ⇒ effectively masked (causal), `γ_h = 1` ⇒ no fill
+    (fully bidirectional), and intermediate `γ_h` smoothly
+    interpolate the mask magnitude. The repo convention uses a
+    finite mask sentinel `-1e9` (NOT `-∞`) — using `-∞` would
+    degenerate the lever (the r1 review closed the `-∞`
+    interpretation). At init the fill is `≈ -9.99955e8` (a
+    0.005% attenuation of `-1e9`), and the softmax row on the
+    upper-triangle is bitwise 0 in fp32 (`exp(-9.99955e8) < 1e-300`),
+    so the step-0 forward is byte-identical to the no-flag
+    baseline.
+
+    The optimizer can grow any subset of heads into "global"
+    heads on a continuous spectrum. The inference schedule
+    keeps γ_h as trained at both train and eval — the trained
+    γ_h IS the eval-time mask shape (this measures real
+    deployment behavior, not a contrived γ_h=0 override). This
+    is a *train/inference distribution shift* no other closed
+    lever in the recent batch has; a winning run at 0.94M would
+    need a γ_h=0 inference override for strict causal-LM
+    service (documented in `idea.md` as a Phase-2 risk).
+
+    Param count: H=4, n_layers=12 ⇒ 4 · 12 = 48 params total
+    (+0.005% of 0.94M). Forces the manual attention path so
+    SDPA's flash kernel doesn't perturb the per-head fill
+    (same pattern as the closed 152/155/166/180 levers).
+
+    Different from the closed `Multiscale heads / parallel
+    block / attn sink (2026-06-04 batch)` (layer-level mix,
+    closed) and from the closed per-head-attention-shape trio
+    152/155/166 (additive/multiplicative on logits, NOT on the
+    mask shape). 179 is the first filing to put the per-head
+    lever on the *mask* itself. Per-head QK-norm 162/165 also
+    closed null at 0.94M — the prior on this axis at tiny1m3m
+    is honest `Δ ∈ [−0.02, +0.005]` per the r1 reviewer.
+
+    Default off → baseline path bit-identical. The
+    `Tiny1M3MAntiCausalSubHeadsConfig` subclass flips it on.
+    Inherits `use_fire_pe=False` from `Tiny1M3MConfig`.
+    See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+    """
+    use_anti_causal_subheads: bool = True
+
+
+@dataclass
+class Tiny1M3MStaticKRotationConfig(Tiny1M3MConfig):
+    """Tiny1M3M with static per-head learned K-rotation.
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`,
+    val 6.3988 cached at `5b8a7fea8963` ±0.04, see
+    `autoresearch/baseline-cache.json`). Each MHA head gets
+    its own orthogonal rebase matrix `R_h ∈ R^{d_k × d_k}`
+    applied to K as `K_h = R_h @ K_h` (post-GQA-repeat, pre-
+    RoPE / pre-qk_norm), parametrized as a product of
+    `d_k/2 = 8` 2D rotations on disjoint `(2i, 2i+1)` planes.
+    One learnable angle `θ_{h,i} ∈ R` per (head, plane). Init
+    `θ_{h,i} = 0` ⇒ `R_h = I_{d_k}` exactly in fp32 (cos/sin
+    bit-exact at 0) ⇒ `K = R_h @ K = K` exactly ⇒ step-0
+    forward is bit-identical to the no-flag baseline.
+
+    `R_h` orthogonal ⇒ `||R_h v|| = ||v||` and `<R_h q, R_h k>
+    = <q, k>` ⇒ QK^T magnitudes are preserved (no softmax
+    temperature shift) — same "preserve the dot product"
+    property RoPE has for its position rotation and 154's
+    fixed orthogonal rebase has.
+
+    Distinct from:
+      - 154-rebased-attn (WIN, fixed *random shared* rebase of
+        K and V with the same matrix): 185 is *learned, per-head,
+        K-only*.
+      - 172-per-head-rope-base (closed null, position-dependent
+        per-head RoPE base): 185 is *position-independent*.
+      - 176-v-pre-av-norm (closed null, V-norm pre-AV):
+        different tensor, different op.
+      - 180-qk-logit-conv (rejected, pre-softmax QK^T
+        smoothing): different op.
+      - 152/155/160/166 per-head scalar family (closed):
+        185 is per-head *matrices* on K, not scalars on scores.
+
+    Param cost: `n_heads × d_k/2 × n_layers = 4 × 8 × 12 = 384`
+    params (+0.041% of 0.94M — negligible). PASS ≤ ctrl − 0.005
+    AND clears the two-ctrl rule. NULL band |Δ| < 0.01. DRIFT >
+    +0.01. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+    """
+    use_static_k_rotation: bool = True
+
+
+@dataclass
+class Tiny1M3MVCarryBlockConfig(Tiny1M3MAlibiConfig):
+    """186 — Stacks on the 175-alibi champion (`Tiny1M3MAlibiConfig`,
+    val 6.2403 — current champion per `autoresearch/champion.json`)
+    with Within-Block V-Carry (per-head learnable V recurrence).
+
+    Subclasses the current champion so the lever stacks on top of
+    the winning 175 axis (learnable per-head ALiBi slopes). The
+    180-qk-logit-conv config was reverted as a causal-mask LEAK
+    (val 0.984 ⇒ not a real win), so it is NOT the champion —
+    subclassing it would inherit the leak. With
+    `use_v_carry_block=False`, this class reduces to the champion
+    — step-0 forward is byte-identical to `Tiny1M3MAlibiConfig`
+    (max-abs-diff = 0.0; verified in the build smoke by toggling
+    the flag and comparing `MinimalLLM(C(use_v_carry_block=False)).
+    forward(...)` logits against the champion). With
+    `use_v_carry_block=True` (default), each MHA allocates a per-
+    head `v_carry_alphas = nn.Parameter(zeros(H))` and applies a
+    left-to-right recurrence on the post-W_V / post-GQA / post-
+    transpose V stream (`[B, n_heads, T, d_k]`) before the AV
+    product:
+      `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for `t ≥ 1`,
+    with `α_h = tanh(v_carry_alphas_h)` (init 0 ⇒ `α_h = 0`
+    exactly ⇒ identity at step 0; tanh keeps `|α_h| < 1` so the
+    geometric sum `Σ_k α_h^k V[t-k]` stays bounded at T=2048).
+    Implemented as a vectorized depthwise `F.conv1d` along T with
+    kernel `[α_h^0, α_h^1, …, α_h^{T-1}]` per head (matches 134-
+    Mega's depthwise EMA conv1d pattern; ~0.5 GFLOPs/layer).
+
+    Local to each block — no cross-block stash or `q_carry=`/
+    `av_carry=`-style plumbing. Composes with the closed 021/164/
+    168 carries (those run on the Q / post-AV side; 186 is on V
+    pre-AV) and with the closed 176 v_rmsnorm / 109 kda_channel_gate
+    multiplicative V mods (different axes, different orderings).
+
+    Distinct from the closed V-axis cluster:
+      - 154-rebased-attn (WIN): static orthogonal rebase of K, V
+        (fixed rotation). 186 is a *learned dynamic* carry on V
+        only.
+      - 168-av-output-carry (null): cross-block AV carry with fixed
+        α=0.999. 186 is within-block V carry with per-head learned
+        α_h.
+      - 164-q-carry (null): cross-block Q carry.
+      - 021-value-residual (WIN): cross-block V carry.
+      - 012/008-gated-deltanet, 004-retnet-retention (closed): full
+        linear-attention / delta-rule / retention, not a single
+        scalar α_h.
+
+    Param cost: H × n_layers = 4 × 12 = 48 scalars (+0.005% of
+    0.94M — negligible). NULL band |Δ| < 0.01 (most likely
+    outcome per the 168 null pattern). PASS ≤ ctrl − 0.005 AND
+    clears the two-ctrl rule. DRIFT > +0.01. See
+    `autoresearch/ideas/186-v-carry-block/idea.md` /
+    `plan.md`.
+    """
+    use_v_carry_block: bool = True
+
+
+@dataclass
+class Tiny1M3MCrossBlockKVShareConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with Cross-Block K/V Projection Sharing (188,
+    Universal Transformers-style learnable parameter sharing across
+    depth, Dehghani et al. ICLR 2019, arXiv:1807.03819).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.2403, band 0.04) so the lever stacks on top of the 175-alibi
+    win. With `use_cross_block_kv_share=False` this class reduces
+    to the champion — step-0 forward is bit-identical to
+    `Tiny1M3MAlibiConfig` (max-abs-diff = 0.0; verified in the
+    build smoke by toggling the flag and comparing
+    `MinimalLLM(C(use_cross_block_kv_share=False)).forward(...)`
+    logits against the champion). With
+    `use_cross_block_kv_share=True` (default), each MHA allocates
+    two 0-dim learnable scalars `cross_block_alpha_K` /
+    `cross_block_alpha_V` (init -10.0 ⇒ `σ(-10) ≈ 4.5e-5` at step
+    0) and a forward-pass-local stash of the previous block's
+    W_K, W_V slices (`.detach()`-ed). The forward applies a
+    learnable convex blend:
+
+      `W_K_eff = (1 − α_K) · W_K_self + α_K · W_K_prev.detach()`
+      `K_eff  = x · W_K_eff.T`
+      `α_K = σ(cross_block_alpha_K)`
+
+    (same for V). At step 0 `α_K ≈ 4.5e-5` ⇒ `K_eff ≈ K_self`
+    bit-identical to the champion's K projection within fp32
+    noise of one extra multiply-add. As training proceeds the
+    optimizer can grow α_K and α_V (each bounded in [0, 1] by the
+    sigmoid) to soft-share the K, V projection subspaces across
+    adjacent blocks — a learnable form of Universal Transformer
+    parameter tying on the K, V slices only.
+
+    Distinct from the existing cross-block family at this tier:
+      - 021-value-residual (WIN, Δ=−0.034): carries V *across
+        blocks via the residual stream* (post-AV, on the residual
+        stream). 188 carries W_V *projections across blocks* (pre-
+        AV, on the K, V projection matrices). Different placement
+        (projection vs residual), different mechanism (parameter
+        sharing vs carry), different trainable scope (2 scalars
+        per block vs 1).
+      - 164-q-carry (closed null, Δ=+0.036 wrong-sign at 0.94M):
+        Q-side carry, residual-stream level. 188 is K, V
+        projection-level.
+      - 168-av-output-carry (closed null): post-AV carry,
+        residual-stream level.
+      - 186-v-carry-block (needs-run): within-block V carry along
+        the time axis (different axis: time vs depth).
+
+    Composes with the closed 021 v-residual (the 188 blend
+    happens BEFORE the V_residual stash, so the layer's V is the
+    blended V; 021 reads the post-blend V at layer l ≥ 1).
+    Composes with the closed 186 within-block V-carry (the
+    post-blend V is fed into 186's depthwise conv1d; the two
+    operate on different axes and don't conflict). Mutually
+    exclusive with the 158 GAU operator (GAUBlock has no
+    `.attention` attribute and a fused MHA+FFN doesn't compose
+    with the stash/capture plumbing) and with the 129 YOCO
+    shared-KV path (YOCO's upper-half blocks use shared K, V
+    and skip the W_K, W_V slices, so the 188 blend is dead on
+    those blocks; the MHA's branch is gated on
+    `use_shared_kv` and the stash writes None, so the
+    plumbing is a safe no-op).
+
+    Param cost: 2 scalars/block × 12 blocks = 24 scalars
+    (+0.003% of 0.94M — negligible). NULL band |Δ| < 0.02
+    expected per the 164/168 cross-block null pattern. PASS
+    ≤ 6.2353. DRIFT > 6.2553. See
+    `autoresearch/ideas/188-cross-block-kv-share/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_cross_block_kv_share` default is
+    properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_cross_block_kv_share: bool = True
+
+
+@dataclass
+class Tiny1M3MTokenAttnGainConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with Per-Token Attention Output Gain (191,
+    Shleifer et al. 2021 "NormFormer" / Touvron et al. 2021
+    "CaiT" class-attention gain, arXiv:2110.09423).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.4394, band 0.04) so the lever stacks on top of the
+    175-alibi win — the same stack-on pattern that 188 uses
+    for cross-block K/V sharing and that 186 uses for the
+    within-block V-carry. With `use_token_attn_gain=False`
+    this class reduces to the champion — step-0 forward is
+    bit-identical to `Tiny1M3MAlibiConfig` (max-abs-diff =
+    0.0; verified in the build smoke by toggling the flag
+    and comparing `MinimalLLM(C(use_token_attn_gain=False))
+    .forward(...)` logits against the champion). With
+    `use_token_attn_gain=True` (default), each MHA allocates
+    a per-position `token_attn_gain = nn.Parameter(zeros(T_max))`
+    and applies, after the merge-reshape, a per-position
+    scalar multiplier on the post-attention `[B, T, d_model]`
+    tensor:
+
+      `attn_post = attn_post * (1 + γ_t)`    (broadcast `[1, T, 1]`)
+      `γ_t ∈ R^T` shared across batch and d_model, init 0
+      `attn_post = W_O(attn_post)`
+
+    At step 0 γ=0 ⇒ `(1 + 0) = 1` ⇒ `attn_post` is unchanged
+    exactly ⇒ forward is byte-identical to the champion's no-
+    gain path. As training proceeds, the optimizer can grow
+    γ_t per position — the gain is a per-position soft
+    attention sink at the *output* level (which tokens'
+    attention should contribute strongly to the residual
+    stream).
+
+    Distinct from the existing gain family at this tier:
+      - 142-layer-scale (closed null): per-channel diagonal
+        `γ ∈ R^{d_model}` on the residual stream. 191 is
+        per-position, 142 is per-channel — orthogonal axes.
+      - 160-rms-gain-per-head (closed null): per-head scalar
+        `g_h ∈ R^H` post-AV. 191 is per-position (T scalars),
+        160 is per-head (H=4 scalars). 512× DOF increase.
+      - 176-v-pre-av-norm (closed null): V-side RMSNorm
+        pre-attention-product. 191 is post-merge pre-W_O.
+        Different placement, different granularity.
+      - 181-cross-head-rmsnorm (needs-run): cross-head
+        coupling on the [B, H, T, d_k] axis. 191 is per-
+        position on the [B, T, d_model] axis. 191 mutually
+        exclusive with 181 (mutex assert).
+
+    Composes with the closed 021 v-residual (191 fires pre-W_O,
+    021 carries V across blocks via the residual stream — the
+    021 path is unaffected by 191's per-position rescale).
+    Composes with the closed 186 within-block V-carry (186
+    operates on the V stream pre-AV; 191 operates on the
+    attention output post-merge — orthogonal axes, no
+    conflict). Mutually exclusive with the pre-merge post-AV
+    gates (160, 045, 024, 121, 181) per the standard "post-AV
+    composition restructures the lever" rule.
+
+    Param cost: T_max scalars/block × 12 blocks = 24,576
+    scalars (+2.6% of 0.94M — modest but well-budgeted for
+    the granularity lever). NULL band |Δ| < 0.01 expected
+    per the 160 / 142 / 176 gain-family null pattern (W_O
+    downstream absorbs the per-position magnitude variation).
+    PASS ≤ 6.4194. DRIFT > 6.4794. Sub-noise is INCONCLUSIVE
+    on one seed per the one-seed-only rule. See
+    `autoresearch/ideas/191-token-attn-gain/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_token_attn_gain` default is
+    properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_token_attn_gain: bool = True
+
+
+
+
+@dataclass
+class Tiny1M3MCrossBlockScoreShareConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with Cross-Block Attention Score Sharing (204,
+    Sukhbaatar et al. Memorizing Transformers ICLR 2022,
+    arXiv:2203.08913 — within-model cross-block pre-softmax
+    score-reuse lever).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.2403, band 0.04) so the lever stacks on top of the
+    175-alibi win. With `use_cross_block_score_share=False`
+    this class reduces to the champion — step-0 forward is
+    practically baseline (max-abs-diff across all 12 blocks <
+    1e-4; verified in the build smoke by toggling the flag
+    and comparing `MinimalLLM(C(use_cross_block_score_share=
+    False)).forward(...)` logits against the champion). With
+    `use_cross_block_score_share=True` (default), each MHA
+    allocates one 0-dim learnable scalar
+    `score_share_alpha_raw` (init `score_share_alpha_init=-10.0`
+    ⇒ `σ(-10) ≈ 4.5e-5` at step 0) and a forward-pass-local
+    stash of the previous block's pre-softmax scores
+    (`.detach()`-ed, shape `[B, H, T, T]`). The forward applies
+    a learnable convex blend:
+
+      `α = σ(score_share_alpha_raw)`
+      `scores_eff = (1 − α) · scores_self + α · scores_{b-1}.detach()`
+
+    `scores_self = Q · K^T / √d_k` is the standard pre-softmax
+    logit (NOT the post-softmax attention distribution —
+    that's a different lever; see review.md finding B). At
+    step 0 `α ≈ 4.5e-5` ⇒ `scores_eff ≈ scores_self` within
+    fp32 noise of one extra multiply-add. As training
+    proceeds the optimizer can grow `α` (bounded in [0, 1]
+    by the sigmoid) to softly re-use the previous block's
+    attention pattern — a learnable "attention-pattern
+    persistence" lever across depth.
+
+    Distinct from the existing cross-block family at this
+    tier:
+      - 021-value-residual (WIN, Δ=−0.034): carries V
+        *across blocks via the residual stream* (post-AV, on
+        the residual stream). 204 carries pre-softmax scores
+        *inside the MHA* (pre-softmax, on the QK^T logit).
+        Different placement (MHA vs residual), different
+        mechanism (score persistence vs value carry).
+      - 164-q-carry (closed null, Δ=+0.036 wrong-sign):
+        Q-side carry, residual-stream level. 204 is on the
+        QK^T logit, not on Q alone.
+      - 168-av-output-carry (closed null): post-AV carry,
+        residual-stream level. 204 is pre-softmax, MHA-
+        internal.
+      - 186-v-carry-block (needs-run): within-block V carry
+        along the time axis (different axis: time vs depth).
+      - 188-cross-block-kv-share (implementing): K, V
+        projection-level sharing across blocks. 204 is on the
+        post-projection QK^T logit. 188 operates BEFORE the
+        scores are computed; 204 operates AFTER (so they
+        compose cleanly: 188 first blends W_K_eff and
+        W_V_eff, then 204 produces QK_eff^T and blends with
+        the prev block's QK^T logit).
+
+    Composes with the closed 021 v-residual (204 fires pre-
+    softmax, 021 carries V across blocks via the residual
+    stream — orthogonal axes). Composes with the closed 186
+    within-block V-carry (186 operates on V pre-AV; 204
+    operates on QK^T logit — orthogonal). Mutually exclusive
+    with the 158 GAU operator (GAUBlock has no `.attention`
+    attribute and a fused MHA+FFN doesn't compose with the
+    score-blend plumbing) and with the 129 YOCO shared-KV
+    path on the upper-half blocks (YOCO's upper-half blocks
+    skip the qkvo_proj K, V slices; the 204 blend is dead on
+    those blocks — the model loop guards the prev-block-
+    scores stash with the same `not self.use_gau` check used
+    by 021 / 164 / 168 / 188).
+
+    Param cost: 1 scalar/block × 12 blocks = 12 scalars
+    (+0.001% of 0.94M — the cheapest cost profile in the
+    cross-block family; 021/164/168 also 12, 188 = 24). NULL
+    band |Δ| < 0.02 expected per the 164 / 168 / 188 cross-
+    block null pattern. PASS ≤ 6.2203. DRIFT > 6.2603. See
+    `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`
+    / `plan.md`.
+
+    @dataclass-decorated so `use_cross_block_score_share`
+    default is properly overridden (the dataclass-inheritance
+    pitfall documented in `_arq_161-dyt-temp.py`).
+    """
+    use_cross_block_score_share: bool = True
+
+
+@dataclass
+class Tiny1M3MEmbedSqrtDConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with 1/sqrt(d_model) embedding scaling (194, Primer-
+    style, So et al. 2021, arXiv:2109.08668 — "scaled initialization"
+    that scales the embedding by `1/sqrt(d_model)` so the residual
+    stream's magnitude is matched to the LM head's `O(1/sqrt(d_model))`
+    weight magnitude).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.2403, band 0.04) so the lever stacks on top of the 175-alibi
+    win — the same stack-on pattern that 188, 191, 204 use.
+    With `use_embed_sqrt_d_scaling=False` this class reduces to
+    the champion (the lever branch in `_embed_input` is gated and
+    the standard `emb_scale = sqrt(d_model)` path is bit-identical
+    to the baseline). With `use_embed_sqrt_d_scaling=True`
+    (default), `_embed_input` overrides the standard
+    `emb_scale = sqrt(d_model)` with `1/sqrt(d_model)` — the
+    residual-stream input is scaled DOWN by `1/d_model` relative
+    to the baseline. No new parameters (the rescaling is computed
+    deterministically from `d_model`).
+
+    Step-0 loss is approximately the same as the baseline (the
+    initial Kaiming-init LM-head produces near-uniform logits for
+    any input scale, so cross-entropy on random labels is
+    ~log(vocab_size) in both cases) — the lever does NOT introduce
+    a step-0 loss divergence. The gradient signal IS different: a
+    smaller-magnitude residual stream ⇒ flatter softmax at the
+    output ⇒ more uniform gradient across vocab tokens, which the
+    Primer paper reports as a net positive at 100M-1.5B. The lever
+    is a "soft reparameterization" — the optimizer must adapt the
+    LM head to the new scale over the first few hundred steps
+    (the re-fit cost is amortized by 92 steps only if the underlying
+    mechanism is real; if not, the re-fit cost is wasted compute).
+
+    Distinct from the closed axes at this tier:
+      - 159-emb-layernorm (NULL, DRIFT): full LayerNorm on the
+        embedding output — a *directional* change (the LN alters
+        the per-token direction) plus a magnitude rescaling.
+        194 is a *scalar* multiplication — preserves the
+        per-token direction and only rescales the magnitude.
+        The 159 DRIFT is attributed to the directional change
+        (re-fit cost on rescaled directions); 194 avoids the
+        directional re-fit because directions are unchanged.
+      - 130-rezero, 142-layerscale (NULL): depth-conditional
+        residual-stream levers (per-block `α=0` init, no per-
+        step overhead). 194 is init-time / forward-time
+        scalar, applies to the *embedding* (not per-block).
+      - 183-pre-lm-head-rmsnorm (NULL): output-side norm. 194
+        is input-side scalar, no new params.
+      - 017-sub-ln-sandwich (NULL): depth-conditional LN
+        placement. 194 is a single scalar at the input.
+
+    Param cost: **0** (forward-time / init-time scaling). NULL
+    band |Δ| < 0.01 expected (the hand-tuned `sqrt(d_model)` is
+    already near-optimal for tiny1m3m). PASS ≤ 6.2353. DRIFT >
+    6.2503. See `autoresearch/ideas/194-embed-sqrt-d/idea.md`
+    / `plan.md`.
+
+    @dataclass-decorated so `use_embed_sqrt_d_scaling` default
+    is properly overridden (the dataclass-inheritance pitfall
+    documented in `_arq_161-dyt-temp.py`).
+    """
+    use_embed_sqrt_d_scaling: bool = True

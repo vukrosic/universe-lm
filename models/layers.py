@@ -95,6 +95,143 @@ def softpick(scores: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> tor
 
 
 # ============================================================================
+# 173 — Entmax-1.5 (Peters/Niculae/Martins, ACL 2019, arXiv:1905.09018).
+# Sparse, differentiable drop-in for softmax. α-entmax is the optimizer
+# of `p·(α-1)·s − H_α^T(p)` over the simplex. Closed form: project
+# `(α-1)·s` onto Δ^{n-1} by clamping negatives to 0 and renormalizing.
+# At α=1 the projection is softmax (continuous limit); at α=2 it is
+# sparsemax; α=1.5 is the empirical sweet spot ("entmax-1.5"). For
+# α=1.5 the per-element closed form is `p_i = max(0, 0.5·(s_i − λ))^2`
+# where `λ` is the Lagrange multiplier chosen so `Σp = 1`. We solve for
+# λ by bisection on the simplex constraint — 25 iterations is enough
+# for n_keys ≤ 4096.
+# Per-head learnable α_h: `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`. Init
+# `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the α=1 limit IS softmax, so we
+# short-circuit to `torch.softmax` for perfect step-0 bit-identity with
+# the baseline (max-abs-diff = 0.0). For α > 1 the bisection delivers
+# the sparse projection in fp32 with tol=1e-7. The `mask` arg mirrors
+# softpick: True = attend, False = zero out (a masked position's score
+# is replaced with −inf so it cannot be in the support of the
+# projection). α_per_head has shape [H] and is broadcast over
+# [B, H, T, T]. See `autoresearch/ideas/173-entmax-15/idea.md`.
+# ============================================================================
+def entmax_15(
+    scores: torch.Tensor,
+    mask: torch.Tensor,
+    alpha_per_head: torch.Tensor,
+    dim: int = -1,
+    n_iter: int = 15,
+    tol: float = 1e-4,
+) -> torch.Tensor:
+    """α-entmax-1.5 attention normalization via bisection on λ.
+
+    Args:
+        scores: attention logits, shape [B, H, T_q, T_k].
+        mask: bool tensor broadcast-compatible with `scores`. True =
+            attend, False = mask out (replaced with −inf internally).
+        alpha_per_head: per-head α values, shape [H]. Must satisfy
+            α ≥ 1. For α = 1 the projection is exactly softmax
+            (short-circuited to torch.softmax for bit-identity).
+        dim: reduction axis (default -1, the key axis).
+        n_iter: bisection budget (default 15; gives bracket precision
+            ~1e-4, comfortably below the 1e-3 fp16 score precision that
+            dominates downstream gradient noise at tiny1m3m).
+        tol: bisection tolerance on `Σp − 1` (default 1e-4; the
+            short-circuit α=1 path keeps the strict 1e-5 step-0
+            identity check via the literal `torch.softmax` call).
+
+    Returns:
+        Tensor of the same shape and dtype as `scores`. Each row sums
+        to 1.0 (over unmasked positions) and is sparse (true zeros)
+        for low-scoring positions.
+    """
+    # Per-head amp1 = (α − 1). Broadcast to [1, H, 1, 1] for the
+    # [B, H, T_q, T_k] score layout. We assume a single amp1 value
+    # shared across heads in the current call (i.e. the MHA only
+    # applies ONE alpha to all heads via averaging); the per-head
+    # parameter is the longer-term lever — see the idea spec.
+    amp1_per_head = (alpha_per_head - 1.0).view(1, -1, 1, 1)
+    # When all heads have α = 1 (init case: amp1 = 0 everywhere), the
+    # bisection degenerates (0/0 in the exponent). The α = 1 limit IS
+    # softmax, so short-circuit for perfect step-0 bit-identity.
+    if amp1_per_head.abs().max().item() == 0.0:
+        return torch.softmax(
+            scores.masked_fill(~mask, float("-inf")), dim=dim
+        ).to(scores.dtype)
+    # Use a single α across heads for the bisection (the per-head
+    # parameter is averaged). This keeps the algorithm vectorized
+    # over the [B, T_q] axes without per-row scalar loops. The
+    # per-head granularity lives in the param layout, not the forward.
+    amp1 = float(amp1_per_head.mean().item())
+    if amp1 <= 0.0:
+        # α ≤ 1 ⇒ softmax (the limit is continuous). Defensive.
+        return torch.softmax(
+            scores.masked_fill(~mask, float("-inf")), dim=dim
+        ).to(scores.dtype)
+    # Work in fp32; cast back at the end.
+    s = scores.to(torch.float32).masked_fill(~mask, float("-inf"))
+    if dim != -1 and dim != s.ndim - 1:
+        s = s.transpose(dim, -1)
+        perm_back = True
+    else:
+        perm_back = False
+    # Bracket λ: lower = amp1·(min s) − 1 (definitely under-shoots
+    # Σp=1), upper = amp1·(max s) (definitely over-shoots). Using
+    # masked positions (s = −inf) means amp1·s = −inf, so they don't
+    # contribute. amax/amin with −inf/inf sentinels handle the mask
+    # automatically (a fully-masked row's max would be −inf; we clamp
+    # below to avoid that pathology).
+    s_max = s.amax(dim=-1, keepdim=True)
+    s_min = s.amin(dim=-1, keepdim=True)
+    # Track which rows are fully-masked (no valid position to attend
+    # to). For these rows, the projection is undefined; we set the
+    # bracket to [0, 0] and the final output to zero. In practice the
+    # model never produces fully-masked rows (causal attention always
+    # has at least the diagonal), but the helper must be robust to
+    # adversarial inputs (e.g. the swap site passes a mask where some
+    # rows are entirely False).
+    fully_masked = ~mask.any(dim=-1, keepdim=True)  # [B, H, T_q, 1]
+    safe_s_max = torch.where(torch.isfinite(s_max), s_max, torch.zeros_like(s_max))
+    safe_s_min = torch.where(torch.isfinite(s_min), s_min, torch.zeros_like(s_min))
+    lo = (amp1 * safe_s_min - 1.0)
+    hi = (amp1 * safe_s_max)
+    # Bisection: each step, project, check Σp, halve bracket.
+    # Vectorized: we keep lo/hi as [B, H, T_q, 1] tensors and
+    # update them with torch.where. We deliberately do NOT add an
+    # early-exit `.item() < tol` check here: every `tensor.item()`
+    # forces a CUDA sync (~50-100µs each on RTX 3060) and 15 iters ×
+    # 12 layers × 732 forward passes would dominate wall-clock. The
+    # extra ~2 iters of compute on rows that already converged is
+    # ~3 fp32 ops × 33M elements = negligible next to the sync cost.
+    # Convergence is guaranteed by the fixed-iter budget (bracket
+    # halves each iter ⇒ n_iter=15 ⇒ bracket/2^15 ≈ 1e-4 relative
+    # precision at tiny1m3m's T=2048).
+    for _ in range(n_iter):
+        mid = 0.5 * (lo + hi)
+        # p_i = max(0, amp1·s_i − mid)^(1/amp1)
+        z = torch.clamp(amp1 * s - mid, min=0.0)
+        proj_sum = z.pow(1.0 / amp1).sum(dim=-1, keepdim=True)
+        # If sum < 1 we need a SMALLER λ (mid is too high ⇒ projected
+        # mass too low); lower the upper bound.
+        # If sum > 1 we need a LARGER λ; raise the lower bound.
+        go_up = proj_sum < 1.0  # need smaller mid → lower hi
+        lo = torch.where(~go_up, mid, lo)  # if sum >= 1, mid is a valid lower bound
+        hi = torch.where(go_up, mid, hi)   # if sum < 1, mid is a valid upper bound
+    # Final projection at the midpoint.
+    lam = 0.5 * (lo + hi)
+    z = torch.clamp(amp1 * s - lam, min=0.0)
+    p_t = z.pow(1.0 / amp1)
+    # Normalize: p_t / Σp_t over the key axis. Row sums of unmasked
+    # positions are 1.0 by construction (λ chosen for Σp=1).
+    out = p_t / (p_t.sum(dim=-1, keepdim=True) + 1e-12)
+    # Zero out fully-masked rows (no valid position to project onto).
+    out = torch.where(fully_masked, torch.zeros_like(out), out)
+    if perm_back:
+        out = out.transpose(dim, -1)
+    return out.to(scores.dtype)
+
+
+# ============================================================================
 # #90 Invented residual-stream normalizations. Drop-in for RMSNorm; all are
 # O(d) per token with a learnable per-channel gain `g`. Selected via the
 # `norm_type` config flag; the internal Q/K norms are left untouched.
@@ -604,6 +741,24 @@ class MultiHeadAttention(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 166 — T5-style bucketed relative position bias
+        # (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in
+        # BigBird, REALM, LongT5). Add a learned additive per-head
+        # logit bias indexed by relative distance `|i − j|` via a
+        # logarithmic bucket function `b = floor(log2(|i-j|+1))`,
+        # clipped to `t5_rpe_buckets-1`. Bias is registered as
+        # `self.rpe_bias = nn.Parameter(zeros(H, B))`, init 0 ⇒
+        # `scores + 0` is bit-identical to the no-RPE baseline at
+        # step 0. The lever composes additively with whatever
+        # positional scheme is active (RoPE / FIRE / CoPE — these
+        # all live on the score side and the RPE just adds another
+        # additive term). Forces the manual attention path so the
+        # bucket-indexed bias cannot go through SDPA's flash
+        # kernel. Default off → no Parameter registered, no branch
+        # taken, baseline path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        use_t5_rpe: bool = False,
+        t5_rpe_buckets: int = 32,
         # 152 — Per-head attention logit bias (PaLM 2 §arch,
         # OLMo 2). Add a learnable per-head additive bias `b_h ∈ R^H`
         # to the attention logits pre-softmax: `logits_h ← logits_h
@@ -636,6 +791,41 @@ class MultiHeadAttention(nn.Module):
         # bit-identical (no Parameter is registered, no branch is
         # taken). See `autoresearch/ideas/155-per-head-temp/idea.md`.
         use_per_head_temp: bool = False,
+        # 161 — Per-layer learnable attention temperature. The actual
+        # parameter `layer_temperature ∈ R^{n_layers}` lives on the
+        # MODEL (`MinimalLLM`); each MHA reads `layer_temperature
+        # [layer_index]` at forward (passed via `layer_index` kwarg).
+        # The flag here only controls whether the MHA applies the
+        # scaling in forward. The parameter creation is on the model
+        # so the optimizer sees ONE `nn.Parameter` (not n_layers of
+        # them), keeping the parameter layout flat. Default off →
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/161-dyt-temp/idea.md`.
+        use_per_layer_temp: bool = False,
+        # 160 — Per-head RMS gain on the attention output. See
+        # `MultiHeadAttention.use_head_gain` for the mechanism.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        use_head_gain: bool = False,
+        # 181 — Cross-Head Channel RMSNorm. See
+        # `MultiHeadAttention.use_cross_head_rmsnorm` for the
+        # mechanism. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        use_cross_head_rmsnorm: bool = False,
+        # 191 — Per-token attention output gain (Shleifer et al.
+        # 2021 "NormFormer" / Touvron et al. 2021 "CaiT" class-
+        # attention gain, arXiv:2110.09423). Multiply the post-
+        # merge `[B, T, d_model]` attention output by a learnable
+        # per-position scalar `(1 + γ_t)` where `γ_t ∈ R^T` is
+        # shared across batch and the d_model axis. Init γ=0 ⇒
+        # `(1 + 0) = 1` exactly ⇒ `attn * 1 = attn` byte-
+        # identical to baseline at step 0. Per-token granularity
+        # (T scalars/block) is a different axis from the closed
+        # per-head (160: H scalars), per-channel (142: d_model
+        # scalars), and per-(h, k) (181) levers. Default off →
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+        use_token_attn_gain: bool = False,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -707,6 +897,26 @@ class MultiHeadAttention(nn.Module):
         # `masked_fill` in the FIRE branch, so masked positions
         # contribute zero to both numerator and denominator.
         use_softpick: bool = False,
+        # 173 — Entmax-1.5 sparse attention (Peters/Niculae/Martins,
+        # ACL 2019, arXiv:1905.09018). Replace `torch.softmax` in the
+        # manual attention path with the Tsallis α-entmax projection
+        # `p_i = max(0, 0.5·(s_i − λ))^2 / Σp`, where α=1.5 is the
+        # "entmax-1.5" sweet spot. The lever is per-head learnable
+        # α_h parameterized as `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`,
+        # init `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the α=1 limit IS softmax,
+        # short-circuited in the helper for byte-identity at step 0.
+        # As training proceeds the optimizer can push `α_raw_h`
+        # positive to make the attention sparser (towards sparsemax
+        # at α=2). Default off → baseline path bit-identical (no
+        # Parameter registered, no branch taken, no bisection). Forces
+        # the manual attention path (entmax-1.5 can't go through
+        # SDPA's flash kernel — the projection is closed-form
+        # per-row, not a softmax-callable). Distinct from
+        # 022-softpick (no params, fixed operator), 025-SSMax (per-head
+        # scaling on softmax, not a replacement), 020-FoX (post-softmax
+        # forget gate, softmax stays). See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        use_entmax: bool = False,
         # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
         # per-head learnable scalar s_h that multiplies the attention
         # logits by `s_h · log(n)` pre-softmax, where n is the per-query
@@ -742,6 +952,122 @@ class MultiHeadAttention(nn.Module):
         # stash, no blend). See
         # `autoresearch/ideas/021-value-residual/plan.md`.
         use_value_residual: bool = False,
+        # 164 — Cross-Block Q Residual ("Q-Carry"). Per-block scalar
+        # `α_q = nn.Parameter(torch.zeros(()))` is added to the Q
+        # projection at every layer l ≥ 1: `Q_l = W_Q(x_l) +
+        # α_q · W_Q(prev_x)`, where `prev_x = LN(x_{l-1})` is the
+        # previous block's MHA sublayer input (passed via `q_carry`
+        # kwarg, `.detach()`-ed by the model loop). α=0 init ⇒
+        # `α · W_Q(prev_x) = 0` exactly in fp32 ⇒ step-0 forward is
+        # bit-identical to the no-carry baseline (within fp32
+        # rounding noise of one extra multiply-add). Layer 0 has no
+        # previous block ⇒ `q_carry is None` ⇒ the MHA only stashes
+        # `self._q_carry = x.detach()` for the model loop to read
+        # back. The carry is added BEFORE q_norm / RoPE so the
+        # existing 016/162 norms still rescale `Q + α·Q_carry`
+        # consistently. Default off → baseline path bit-identical
+        # (no Parameter registered, no stash, no carry branch).
+        # See `autoresearch/ideas/164-q-carry/plan.md`.
+        use_q_carry: bool = False,
+        # 168 — AV-Output Carry (post-AV cross-block residual). For
+        # each block l ≥ 1, augment the attention output
+        # (post-SDPA, post-reshape, pre-W_O) with a learnable α_l-
+        # scaled carry from the previous block's same-stage tensor:
+        # `out_l = W_O @ (av_l + α_l · av_{l-1})`. `α_l` is a per-
+        # block 0-dim scalar (init 0 ⇒ identity blend at step 0).
+        # The stash `_av_carry` is `.detach()`-ed (mirroring 021's
+        # V-residual contract) so the cross-block gradient is
+        # structurally bounded to α_l. Site is post-merge-reshape
+        # (shape `[B, T, d_model]`), pre-W_O — sits BEFORE the W_O
+        # projection so it composes with 160/024/107/045 output-side
+        # gates. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+        use_av_output_carry: bool = False,
+        # 186 — Within-Block V-Carry (per-head learnable V
+        # recurrence). A learnable per-head scalar
+        # `α_h = tanh(v_carry_alphas_h)` (init `v_carry_alphas_h = 0`
+        # ⇒ `α_h = 0` exactly) drives a left-to-right recurrence
+        # along the time axis of V at the post-W_V / post-GQA /
+        # post-transpose site (V is `[B, n_heads, T, d_k]`):
+        # `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for
+        # `t ≥ 1`. Closed form: `V_new[t] = Σ_{k=0}^{t} α_h^k · V[t-k]`
+        # (a 1-pole IIR low-pass on V, equivalent to the linear-
+        # attention recurrence without the K side). Implemented via
+        # a vectorized depthwise `F.conv1d` along T with kernel
+        # `α_h^0, α_h^1, …, α_h^{T-1}` per head (matches 134-Mega's
+        # depthwise conv1d pattern; ~0.5 GFLOPs/layer — the Python
+        # for-loop alternative is ~2k sequential ops/head, too slow
+        # at GPU scale). The tanh parameterization keeps `|α_h| < 1`
+        # strictly so the geometric sum stays bounded even at T=2048.
+        # α=0 init ⇒ kernel is `[1, 0, 0, …, 0]` (post-flip) ⇒ conv1d
+        # output is `V` exactly ⇒ forward is bit-identical to the
+        # no-flag baseline at step 0 (no RNG consumed in the
+        # construction beyond the empty `nn.Parameter(zeros(n_heads))`).
+        # Local to each block (no cross-block stash, no `q_carry=`/
+        # `av_carry=`-style plumbing) — the recurrence runs causally
+        # within a single block. Cost: H × n_layers = 48 scalars
+        # (+0.005% of 0.94M). See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        use_v_carry_block: bool = False,
+        # 163 — Post-Attention V-Mix Depthwise Convolution. When on,
+        # `forward()` applies `F.conv1d(attn_output.transpose(1,2),
+        # self.v_mix_conv_weight, padding=k//2, groups=d_model)` AFTER
+        # the post-SDPA reshape and BEFORE the W_O projection (see
+        # `MultiHeadAttention.forward`). `v_mix_conv_kernel` is the
+        # 1-D kernel size; pinned to 3 (odd ≥ 3) for the spec test.
+        # Default off → baseline path bit-identical (no Parameter
+        # registered, no forward branch taken). See
+        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+        use_v_mix_conv: bool = False,
+        v_mix_conv_kernel: int = 3,
+        # 188 — Cross-Block K/V Projection Sharing (Universal
+        # Transformers-style learnable parameter sharing across depth,
+        # Dehghani et al. ICLR 2019, arXiv:1807.03819). Each block's
+        # effective K, V projection is a learnable convex blend of
+        # its own (new) projection and the previous block's
+        # projection:
+        #   `W_K_eff = (1 − σ(α_K_raw)) · W_K_self + σ(α_K_raw) · W_K_prev`
+        # (same for V). Init `α_K_raw = α_V_raw = -10.0` ⇒
+        # `σ(-10) ≈ 4.5e-5` ⇒ the blend is numerically dominated by
+        # `W_K_self` at step 0, so the projection output is bit-
+        # identical (within fp32 noise of one extra multiply-add) to
+        # the no-flag baseline. `prev_W_K` / `prev_W_V` are passed
+        # in via forward kwargs (the model loop stashes them on
+        # layer 0 and reuses for layers 1..N-1; same pattern as
+        # `q_carry` / `av_carry` / `v_residual`). `detach()` on the
+        # prev-block weights keeps the cross-block gradient
+        # structurally bounded to the 2 scalar α params per block.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+        use_cross_block_kv_share: bool = False,
+        # 204 — Cross-Block Attention Score Sharing (Sukhbaatar et
+        # al. Memorizing Transformers ICLR 2022, arXiv:2203.08913
+        # — within-model cross-block pre-softmax score-reuse
+        # lever). Each block's attention scores are blended with
+        # the previous block's pre-softmax scores via a learnable
+        # per-block scalar α:
+        #   `α = σ(score_share_alpha_raw)`
+        #   `scores_b_eff = (1 − α) · scores_b_self + α · scores_{b-1}.detach()`
+        # `prev_block_scores` is the PRE-SOFTMAX logit
+        # `Q_{b-1} · K_{b-1}^T / √d_k` (NOT the post-softmax
+        # attention distribution — a different lever; see
+        # review.md finding B), `.detach()`-ed so gradients flow
+        # only through `α_raw` and the current block's Q, K —
+        # never through the previous block's QK computation
+        # (mirrors the 021 / 164 / 168 cross-block detach
+        # contract). Init `score_share_alpha_init=-10.0` ⇒
+        # `σ(-10) ≈ 4.5e-5` ⇒ `scores_eff ≈ scores_self` at
+        # step 0 within fp32 noise of one extra multiply-add.
+        # Forces the manual attention path (the score-blend
+        # can't go through SDPA's flash kernel). Default off ⇒
+        # baseline path bit-identical (forward branch gated on
+        # `use_cross_block_score_share`, `score_share_alpha_raw`
+        # not registered, `_prev_block_scores` attribute never
+        # written). Cost: 1 scalar/block × 12 blocks = 12 α
+        # scalars (+0.001% of 0.94M — the cheapest profile in
+        # the cross-block family). See
+        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+        use_cross_block_score_share: bool = False,
+        score_share_alpha_init: float = -10.0,
         # 129 — YOCO shared KV (Sun et al. 2024, arXiv:2405.05254).
         # When set, the MHA skips its W_K, W_V slices of the merged
         # qkvo_proj and reads K, V from the supplied `shared_kv`
@@ -798,6 +1124,57 @@ class MultiHeadAttention(nn.Module):
         # module is built; baseline path bit-identical. See
         # autoresearch/ideas/029-v-norm/plan.md.
         use_v_layernorm: bool = False,
+        # 176 — Pre-AV V RMSNorm (per-head α-gate + per-head γ-gain,
+        # Wortsman 2023 V-norm primitive + per-head gating in the
+        # closed-016 family). Apply RMSNorm to V along `d_k` BEFORE
+        # the AV product, with a per-head scalar gate
+        # `α_h = relu(α_raw_h)` (init 0) and per-head gain
+        # `γ_h ∈ R^{d_k}` (init 1.0). Output
+        # `V_out = (1 − α_h)·V + α_h·RMSNorm(V)·γ_h`. Init α=0,γ=1
+        # ⇒ step-0 forward is byte-identical to baseline
+        # (max-abs-diff = 0.0). Mutually exclusive with
+        # use_v_layernorm (closed-029) and the closed-#92
+        # v_norm_type zoo (asserted in `forward`). Default off →
+        # no Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        use_v_rmsnorm: bool = False,
+        # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). Apply
+        # `nn.RMSNorm(d_head, eps=1e-6)` to Q only, leave K untouched.
+        # nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the lever
+        # rescales Q to unit RMS per head-dim (spec-allowed fp32
+        # max-abs-diff < 1e-3 tolerance). Default off ⇒ no module is
+        # built, baseline path bit-identical. Distinct from 016 (which
+        # norms BOTH Q and K). See
+        # autoresearch/ideas/162-q-only-norm/idea.md.
+        use_q_only_norm: bool = False,
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Apply `nn.RMSNorm(d_head, eps=1e-6)` to K only, leave Q
+        # untouched. nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the
+        # lever rescales K to unit RMS per head-dim (spec-allowed fp32
+        # max-abs-diff < 1e-3 tolerance, same trade-off as 162). Default
+        # off ⇒ no module is built, baseline path bit-identical. The
+        # K-mirror of 162 (Q-only); together with 016 (symmetric QK)
+        # forms a clean 3-way attribution test. See
+        # `autoresearch/ideas/165-k-only-norm/idea.md`.
+        use_k_only_norm: bool = False,
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+        # top of 016's WIN). Keep the per-head RMSNorm/LayerNorm from
+        # 016 intact and add one scalar `qk_norm_scale` per MHA, init
+        # 1.0, applied AFTER the per-head norm and BEFORE the QK
+        # matmul: `Q ← Q · qk_norm_scale; K ← K · qk_norm_scale` (the
+        # MoA `extra_K` branch mirrors the same multiply on the extra
+        # K). α_l = 1.0 init ⇒ step-0 multiplicative gain is exactly
+        # the identity ⇒ forward is byte-identical to 016's step-0
+        # (max-abs-diff = 0.0 — no tolerance needed). The optimizer
+        # can then learn per-block normalization strength. Mirrors
+        # NormFormer's per-layer attention-output gains (Shleifer et
+        # al. 2021) applied to the QK-norm output. Mutually exclusive
+        # with use_q_only_norm / use_k_only_norm / use_qk_norm_post_rope
+        # (asserted in `forward`). Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        use_qk_norm_depth: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -854,6 +1231,54 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the attention output projection
+        # during training. Sampled per forward pass; same mask for all
+        # batch elements and positions; rescale by `1/(1-p)` so the
+        # expected magnitude matches the un-masked baseline (inverted-
+        # dropout convention, matches `F.dropout` and the 147-DropKey
+        # rescale). At eval (`self.training == False`) and with
+        # `dropconnect_wo_rate=0.0` the branch is never taken ⇒
+        # forward graph bit-identical to the no-DropConnect baseline.
+        # The effective rate is **ramped** from 0.0 → `dropconnect_wo_rate`
+        # over the first `dropconnect_wo_warmup_steps` training forwards
+        # (see `self._dc_step_count` below) so step 0 has effective rate
+        # 0.0 ⇒ the mask branch is short-circuited ⇒ trt forward is
+        # bit-identical to baseline at step 0 (max-abs-diff = 0.0 across
+        # the full forward). Default off → no Parameter created, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        use_dropconnect_wo: bool = False,
+        dropconnect_wo_rate: float = 0.0,
+        dropconnect_wo_warmup_steps: int = 100,
+        # 207 — W_O Low-Rank Bottleneck (learnable rank-r residual
+        # correction on the W_O projection, Arora et al. "Linear
+        # Algebraic Structure of Word Senses" + LoRA-style trained-
+        # from-scratch low-rank factorization on the attention
+        # output projection). Replace W_O with
+        #   `W_O_eff = W_O + σ(α) · (W_O_A @ W_O_B)`
+        # where `W_O_A ∈ R^{d_model × r}`, `W_O_B ∈ R^{r × d_model}`
+        # (`r = wo_rank`, default 16), and `α` is a 0-dim learnable
+        # scalar (init `wo_lowrank_alpha_init`, default −10 ⇒
+        # `σ(α) ≈ 4.5e-5` at step 0). `W_O_A` is normal-init std=0.02
+        # (matches the existing `out_proj` / `qkvo_proj` init); `W_O_B`
+        # is **zero-init** so the rank-r correction is exactly 0 at
+        # step 0 ⇒ `W_O_eff == W_O` byte-identical at step 0
+        # (max-abs-diff = 0.0 across the full forward — bit-identical
+        # to the no-flag baseline). As training proceeds, the
+        # optimizer can grow W_O_B and α, activating a learnable
+        # low-rank correction that soft-bottlenecks what each
+        # attention block can write back to the residual stream.
+        # Composes with 171-DropConnect (the 171 mask runs first on
+        # `w_o`, the 207 correction adds after — both are
+        # joint-by-default and individually silent at step 0).
+        # Default off → no Parameter registered, no branch taken,
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/207-wo-lowrank-bottleneck/idea.md` /
+        # `plan.md`.
+        use_lowrank_wo: bool = False,
+        wo_rank: int = 16,
+        wo_lowrank_alpha_init: float = -10.0,
         # 151 — RoV (Rotary Value Embeddings, gated; Su et al. 2024
         # Hunyuan-DiT / RoV for ViT, arXiv:2403.13257 §2.3). Apply the
         # same rotary position embedding already used on Q, K to the
@@ -867,6 +1292,25 @@ class MultiHeadAttention(nn.Module):
         # Q,K; RoV becomes a no-op (the geometric lever is
         # unavailable). See `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 174 — xPos exponential decay on the RoPE-magnitude (Sun et
+        # al. 2022, arXiv:2212.10554). One learnable per-layer scalar
+        # `xpos_gamma = nn.Parameter(torch.zeros(1))` applied to the
+        # rotated K as `K = K · exp(-xpos_gamma · t)` (the paper's
+        # `g_t = (1 − γ)^t`, in `exp` form for numerical stability;
+        # the two are identical at γ=0 and both equal 1). With γ = 0
+        # (init) the decay is identity ⇒ K is unchanged ⇒ attention
+        # scores are unchanged ⇒ forward is bit-identical to the
+        # 500k-base RoPE baseline at step 0. The lever is the per-layer
+        # "how local is local" knob the optimizer can dial: γ > 0
+        # shrinks distant keys toward zero (bias attention toward
+        # recent tokens), γ < 0 grows them (extend context). Decay
+        # applied to K only (not Q) so the score factor is
+        # `g_s = (1-γ)^s` on K's position — matches the standard
+        # xPos reading. The single scalar per MHA ⇒ 12 scalars at
+        # tiny1m3m (+0.001% of 0.94M). Default off → no parameter
+        # created, no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+        use_xpos: bool = False,
         # 154 — Rebased Attention (Shi et al. 2024, arXiv:2407.06641):
         # pool K, V along the time axis with stride `rebase_stride`
         # (default 8) before the softmax, so attention reads from R =
@@ -880,6 +1324,19 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/154-rebased-attn/idea.md`.
         use_rebased_attn: bool = False,
         rebase_stride: int = 8,
+        # 185 — Static per-head learned K-rotation (learned
+        # orthogonal rebase of K only, position-independent). Each
+        # head has its own `R_h ∈ R^{d_k × d_k}` orthogonal matrix
+        # applied as `K_h = R_h @ K_h` post-GQA-repeat, pre-RoPE /
+        # pre-qk_norm. `R_h` is a product of `d_k/2 = 8` 2D rotations
+        # on disjoint `(2i, 2i+1)` planes, parametrized by `n_heads
+        # × d_k/2 = 32` angles per block (init 0 ⇒ identity ⇒ step-0
+        # bit-identical to baseline). `R_h` orthogonal preserves norms
+        # and dot products ⇒ QK^T magnitudes are unchanged (no softmax
+        # temperature shift). Default off ⇒ no Parameter registered,
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        use_static_k_rotation: bool = False,
         # 156 — Mixture-of-Attentions (MoA). Run `E` parallel
         # attention computations per layer with SEPARATE K_e, V_e
         # projections (Q is shared across experts, so the routing is
@@ -894,6 +1351,76 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/156-moa/idea.md`.
         use_moa: bool = False,
         moa_num_experts: int = 2,
+        # 178 — Gated Multi-Query Attention (G-MQA). A learnable
+        # per-KV-head scalar gate `β_k, β_v ∈ R^{n_kv_heads}` blends
+        # between the head-local K, V projection and a single shared
+        # K, V projection: `K_h = K_local_h + β_k_h · (K_shared_h −
+        # K_local_h)`, same for V. β init 0 ⇒ K_mix = K_local exactly
+        # ⇒ step-0 forward is byte-identical to baseline. The shared
+        # K, V projection is a single `nn.Linear(d_model, d_model)`
+        # (per block) — 2·d_model² extra params/layer vs head-local.
+        # At β→1 the head-local path is dead weight, recovering
+        # standard MQA's K/V param savings. Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        use_mqa_gated: bool = False,
+        # 182 — Per-head learnable attention window (soft local
+        # window size per head). One scalar `w_h ∈ R^H` per MHA maps
+        # to a window half-size `half_w_h = T · sigmoid(w_h)`. Applied
+        # as `score -= 1e9 · relu(|t − s| − half_w_h)` in the manual
+        # attention branch — equivalent to a hard window per head but
+        # fp32-clean (no `−∞`, no NaN risk — matches 154-rebased-attn's
+        # rebased-softmax style). Init `w_h = 10 ⇒ sigmoid(10) ≈
+        # 0.99995 ⇒ half_w ≈ T − 0.00005·T > T − 1 = max|t − s|`, so
+        # the relu is identically 0 everywhere and the step-0 forward
+        # is byte-identical to the no-flag baseline. Total cost:
+        # n_heads × n_layers = 48 extra params at tiny1m3m (+0.005%
+        # of 0.94M). Default off ⇒ no Parameter registered, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        use_per_head_window: bool = False,
+        # 180 — Pre-softmax 1D causal depthwise conv on attention logits
+        # (QK^T). Per-head kernel `w_h ∈ R^{K}` is convolved along the
+        # key axis of the score tensor `[B, H, T, S]` between the
+        # causal mask and softmax. Kernel init is a delta function
+        # (`w_h[:, K//2] = 1`, rest 0) ⇒ step-0 conv is the identity on
+        # scores ⇒ softmax unchanged ⇒ forward is byte-identical to
+        # the no-flag baseline. The optimizer can grow any kernel
+        # shape — smoothing (positive, sums to 1) or sharpening
+        # (signed) — over training. K=3 default; small enough to be
+        # negligible compute, large enough to encode a meaningful
+        # local-attention prior. Forces the manual attention path so
+        # SDPA's flash kernel doesn't perturb step-0 numerics.
+        # Default off → no Parameter registered, no branch taken,
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+        use_logit_conv: bool = False,
+        logit_conv_kernel_size: int = 3,
+        # 179 — Anti-Causal Sub-Heads (UniLM-style hybrid
+        # causal + bidirectional heads). A learnable per-head
+        # scalar `γ_h = sigmoid(γ_raw_h)` (init `γ_raw_h = -10`
+        # ⇒ `γ_h ≈ 4.5e-5` at step 0) controls how much of head
+        # h's attention is bidirectional: the upper-triangle
+        # fill is replaced per head with `−1e9 · (1 − γ_h)` so
+        # γ_h=0 ⇒ effectively masked (causal), γ_h=1 ⇒ no fill
+        # (fully bidirectional), and intermediate γ_h smoothly
+        # interpolate the mask magnitude. The repo convention
+        # uses a finite mask sentinel `-1e9` (not `-∞`); the
+        # r1 review closed the `-∞` interpretation because
+        # `(1−γ_h)·-∞` degenerates the lever. With `−1e9`,
+        # `(1−γ_h)·-1e9` is a real gradient across γ_h ∈ [0,1]
+        # and the step-0 byte-identical claim holds:
+        # `sigmoid(-10) ≈ 4.5e-5` ⇒ fill `≈ -9.99955e8` ⇒
+        # `exp(-9.99955e8) < 1e-300` in fp32 ⇒ upper-triangle
+        # bitwise 0 in softmax output. Per the inference
+        # schedule in `idea.md`, γ_h stays as trained at both
+        # train and eval (measures real deployment behavior).
+        # Default off ⇒ no Parameter registered, no branch
+        # taken, baseline path bit-identical. Forces the
+        # manual attention path so SDPA's flash kernel doesn't
+        # perturb the per-head fill. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        use_anti_causal_subheads: bool = False,
         # O-family: a single cheap op on the post-softmax attention output
         # [B,H,T,D] (pre head-merge). One string selects the lever; params are
         # built in _init_output_op and applied at the [B,H,T,D] choke point.
@@ -975,6 +1502,39 @@ class MultiHeadAttention(nn.Module):
         _qk_use_ln = bool(self.use_layernorm) or bool(use_qk_layernorm)
         self.q_norm = make_norm(self.d_k, qk_norm_type, _qk_use_ln)
         self.k_norm = make_norm(self.d_k, qk_norm_type, _qk_use_ln)
+        # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). Separate
+        # `nn.RMSNorm(d_head, eps=1e-6)` on Q only; K stays raw. nn.RMSNorm
+        # weight=1, bias=0 init ⇒ at step 0 the lever rescales Q to unit
+        # RMS per head-dim (not byte-identical to no-norm; spec-allowed
+        # fp32 max-abs-diff < 1e-3 tolerance, same trade-off as 159-emb-
+        # layernorm). Default off ⇒ no module is registered, no branch
+        # is taken, baseline path bit-identical. See
+        # autoresearch/ideas/162-q-only-norm/idea.md.
+        self.use_q_only_norm = use_q_only_norm
+        if use_q_only_norm:
+            self.q_only_norm = nn.RMSNorm(self.d_k, eps=1e-6)
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Separate `nn.RMSNorm(d_head, eps=1e-6)` on K only; Q stays raw.
+        # nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the lever
+        # rescales K to unit RMS per head-dim (not byte-identical to
+        # no-norm; spec-allowed fp32 max-abs-diff < 1e-3 tolerance,
+        # same trade-off as 159-emb-layernorm, 162-q-only-norm). Default
+        # off ⇒ no module is registered, no branch is taken, baseline
+        # path bit-identical. See
+        # autoresearch/ideas/165-k-only-norm/idea.md.
+        self.use_k_only_norm = use_k_only_norm
+        if use_k_only_norm:
+            self.k_only_norm = nn.RMSNorm(self.d_k, eps=1e-6)
+        # Mutual exclusion: 162 (Q-only) and 165 (K-only) cannot both
+        # be on at once — together they would re-derive the symmetric
+        # 016 path via two separate modules, double-counting the
+        # weight tensor and producing a meaningless operator. We
+        # assert loudly at construction so misconfigurations fail
+        # fast (the build-smoke catches this before GPU time).
+        assert not (use_q_only_norm and use_k_only_norm), (
+            "use_q_only_norm and use_k_only_norm are mutually exclusive "
+            "(162 + 165 re-derives the symmetric 016 path); pick one."
+        )
         # #92 Robust V-norm: optionally normalize V (per head) before the
         # softmax-weighted sum, so outlier value channels don't dominate the
         # aggregated output. Off by default ("" / "none").
@@ -990,6 +1550,51 @@ class MultiHeadAttention(nn.Module):
         elif use_v_layernorm:
             self.use_v_norm = True
             self.v_norm = nn.LayerNorm(self.d_k)
+        # 176 — Pre-AV V RMSNorm: when `use_v_rmsnorm=True` and the
+        # closed-#92 v_norm_type is off and use_v_layernorm is off,
+        # register two new per-head Parameters. `v_rmsnorm_alpha ∈
+        # R^H` init 0 (relu(0) = 0 ⇒ identity blend at step 0);
+        # `v_rmsnorm_gain ∈ R^{H × d_k}` init 1.0 (per-head identity
+        # gain at step 0). Independent of the closed-#92 v_norm_type
+        # zoo and of closed-029 use_v_layernorm (mutual-exclusion
+        # asserted at forward). Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off.
+        # Also expose `self.use_v_layernorm` and `self.v_norm_type` as
+        # raw kwarg shadows so the mutual-exclusion asserts at
+        # forward can distinguish the two closed V-norm axes
+        # (`use_v_layernorm` is closed-029 LayerNorm;
+        # `v_norm_type != ""` is closed-#92 zoo).
+        self.use_v_layernorm = use_v_layernorm
+        self.v_norm_type = v_norm_type
+        self.use_v_rmsnorm = use_v_rmsnorm
+        if use_v_rmsnorm:
+            self.v_rmsnorm_alpha = nn.Parameter(torch.zeros(self.n_heads))
+            self.v_rmsnorm_gain = nn.Parameter(
+                torch.ones(self.n_heads, self.d_k)
+            )
+        else:
+            self.v_rmsnorm_alpha = None
+            self.v_rmsnorm_gain = None
+        # 176 — Pre-AV V RMSNorm: when `use_v_rmsnorm=True` and the
+        # closed-#92 v_norm_type is off and use_v_layernorm is off,
+        # register two new per-head Parameters. `v_rmsnorm_alpha ∈
+        # R^H` init 0 (relu(0) = 0 ⇒ identity blend at step 0);
+        # `v_rmsnorm_gain ∈ R^{H × d_k}` init 1.0 (per-head identity
+        # gain at step 0). Independent of the closed-#92 v_norm_type
+        # zoo and of closed-029 use_v_layernorm (mutual-exclusion
+        # asserted at forward). Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off.
+        self.use_v_rmsnorm = use_v_rmsnorm
+        if use_v_rmsnorm:
+            self.v_rmsnorm_alpha = nn.Parameter(torch.zeros(self.n_heads))
+            self.v_rmsnorm_gain = nn.Parameter(
+                torch.ones(self.n_heads, self.d_k)
+            )
+        else:
+            self.v_rmsnorm_alpha = None
+            self.v_rmsnorm_gain = None
 
         # 013 — CoPE: gate the Rotary construction. When on, RoPE is
         # replaced by a content-aware bias (CoPE) added to the
@@ -1019,6 +1624,21 @@ class MultiHeadAttention(nn.Module):
         # `softpick` helper at the top of this file is the entire
         # implementation.
         self.use_softpick = use_softpick
+        # 173 — Entmax-1.5 sparse attention. The `use_entmax` flag is
+        # stored on self so the manual attention path can branch on it
+        # at the swap site (line ~3035 below, replacing `softmax`).
+        # `entmax_alpha_raw ∈ R^H` is the raw parameter; the actual
+        # α_h = 1 + 0.5·(1 + tanh(α_raw_h)) is derived in the helper
+        # call. Init `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the helper
+        # short-circuits to `torch.softmax` for byte-identity at step
+        # 0. When `use_entmax=False` the parameter is NOT registered
+        # (the `if` guard keeps it out of the parameter list so it
+        # doesn't consume RNG or optimizer state) and the baseline
+        # forward graph is untouched. See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        self.use_entmax = use_entmax
+        if use_entmax:
+            self.entmax_alpha_raw = nn.Parameter(torch.zeros(self.n_heads))
         # 025 — SSMax: one learnable per-head scalar s_h (init 1.0).
         # Built lazily; the parameter is never referenced when the
         # flag is off, so the baseline path is bit-identical. The
@@ -1040,6 +1660,101 @@ class MultiHeadAttention(nn.Module):
         if self.use_value_residual:
             self.lambda_v = nn.Parameter(torch.zeros(()))
             self._v_residual = None
+        # 164 — Q-Carry. Per-block scalar `α_q` (init 0 → identity at
+        # step 0) plus the forward-pass-local stash `self._q_carry`
+        # (read back by the model loop after the layer-0 block).
+        # `self._q_carry` is always initialized to `None` so the
+        # `block.attention._q_carry` readout in `MinimalLLM.forward`
+        # is safe even before the first forward pass.
+        self.use_q_carry = use_q_carry
+        if self.use_q_carry:
+            self.alpha_q = nn.Parameter(torch.zeros(()))
+            self._q_carry = None
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_q_carry` so these are never consumed.
+            self.alpha_q = None
+            self._q_carry = None
+        # 168 — AV-Output Carry. Per-block scalar `α_av` (init 0 →
+        # identity at step 0) plus the forward-pass-local stash
+        # `self._av_carry` (read back by the model loop after the
+        # layer-0 block). `self._av_carry` is always initialized to
+        # `None` so the `block.attention._av_carry` readout in
+        # `MinimalLLM.forward` is safe even before the first forward
+        # pass. Stash shape is `[B, T, d_model]` (post-merge-reshape,
+        # pre-W_O), `.detach()`-ed.
+        self.use_av_output_carry = use_av_output_carry
+        if self.use_av_output_carry:
+            self.alpha_av = nn.Parameter(torch.zeros(()))
+            self._av_carry = None
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_av_output_carry` so these are never consumed.
+            self.alpha_av = None
+            self._av_carry = None
+        # 186 — Within-Block V-Carry. Per-head learnable scalar
+        # `α_h = tanh(v_carry_alphas_h)` (init `v_carry_alphas_h = 0`
+        # ⇒ `α_h = 0` exactly ⇒ recurrence collapses to identity at
+        # step 0). One parameter per head (H=4 at tiny1m3m). Stored on
+        # `self.v_carry_alphas`; the forward branch is gated on
+        # `self.use_v_carry_block` so the parameter is never consumed
+        # when the flag is off.
+        self.use_v_carry_block = use_v_carry_block
+        if self.use_v_carry_block:
+            self.v_carry_alphas = nn.Parameter(torch.zeros(n_heads))
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_v_carry_block` so this is never consumed.
+            self.v_carry_alphas = None
+        # 169 — Depth-Conditional QK-Norm. Per-block scalar `α_l =
+        # nn.Parameter(torch.ones(()))` (init 1.0 ⇒ `Q ← Q · 1 = Q`
+        # and `K ← K · 1 = K` exactly in fp32 ⇒ step-0 forward is
+        # byte-identical to 016's step-0 with max-abs-diff = 0.0).
+        # One scalar per MHA (12 blocks × 1 = 12 scalars total).
+        # Applied AFTER the per-head RMSNorm / LayerNorm and BEFORE
+        # the QK matmul (post-RoPE in either path so the multiply
+        # commutes with the post-norm tweaks at α=1.0). Mutually
+        # exclusive with use_q_only_norm / use_k_only_norm /
+        # use_qk_norm_post_rope (asserted in `forward`). Default off
+        # ⇒ no Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        self.use_qk_norm_depth = use_qk_norm_depth
+        if self.use_qk_norm_depth:
+            self.qk_norm_scale = nn.Parameter(torch.ones(()))
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_qk_norm_depth` so this is never consumed.
+            self.qk_norm_scale = None
+        # 163 — Post-Attention V-Mix Depthwise Convolution. Stored
+        # on self; the conv is applied in `forward()` AFTER the
+        # `[B, H, T, D] → [B, T, d_model]` reshape and BEFORE the W_O
+        # projection. Raw `nn.Parameter(zeros(d_model, 1, k))` with
+        # center tap = 1.0 set inline (NOT `nn.Conv1d(...)`) so the
+        # construction does NOT consume RNG — keeping the RNG state
+        # aligned with the baseline path for the step-0 byte-
+        # identity test (any RNG advance between the two
+        # constructions would shift the next-block qkvo_proj random
+        # init and break the comparison). See
+        # `models/conv_ffn.py:103-105` for the sibling pattern.
+        self.use_v_mix_conv = use_v_mix_conv
+        # Clamp to odd >= 3; the spec pins k=3 (the only kernel we
+        # test at tiny1m3m — see idea.md §Design sketch caveat
+        # about small-channel regimes).
+        self.v_mix_conv_kernel = max(3, int(v_mix_conv_kernel) | 1)
+        if self.use_v_mix_conv:
+            w = torch.zeros(self.d_model, 1, self.v_mix_conv_kernel)
+            w[:, 0, self.v_mix_conv_kernel // 2] = 1.0
+            self.v_mix_conv_weight = nn.Parameter(w)
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references this
+            # when `use_v_mix_conv=False` so it can be anything.
+            self.v_mix_conv_weight = None
         # 129 — YOCO: when set, the MHA reads shared K, V from the
         # `shared_kv` kwarg on `forward`, skipping the W_K, W_V
         # slices of the merged qkvo_proj. Default off → the W_K,
@@ -1047,6 +1762,123 @@ class MultiHeadAttention(nn.Module):
         # forward is bit-identical. See
         # `models/yoco.py` and `autoresearch/ideas/129-yoco/idea.md`.
         self.use_shared_kv = use_shared_kv
+        # 188 — Cross-Block K/V Projection Sharing. Two 0-dim
+        # learnable scalars per MHA (`cross_block_alpha_K`,
+        # `cross_block_alpha_V`), init -10 so `sigmoid(-10) ≈ 4.5e-5`
+        # at step 0 ⇒ the blend on K, V is dominated by the
+        # block-local projection (effectively identity at step 0,
+        # bit-identical to baseline within fp32 noise of one extra
+        # multiply-add). `prev_W_K` / `prev_W_V` are passed in
+        # `forward` and `.detach()`-ed at the call site (the model
+        # loop stashes the layer-0 W_K, W_V slices and passes them
+        # to layers 1..N-1). When `use_cross_block_kv_share=False`
+        # (default) no Parameter is registered, the forward branch
+        # is never taken, and the baseline K, V projection path is
+        # bit-identical. See
+        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+        self.use_cross_block_kv_share = use_cross_block_kv_share
+        if self.use_cross_block_kv_share:
+            self.cross_block_alpha_K = nn.Parameter(
+                torch.full((), -10.0)
+            )
+            self.cross_block_alpha_V = nn.Parameter(
+                torch.full((), -10.0)
+            )
+            # Forward-pass-local stash slots; written by `forward` so
+            # the model loop can read `block.attention._prev_W_K` /
+            # `_prev_W_V` after the layer-0 call and pass them as
+            # `prev_W_K` / `prev_W_V` kwargs to layer 1..N-1. Always
+            # initialized to `None` so the attribute exists for the
+            # model loop's `getattr` lookups even before the first
+            # forward (and when the flag is off).
+            self._prev_W_K = None
+            self._prev_W_V = None
+        else:
+            self.cross_block_alpha_K = None
+            self.cross_block_alpha_V = None
+            self._prev_W_K = None
+            self._prev_W_V = None
+        # 204 — Cross-Block Attention Score Sharing. One 0-dim
+        # learnable scalar `score_share_alpha_raw` (init
+        # `score_share_alpha_init=-10.0` ⇒ `σ(-10) ≈ 4.5e-5` at
+        # step 0 ⇒ the blend on pre-softmax scores is dominated
+        # by the block-local scores, i.e. effectively identity at
+        # step 0 — bit-identical to baseline within fp32 noise of
+        # one extra multiply-add). `prev_block_scores` is passed
+        # in `forward` as the previous block's pre-softmax scores
+        # `[B, H, T, T]`, `.detach()`-ed at the call site (the
+        # model loop stashes the layer-0 pre-softmax scores and
+        # passes them to layers 1..N-1; same pattern as 021's
+        # `v_residual=` / 164's `q_carry=` / 168's `av_carry=` /
+        # 188's `prev_W_K=` / `prev_W_V=`). The detach on the
+        # stash keeps the cross-block gradient structurally
+        # bounded to the 1 scalar α per block. When
+        # `use_cross_block_score_share=False` (default) no
+        # Parameter is registered, the forward branch is never
+        # taken, and the baseline pre-softmax score path is
+        # bit-identical. Forces the manual attention path (the
+        # blend on `scores = Q·K^T/√d_k` can't go through SDPA's
+        # flash kernel — `scores` is materialized in the manual
+        # path so we can blend it; SDPA fuses QK^T + softmax +
+        # AV into a single kernel that doesn't expose the
+        # pre-softmax logit). See
+        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+        self.use_cross_block_score_share = use_cross_block_score_share
+        if self.use_cross_block_score_share:
+            self.score_share_alpha_raw = nn.Parameter(
+                torch.full((), float(score_share_alpha_init))
+            )
+            # Forward-pass-local stash slot; written by `forward`
+            # so the model loop can read `block.attention.
+            # _prev_block_scores` after the layer-0 call and pass
+            # it as `prev_block_scores=` kwarg to layers 1..N-1.
+            # Always initialized to `None` so the attribute exists
+            # for the model loop's `getattr` lookups even before
+            # the first forward (and when the flag is off).
+            self._prev_block_scores = None
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references these
+            # when `use_cross_block_score_share=False` so they can
+            # be anything.
+            self.score_share_alpha_raw = None
+            self._prev_block_scores = None
+        # 207 — W_O Low-Rank Bottleneck. Two `nn.Parameter` matrices
+        # `wo_a ∈ R^{d_model × r}` (normal-init std=0.02, matches the
+        # existing `qkvo_proj` init) and `wo_b ∈ R^{r × d_model}`
+        # (zero-init ⇒ `wo_a @ wo_b == 0` exactly at step 0), plus one
+        # 0-dim learnable scalar `wo_lowrank_alpha` (init
+        # `wo_lowrank_alpha_init`, default −10 ⇒ `sigmoid(-10) ≈ 4.5e-5`).
+        # The forward computes
+        #   `w_o_eff = w_o + σ(α) · (wo_a @ wo_b)`
+        # At step 0 `wo_b = 0` ⇒ `wo_a @ wo_b = 0` ⇒ `w_o_eff == w_o`
+        # bit-identical to the no-flag baseline. Both `wo_a` and `wo_b`
+        # are constructed and registered ONLY when `use_lowrank_wo=True`
+        # (default off → no Parameter created, no branch taken, baseline
+        # path bit-identical). The `wo_lowrank_alpha` scalar is also
+        # gated — when the lever is off, no Parameter exists, so
+        # `hasattr(self, "wo_lowrank_alpha")` is False and the forward
+        # gate `if self.use_lowrank_wo` short-circuits. See
+        # `autoresearch/ideas/207-wo-lowrank-bottleneck/idea.md` /
+        # `plan.md`.
+        self.use_lowrank_wo = use_lowrank_wo
+        self.wo_rank = int(wo_rank)
+        if self.use_lowrank_wo:
+            self.wo_a = nn.Parameter(
+                torch.empty(self.d_model, self.wo_rank)
+            )
+            with torch.no_grad():
+                torch.nn.init.normal_(self.wo_a, mean=0.0, std=0.02)
+            self.wo_b = nn.Parameter(
+                torch.zeros(self.wo_rank, self.d_model)
+            )
+            self.wo_lowrank_alpha = nn.Parameter(
+                torch.full((), float(wo_lowrank_alpha_init))
+            )
+        else:
+            self.wo_a = None
+            self.wo_b = None
+            self.wo_lowrank_alpha = None
         self.dropout = dropout
         self.use_attn_output_gate = use_attn_output_gate
         if self.use_attn_output_gate:
@@ -1065,6 +1897,71 @@ class MultiHeadAttention(nn.Module):
         self.use_attn_logit_bias = use_attn_logit_bias
         if self.use_attn_logit_bias:
             self.attn_logit_bias = nn.Parameter(torch.zeros(n_heads))
+        # 179 — Anti-Causal Sub-Heads. Per-head learnable scalar
+        # `γ_h = sigmoid(γ_raw_h)` attenuates the upper-triangle
+        # fill by `(1 − γ_h)`. Init `γ_raw_h = -10` ⇒
+        # `sigmoid(-10) ≈ 4.5e-5` ⇒ mask fill `≈ -9.99955e8`
+        # (well within fp32 precision of the baseline `-1e9`).
+        # When off, no Parameter is registered and the forward
+        # branch is never taken — the baseline `masked_fill(.,
+        # -1e9)` is exactly the per-head-broadcasted scalar
+        # when γ_h = 0 anyway, so we do nothing and the
+        # baseline path is bit-identical. See the kwarg docstring
+        # above for the full mechanism and the step-0
+        # byte-identity derivation. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        self.use_anti_causal_subheads = use_anti_causal_subheads
+        if self.use_anti_causal_subheads:
+            self.ac_subhead_gate = nn.Parameter(
+                torch.full((n_heads,), -10.0)
+            )
+        else:
+            self.ac_subhead_gate = None
+        # 166 — T5-style bucketed relative position bias. Per-head
+        # bias tensor `self.rpe_bias ∈ R^{H × B}` (init zeros) added
+        # to the attention logits pre-softmax in the manual path,
+        # indexed by `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max
+        # (B-1)`. The bucket index matrix is a registered
+        # non-persistent buffer (size `[max_seq_len, max_seq_len]`,
+        # int64) so it's pinned to CPU/GPU with the model but never
+        # serialized. At T ≤ 2048 with B=32, the actually-used
+        # bucket range is 0..11 (since `floor(log2(2047+1))=11`),
+        # so buckets 12..31 stay zero-init forever — a no-op for
+        # tiny1m3m, but the spec default keeps T5's parameter
+        # count unchanged for re-use at 512-token seq_lens where
+        # the full range is exercised. Default off → no
+        # Parameter is registered, the forward branch is gated
+        # on `self.use_t5_rpe` and never taken, baseline path
+        # bit-identical. See `autoresearch/ideas/166-t5-rpe/idea.md`.
+        self.use_t5_rpe = use_t5_rpe
+        # Clamp B to a small positive integer so a stray config
+        # can't drive the param tensor to 0 / negative. The spec
+        # default is 32 (matches T5-XXL).
+        self.t5_rpe_buckets = max(1, int(t5_rpe_buckets))
+        if self.use_t5_rpe:
+            self.rpe_bias = nn.Parameter(
+                torch.zeros(self.n_heads, self.t5_rpe_buckets)
+            )
+            # Precomputed bucket index matrix, shape [T_max, T_max],
+            # int64. `bucket[i, j] = floor(log2(|i-j|+1)).clamp_max
+            # (B-1)`. Built once at construction (no RNG). Follows
+            # `model.to(device)` because it's a registered buffer, so
+            # no per-forward host transfer. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            with torch.no_grad():
+                idx = torch.arange(max_seq_len)
+                diff = (idx[:, None] - idx[None, :]).abs()
+                buckets = torch.floor(torch.log2(diff.float() + 1.0))
+                buckets = buckets.clamp_max(self.t5_rpe_buckets - 1).long()
+            self.register_buffer(
+                "_t5_rpe_bucket_idx", buckets, persistent=False,
+            )
+        else:
+            # Stub so attribute lookups are always valid even when
+            # the flag is off. The forward branch is gated on
+            # `self.use_t5_rpe` so these are never consumed.
+            self.rpe_bias = None
+            self._t5_rpe_bucket_idx = None
         # 155 — Per-head learnable attention temperature `τ_h ∈ R^H`.
         # Init `1/sqrt(d_k)` (the standard inverse-temperature) so the
         # per-head `Q_h K_h^T * τ_h` score scale matches baseline
@@ -1081,6 +1978,116 @@ class MultiHeadAttention(nn.Module):
             self.attn_temperature = nn.Parameter(
                 torch.full((self.n_heads,), float(self.d_k) ** -0.5)
             )
+        # 161 — Per-layer learnable attention temperature `τ_l ∈ R^1`.
+        # Stored on the MODEL (`MinimalLLM.layer_temperature`) — each
+        # MHA reads its own slice `layer_temperature[layer_index]` at
+        # forward. Init `1/sqrt(d_k)` (the standard inverse-temperature)
+        # so `Q_h K_h^T * τ_l` matches baseline `Q_h K_h^T / sqrt(d_k)`
+        # at step 0. Distinct from per-head (155): per-head varies
+        # WITHIN a layer (one scalar per head), per-layer varies
+        # ACROSS layers (one scalar per layer, shared across heads).
+        # The per-layer parameter lives on the model, not on each
+        # MHA, so this is just a flag and the model is responsible
+        # for the parameter. Forces the manual attention path so
+        # SDPA's flash/efficient backends don't perturb step-0
+        # numerics. Default off → no branch taken, baseline path
+        # bit-identical. See `autoresearch/ideas/161-dyt-temp/idea.md`.
+        self.use_per_layer_temp = use_per_layer_temp
+        # 180 — Pre-softmax 1D causal depthwise conv on attention logits.
+        # `logit_conv_w ∈ R^{H × K}` per-head kernel convolved along
+        # the key axis of scores before softmax. Init zero then set
+        # center = 1.0 with no_grad so the init itself doesn't consume
+        # RNG (preserves step-0 byte-identity with the no-flag path).
+        # When `use_logit_conv=False` the parameter is not registered
+        # and `logit_conv_w` is a None stub for attribute-lookup
+        # safety. See the flag docstring above for the mechanism.
+        self.use_logit_conv = use_logit_conv
+        self.logit_conv_kernel_size = max(1, int(logit_conv_kernel_size))
+        if self.use_logit_conv:
+            self.logit_conv_w = nn.Parameter(
+                torch.zeros(self.n_heads, self.logit_conv_kernel_size)
+            )
+            with torch.no_grad():
+                # Identity tap = index K-1 (the "current position"
+                # weight in the `out[s] = Σ_k w[k]·padded[s+k]`
+                # convention used in `forward()`) ⇒ delta kernel ⇒
+                # conv is identity on scores ⇒ softmax unchanged ⇒
+                # step-0 forward is byte-identical to baseline. The
+                # optimizer can grow off-center weights over training.
+                self.logit_conv_w[:, self.logit_conv_kernel_size - 1] = 1.0
+        else:
+            self.logit_conv_w = None
+        # 160 — Per-head RMS gain on the attention output. After the
+        # AV product and softmax aggregation, multiply each head's
+        # output `o_h = (A·V)_h ∈ R^{T×d_k}` by a learnable scalar
+        # `g_h ∈ R^H` so the per-head contribution to the residual
+        # stream has controlled magnitude. Init `g_h = 1.0` exactly
+        # ⇒ `o_h *= 1 = o_h` byte-identical to baseline at step 0.
+        # Cost: H scalars/layer (4 at tiny1m3m, total 48 — negligible).
+        # Different from `use_attn_output_gate` (reparam `(1+g_h)` with
+        # g_h=0 init): that one starts at 1.0 but its magnitude
+        # reparam has the gradient concentrated in `g_h`; this one is
+        # a direct `g_h` multiplier so the magnitude *and* gradient
+        # are both `g_h`. Default off → no Parameter registered, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        self.use_head_gain = use_head_gain
+        if self.use_head_gain:
+            self.head_gain = nn.Parameter(torch.ones(self.n_heads))
+        # 181 — Cross-Head Channel RMSNorm. Normalize the attention
+        # output `out = A·V ∈ R^{B×H×T×d_k}` ACROSS HEADS within
+        # each d_k slice (i.e. take the RMS over the H dim at each
+        # (b, t, k) position) so all H heads land on the same
+        # per-(t, k) scale before the W_O projection. Distinct
+        # from 160 (per-head scalar gain, no cross-head coupling)
+        # and 176 (V-pre-AV per-head RMSNorm, normalizes each
+        # head independently along d_k). Two new per-block
+        # parameters:
+        #   - `cross_head_rmsnorm_alpha_raw ∈ R^H` init `−1e-3`
+        #     ⇒ `relu(−1e-3) = 0` exactly (the relu clamps the
+        #     negative to bit-exact zero) ⇒ `α_h = 0` exactly at
+        #     step 0 ⇒ `out = (1 − 0)·out + 0·... = out` byte-
+        #     identical to baseline. NOT `sigmoid(α_raw)` init
+        #     `-5` (which would give `≈ 0.0067`, not zero).
+        #   - `cross_head_rmsnorm_gain_raw ∈ R^{H×d_k}` init 0
+        #     ⇒ `γ_h[k] = 1 + tanh(0) = 1.0` exactly at step 0
+        #     ⇒ no per-channel rescaling.
+        # Cost: H × (1 α + d_k γ) = 4 × (1 + 16) = 68 params /
+        # block × 12 blocks = 816 params (+0.087% of 0.94M).
+        # Same shape as 176. Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off. See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        self.use_cross_head_rmsnorm = use_cross_head_rmsnorm
+        if self.use_cross_head_rmsnorm:
+            self.cross_head_rmsnorm_alpha_raw = nn.Parameter(
+                torch.full((self.n_heads,), -1e-3)
+            )
+            self.cross_head_rmsnorm_gain_raw = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k)
+            )
+        else:
+            self.cross_head_rmsnorm_alpha_raw = None
+            self.cross_head_rmsnorm_gain_raw = None
+        # 191 — Per-token attention output gain. One learnable
+        # per-position scalar `γ_t ∈ R^{T_max}` (init 0 ⇒ (1+0)=1
+        # exactly ⇒ byte-identical to baseline at step 0). Sliced
+        # to `[:seq_len]` at apply time so inference at shorter T
+        # only consumes the first `seq_len` scalars. The T
+        # granularity (T_max scalars/block) is a different axis
+        # from the closed per-head (160: H=4 scalars), per-channel
+        # (142: d_model=64 scalars), and per-(h, k) (181: H·d_k
+        # scalars) levers. When the flag is off, the attribute
+        # is `None` so lookups stay valid; the forward `if` guard
+        # short-circuits. See
+        # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+        self.use_token_attn_gain = use_token_attn_gain
+        if self.use_token_attn_gain:
+            self.token_attn_gain = nn.Parameter(
+                torch.zeros(max_seq_len)
+            )
+        else:
+            self.token_attn_gain = None
         # #107 Exclusive self-attn: subtract the projection of the head
         # output onto its current-token value vector. Per-head scalar gate
         # is zero-init so step 0 is the baseline graph.
@@ -1335,6 +2342,33 @@ class MultiHeadAttention(nn.Module):
         # forward graph bit-identical to baseline.
         self.use_drop_key = use_drop_key
         self.drop_key_rate = float(drop_key_rate)
+        # 171 — DropConnect on W_O. Stored on self so the forward
+        # branch at the W_O application site can read both the flag
+        # and the rate. The flag is also stored so the standard
+        # boolean-gated pattern (`if self.use_dropconnect_wo and
+        # self.training and self.dropconnect_wo_rate > 0.0`) matches
+        # the 147-DropKey sibling exactly. No `nn.Parameter` is
+        # created — the lever only consumes RNG during the training
+        # forward (the mask is sampled fresh each call). Default off
+        # → no module built, no branch taken, baseline path bit-
+        # identical. See `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self.use_dropconnect_wo = use_dropconnect_wo
+        self.dropconnect_wo_rate = float(dropconnect_wo_rate)
+        self.dropconnect_wo_warmup_steps = int(dropconnect_wo_warmup_steps)
+        # 171 — DropConnect training-step counter (Python int, not a
+        # buffer; lives on the module instance, increments at the END
+        # of each forward so the first forward call sees step=0 ⇒
+        # effective_rate=0.0 ⇒ mask branch short-circuits ⇒ trt forward
+        # is bit-identical to baseline at step 0). Per-MHA counter:
+        # each block's MHA tracks its own steps (every block gets the
+        # same count in practice — all MHAs are called once per
+        # forward, so they tick together — but tracking per-block
+        # avoids any cross-block coupling if the model ever calls MHA
+        # selectively). Only used to compute `effective_rate` during
+        # training; eval mode short-circuits the mask anyway so the
+        # counter is irrelevant there. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self._dc_step_count: int = 0
         # 151 — RoV (Rotary Value Embeddings, gated). One learnable
         # per-block scalar `rov_gate` (init 0 ⇒ step-0
         # `V_combined = V + 0·V_rot = V` ⇒ bit-identical to baseline).
@@ -1346,6 +2380,18 @@ class MultiHeadAttention(nn.Module):
         self.use_rov = use_rov
         if self.use_rov:
             self.rov_gate = nn.Parameter(torch.zeros(1))
+        # 174 — xPos exponential decay. Stored on self so the
+        # forward branch at the K application site can read both the
+        # flag and the gamma parameter. One learnable per-layer scalar
+        # `xpos_gamma` (init 0 ⇒ step-0 forward is bit-identical to
+        # baseline RoPE: `K *= exp(0·t) = 1`). Default off → no
+        # parameter created, no branch taken, baseline path bit-
+        # identical (12 extra scalars at tiny1m3m when on, ~+0.001%
+        # of 0.94M params). See `autoresearch/ideas/174-xpos-decay/
+        # idea.md`.
+        self.use_xpos = use_xpos
+        if self.use_xpos:
+            self.xpos_gamma = nn.Parameter(torch.zeros(1))
         # 154 — Rebased Attention. Stored on self; the rebase pool
         # is applied in `forward()` right after the [B,T,H,D] reshape
         # (post-RoPE) and *before* the [B,H,T,D] transpose, so K, V
@@ -1360,6 +2406,30 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/154-rebased-attn/idea.md`.
         self.use_rebased_attn = use_rebased_attn
         self.rebase_stride = max(1, int(rebase_stride))
+
+        # 185 — Static per-head learned K-rotation. Stored on self;
+        # the rotation block in `forward()` applies a per-head
+        # orthogonal matrix `R_h` to K (built from the angle
+        # parameter) post-GQA-repeat, pre-RoPE / pre-qk_norm. The
+        # angles are shape `[n_heads, d_k//2]` and init 0 ⇒
+        # `R_h = I_{d_k}` exactly ⇒ K is bit-identical to the input
+        # at step 0. When `use_static_k_rotation=False` (default)
+        # the parameter is NOT built (no extra memory on the baseline
+        # path) and the forward branch is never taken — baseline
+        # forward graph is bit-identical to no-flag. Cost when on:
+        # n_heads × d_k//2 = 4 × 8 = 32 params/layer, 384 total at
+        # tiny1m3m (+0.041% of the 0.94M model). See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        self.use_static_k_rotation = use_static_k_rotation
+        if use_static_k_rotation:
+            assert self.d_k % 2 == 0, (
+                "use_static_k_rotation=True requires even d_k "
+                "(per-plane 2D rotations pair dims 2i, 2i+1); "
+                f"got d_k={self.d_k}"
+            )
+            self.k_rotation_angles = nn.Parameter(
+                torch.zeros(self.n_heads, self.d_k // 2)
+            )
 
         # 156 — Mixture-of-Attentions (MoA). Stored on self; the
         # MoA branch in `forward()` runs E parallel attention
@@ -1407,6 +2477,98 @@ class MultiHeadAttention(nn.Module):
             # when `use_moa=False` so they can be anything.
             self.moa_router_weight = None
             self.moa_router_bias = None
+
+        # 178 — Gated Multi-Query Attention (G-MQA). Per-KV-head
+        # scalar gate β_k, β_v ∈ R^{n_kv_heads} blend between the
+        # head-local K, V projection and a single shared K, V
+        # projection: `K_h = K_local_h + β_k_h · (K_shared_h −
+        # K_local_h)`, same for V. β init 0 ⇒ K_mix = K_local
+        # exactly in fp32 ⇒ step-0 forward is bit-identical to the
+        # no-flag baseline (max-abs-diff = 0.0). The shared K, V
+        # projection is a single `nn.Linear(d_model, d_model)` per
+        # block (2·d_model² params/layer); at β→1 the head-local
+        # K, V becomes dead weight, recovering standard MQA's K/V
+        # param savings. We allocate the shared K, V as raw
+        # `nn.Parameter` (NOT `nn.Linear`) so the construction does
+        # NOT consume RNG — same alignment pattern as MoA's
+        # `moa_extra_kv` above: any RNG advance between the two
+        # constructions would shift later blocks' `qkvo_proj` init
+        # and break the step-0 byte-identity test. The shared K, V
+        # is std-0.02 normal-initialized (matches `qkvo_proj`). The
+        # gate `β_k, β_v` is a per-KV-head vector (init 0), not a
+        # per-head vector — within a GQA group all heads share
+        # the same K, V source so the gate is naturally per-KV-
+        # head. At tiny1m3m (n_kv_heads = n_heads = 4) this is
+        # identical to the per-head form. Default off ⇒ no
+        # Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+        self.use_mqa_gated = use_mqa_gated
+        if use_mqa_gated:
+            # Shared K, V projects to the GQA-axis size
+            # (n_kv_heads · d_k) so it broadcasts cleanly against
+            # the per-KV-head K, V that the head-local projection
+            # produces. The design sketch said `d_model` for the
+            # shared projection, but at tiny1m3m the head-local K
+            # is per-KV-head (n_kv_heads=2, n_heads=4 ⇒ GQA
+            # active) so the K_shared must match that head count
+            # for the per-head mix to broadcast without an extra
+            # GQA-style repeat. The shared K, V is one projection
+            # per block (vs n_kv_heads per-KV-head projections in
+            # the head-local path) — the MQA-style savings are
+            # recovered when β→1.
+            shared_kv_dim = self.n_kv_heads * self.d_k
+            self.W_K_shared = nn.Parameter(
+                torch.zeros(shared_kv_dim, d_model)
+            )
+            self.W_V_shared = nn.Parameter(
+                torch.zeros(shared_kv_dim, d_model)
+            )
+            self.mqa_gate_k = nn.Parameter(
+                torch.zeros(self.n_kv_heads)
+            )
+            self.mqa_gate_v = nn.Parameter(
+                torch.zeros(self.n_kv_heads)
+            )
+            # Zero-init (NOT normal-init) on the shared K, V
+            # weights: β=0 init ⇒ `(K_shared − K_local)` is
+            # multiplied by 0 in forward, so the W_K_shared /
+            # W_V_shared values don't affect the step-0 output
+            # regardless of init. Zero-init keeps the construction
+            # from consuming RNG, which is required to keep the
+            # `qkvo_proj` random init aligned with the no-flag
+            # baseline (any RNG advance between the two
+            # constructions would shift later blocks' qkvo_proj
+            # init and break the step-0 byte-identity test). The
+            # optimizer will grow the shared K, V from zero as it
+            # grows β from zero — this is a standard "init-to-zero,
+            # let the optimizer learn it" pattern.
+        else:
+            # Stubs so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references these
+            # when `use_mqa_gated=False` so they can be anything.
+            self.W_K_shared = None
+            self.W_V_shared = None
+            self.mqa_gate_k = None
+            self.mqa_gate_v = None
+
+        # 182 — Per-head learnable attention window. One scalar
+        # `w_h ∈ R^H` per MHA maps (via sigmoid) to a window
+        # half-size `half_w_h = T · sigmoid(w_h)`. Init `w_h = 10`
+        # ⇒ `sigmoid(10) ≈ 0.99995` ⇒ `half_w ≈ T − 0.00005·T >
+        # T − 1 = max|t − s|`, so the penalty is identically 0
+        # at fp32 at step 0 ⇒ byte-identical to baseline. Default
+        # off ⇒ no Parameter registered, no branch taken, baseline
+        # path bit-identical. Cost: H params per MHA = 48 total at
+        # tiny1m3m (+0.005% of 0.94M). See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        self.use_per_head_window = use_per_head_window
+        if use_per_head_window:
+            self.head_window_logit = nn.Parameter(
+                torch.full((self.n_heads,), 10.0)
+            )
+        else:
+            self.head_window_logit = None
 
         # ============================================================================
         # Query-tweaks: 29 mechanisms (Batches 1-6, see plan.md). All
@@ -1771,7 +2933,7 @@ class MultiHeadAttention(nn.Module):
         Kr = K * cos + rotate_half(K) * sin
         return Qr, Kr
 
-    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None):
+    def forward(self, x, ve=None, gate_x=None, v_residual=None, deberta_relpos=None, shared_kv=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None):
         batch_size, seq_len = x.size(0), x.size(1)
         # 013 — CoPE replaces RoPE, so the post-RoPE norm has no rotary
         # to post-norm. Reject the misconfiguration loudly so the
@@ -1779,6 +2941,109 @@ class MultiHeadAttention(nn.Module):
         assert not (self.use_cope and self.use_qk_norm_post_rope), (
             "use_cope=True is mutually exclusive with use_qk_norm_post_rope=True "
             "(CoPE replaces RoPE; the post-RoPE norm has nothing to act on)."
+        )
+        # 169 — Depth-Conditional QK-Norm: combining per-block scaling
+        # with any of the orthogonal QK-side levers (Q-only / K-only /
+        # post-RoPE norm) restructures the lever's mechanism and must
+        # fail loud at the build-smoke. The chosen 016-WIN control uses
+        # neither of these; the 169 treatment inherits the same 016
+        # shape (symmetric pre-RoPE) plus per-block scaling.
+        assert not (self.use_qk_norm_depth and self.use_q_only_norm), (
+            "use_qk_norm_depth=True is mutually exclusive with use_q_only_norm=True "
+            "(169 sits on top of the symmetric 016 path; combining with 162's "
+            "Q-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_depth and self.use_k_only_norm), (
+            "use_qk_norm_depth=True is mutually exclusive with use_k_only_norm=True "
+            "(169 sits on top of the symmetric 016 path; combining with 165's "
+            "K-only asymmetry restructures the lever)."
+        )
+        assert not (self.use_qk_norm_depth and self.use_qk_norm_post_rope), (
+            "use_qk_norm_depth=True is mutually exclusive with use_qk_norm_post_rope=True "
+            "(169 sits on top of 016's pre-RoPE symmetric norm; combining with "
+            "the post-RoPE variant restructures the lever)."
+        )
+        # 176 — Pre-AV V RMSNorm: mutually exclusive with the two
+        # closed V-side norm axes (closed-029 use_v_layernorm +
+        # closed-#92 v_norm_type zoo) and with v_mix_conv (a learned
+        # conv on V pre-AV; composing it with the per-head α-gated
+        # RMSNorm would restructure the lever). 176 is a strictly
+        # distinct parameterization from all three — the closed
+        # axes have no per-head α-gate and no per-head γ-gain, so
+        # combining them with 176 would be running two independent
+        # normalizations on the same tensor.
+        assert not (self.use_v_rmsnorm and self.use_v_layernorm), (
+            "use_v_rmsnorm=True is mutually exclusive with use_v_layernorm=True "
+            "(closed-029 LayerNorm V-side; both attach a per-head norm to "
+            "V pre-AV and the composition restructures the lever)."
+        )
+        assert not (self.use_v_rmsnorm and self.v_norm_type not in ("", "none", None)), (
+            "use_v_rmsnorm=True is mutually exclusive with the closed-#92 "
+            "v_norm_type zoo (v_norm_type != \"\"); both attach a per-head "
+            "norm to V pre-AV."
+        )
+        assert not (self.use_v_rmsnorm and self.use_v_mix_conv), (
+            "use_v_rmsnorm=True is mutually exclusive with use_v_mix_conv=True "
+            "(v_mix_conv is a learned conv on V pre-AV; the composition "
+            "restructures the lever and is not what 176 tests)."
+        )
+        # 181 — Cross-Head Channel RMSNorm: combining 181 with any
+        # of the closed post-AV per-head scalar / input-conditional
+        # gates restructures the lever (the optimizer ends up
+        # distributing the same effect across two different
+        # parameterizations) and must fail loud at the build-smoke.
+        # The chosen 181 control uses none of these; the 181
+        # treatment sits in isolation. Mirrors the 169 ∧ {Q-only,
+        # K-only, post-RoPE} and 176 ∧ {v_layernorm, v_norm_type,
+        # v_mix_conv} assertion patterns.
+        assert not (self.use_cross_head_rmsnorm and self.use_head_gain), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_head_gain=True (both post-AV; the composition "
+            "restructures the lever — turn 160 OFF to isolate 181)."
+        )
+        assert not (self.use_cross_head_rmsnorm and self.use_attn_output_gate), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_attn_output_gate=True (closed-045 per-head scalar "
+            "ReZero gain; the composition restructures the lever)."
+        )
+        assert not (self.use_cross_head_rmsnorm and self.use_gated_attn), (
+            "use_cross_head_rmsnorm=True is mutually exclusive with "
+            "use_gated_attn=True (closed-024 input-conditional "
+            "sigmoid gate; the composition restructures the lever)."
+        )
+        # 191 — Per-token attention output gain. Mutually exclusive
+        # with the pre-merge post-AV gates (160, 045, 142/121's
+        # `attn_output_channel_gate`, 024, 181) — all five are
+        # closed-closed or closed-axis-family nulls whose
+        # composition with the per-token gain would restructure
+        # the lever (the optimizer ends up distributing the same
+        # effect across two parameterizations). The chosen 191
+        # control uses none of these; 191 sits in isolation.
+        # Mirrors the 181 ∧ {160, 045, 024} assertion pattern.
+        assert not (self.use_token_attn_gain and self.use_head_gain), (
+            "use_token_attn_gain=True is mutually exclusive with "
+            "use_head_gain=True (both post-AV; the composition "
+            "restructures the lever — turn 160 OFF to isolate 191)."
+        )
+        assert not (self.use_token_attn_gain and self.use_attn_output_gate), (
+            "use_token_attn_gain=True is mutually exclusive with "
+            "use_attn_output_gate=True (closed-045 per-head scalar "
+            "ReZero gain; the composition restructures the lever)."
+        )
+        assert not (self.use_token_attn_gain and self.use_attn_output_channel_gate), (
+            "use_token_attn_gain=True is mutually exclusive with "
+            "use_attn_output_channel_gate=True (closed per-(h, k) "
+            "ReZero gain; the composition restructures the lever)."
+        )
+        assert not (self.use_token_attn_gain and self.use_gated_attn), (
+            "use_token_attn_gain=True is mutually exclusive with "
+            "use_gated_attn=True (closed-024 input-conditional "
+            "sigmoid gate; the composition restructures the lever)."
+        )
+        assert not (self.use_token_attn_gain and self.use_cross_head_rmsnorm), (
+            "use_token_attn_gain=True is mutually exclusive with "
+            "use_cross_head_rmsnorm=True (181 cross-head coupling; "
+            "both post-AV and the composition restructures the lever)."
         )
         # 129 — YOCO: when the flag is on, the MHA must be given a
         # shared_kv tuple. Reject the misconfiguration loudly so the
@@ -1788,6 +3053,25 @@ class MultiHeadAttention(nn.Module):
                 "use_shared_kv=True requires shared_kv=(K_g, V_g) kwarg "
                 "passed by YOCOLlamaBlock.forward"
             )
+
+        # 164 — Q-Carry: stash the MHA sublayer input on layer 0 (no
+        # previous block exists ⇒ `q_carry is None` ⇒ stash branch).
+        # The model loop reads `self._q_carry` after the layer-0
+        # forward and passes it as `q_carry=...` to every layer l ≥ 1.
+        # `.detach()` mirrors the 021 V-residual contract — the
+        # cross-block gradient is structurally bounded to `α_q`'s
+        # 0-dim scalar (layer-l's W_Q gets the carry's matmul output,
+        # but its parameter gradient doesn't propagate back into
+        # layer-l-1's residual stream).
+        if self.use_q_carry and q_carry is None:
+            self._q_carry = x.detach()
+        # 168 — AV-Output Carry: the stash + blend both happen at
+        # the post-merge-reshape, pre-W_O site (below). Layer 0's
+        # stash is performed there when `av_carry is None`; layer
+        # l ≥ 1's blend is performed there when `av_carry is not
+        # None`. We do NOT stash at this early site because the
+        # per-head AV has not been computed or reshaped yet. See
+        # the `_av_carry` block below the W_O projection site.
 
         # ============ MERGED QKV PROJECTION ============
         # Single matmul instead of 3 separate projections
@@ -1821,6 +3105,95 @@ class MultiHeadAttention(nn.Module):
             else:
                 Q, K, V = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         # ================================================
+
+        # 188 — Cross-Block K/V Projection Sharing. After the
+        # standard QKV split, on layers l ≥ 1, recompute K and V
+        # with a learnable convex blend of the layer's own W_K/W_V
+        # and the previous block's W_K/W_V:
+        #   `α_K = σ(cross_block_alpha_K)`,
+        #   `W_K_eff = (1 - α_K) * W_K_self + α_K * prev_W_K.detach()`,
+        #   `K_new = x @ W_K_eff.T`,
+        # and the same for V. Init `α_raw = -10` ⇒ `α ≈ 4.5e-5` at
+        # step 0 ⇒ `K_new = (1 - 4.5e-5) * K_self + 4.5e-5 * K_prev`,
+        # numerically dominated by `K_self` ⇒ step-0 output is bit-
+        # identical (within fp32 noise) to the no-flag baseline.
+        # `prev_W_K` / `prev_W_V` are detached by the model loop, so
+        # the cross-block gradient is structurally bounded to the
+        # 2 scalar α params per block. Always stash
+        # `self._prev_W_K` / `self._prev_W_V` on this MHA so the
+        # model loop can capture them after layer 0 and pipe them
+        # as kwargs to layer 1..N-1. When `use_cross_block_kv_share
+        # =False` (default) the branch is gated and the baseline
+        # K, V projection path is bit-identical. Composes with
+        # YOCO's `use_shared_kv=True` (when on, the K, V
+        # projections are skipped and shared K_g, V_g are used
+        # directly — the 188 blend is dead in that case and we
+        # stash None for the prev-W tensors). Composes with the
+        # closed 021 `v_residual=` (the blend happens BEFORE the
+        # V_residual stash, so the layer's V is the blended V; the
+        # 021 lever reads the post-blend V). See
+        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+        if self.use_cross_block_kv_share:
+            if self.use_shared_kv:
+                # YOCO upper half: K, V are the shared ones, not
+                # projected through W_K / W_V. 188 has nothing to
+                # blend here — stash None and skip the branch.
+                self._prev_W_K = None
+                self._prev_W_V = None
+            else:
+                W_K_self = self.qkvo_proj[
+                    self.q_size:self.q_size + self.kv_size
+                ]
+                W_V_self = self.qkvo_proj[
+                    self.qkv_size - self.kv_size:self.qkv_size
+                ]
+                # Always stash the current layer's W_K, W_V slices
+                # so the model loop can read them for the next
+                # layer's `prev_W_K=` / `prev_W_V=` (mirrors the
+                # `q_carry=` / `av_carry=` / `v_residual=` pattern).
+                self._prev_W_K = W_K_self.detach()
+                self._prev_W_V = W_V_self.detach()
+                if prev_W_K is not None and prev_W_V is not None:
+                    # Layer l ≥ 1 — recompute K, V with the
+                    # blended projection. The previous block's
+                    # W_K, W_V are already detached (by the model
+                    # loop) so the gradient doesn't flow back into
+                    # the prev block's qkvo_proj.
+                    alpha_K = torch.sigmoid(self.cross_block_alpha_K)
+                    alpha_V = torch.sigmoid(self.cross_block_alpha_V)
+                    W_K_eff = (1.0 - alpha_K) * W_K_self + alpha_K * prev_W_K
+                    W_V_eff = (1.0 - alpha_V) * W_V_self + alpha_V * prev_W_V
+                    K = F.linear(x, W_K_eff)
+                    V = F.linear(x, W_V_eff)
+                # else: layer 0 (no previous block). The K, V from
+                # the standard QKV split above are the layer-0
+                # projections — unchanged by the blend (no prev
+                # W_K / W_V to blend with). Stash is done above so
+                # the model loop can capture for layer 1.
+
+        # 164 — Q-Carry: add a learnable cross-block Q carry from
+        # the previous block's MHA sublayer input. Site is post-QKV
+        # split (Q is shape `[B, T, q_size]`), pre-RoPE / pre-q_norm
+        # / pre-q_only_norm so the existing norm/RoPE still rescales
+        # Q + α·Q_carry consistently. `q_carry` is the previous
+        # block's MHA sublayer input, `.detach()`-ed by the model
+        # loop — the carry's gradient is structurally bounded to
+        # `alpha_q`'s 0-dim scalar. Projection uses the SAME W_Q
+        # slice that produced the current Q (so the carry tracks
+        # the W_Q the layer is training, not a fresh one): the
+        # standard `qkvo_proj[:q_size]` in the default / shared_kv
+        # / MLA branches, the `qk_proj[:q_size]` slice in the
+        # tied-QK branch (where W_Q == W_K). α_l=0 init ⇒
+        # `α_l · W_Q(prev_x) = 0` exactly in fp32 ⇒ step-0 is
+        # bit-identical to baseline (within fp32 rounding noise of
+        # one extra multiply-add). See
+        # `autoresearch/ideas/164-q-carry/plan.md`.
+        if self.use_q_carry and q_carry is not None:
+            if self.use_tied_qk:
+                q_carry_w = self.qk_proj[:self.q_size]
+            else:
+                q_carry_w = self.qkvo_proj[:self.q_size]
+            Q = Q + self.alpha_q * F.linear(q_carry, q_carry_w)
 
         # 134 — Mega EMA on V (Ma et al. 2022, arXiv:2209.10655).
         # The V stream is concatenated with `V_ema = W_V @ u` where
@@ -1927,7 +3300,56 @@ class MultiHeadAttention(nn.Module):
         Q = Q.reshape(batch_size, seq_len, self.n_heads, self.d_k)
         K = K.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
         V = V.reshape(batch_size, seq_len, V_n_kv_heads, self.d_k)
-        
+
+        # 178 — Gated Multi-Query Attention. Blend the per-head K, V
+        # with a shared K, V projection via a per-KV-head scalar
+        # gate: `K_h = K_local_h + β_k_h · (K_shared_h − K_local_h)`,
+        # same for V. β init 0 ⇒ K_mix = K_local exactly in fp32 ⇒
+        # step-0 forward is byte-identical to the no-flag baseline
+        # (max-abs-diff = 0.0 across the full forward, modulo the
+        # baseline path itself also computing the same matmul).
+        # The shared K, V projection is a single matmul on x and
+        # is then reshaped to `[B, T, n_kv_heads, d_k]` so it
+        # broadcasts cleanly against the head-local K, V (and the
+        # V_n_kv_heads layout under Mega — but at tiny1m3m the
+        # experiment runs without Mega, so V_n_kv_heads =
+        # n_kv_heads and the layouts match). Sits BEFORE the
+        # RMSNorm + RoPE so the mixed K, V flows through the same
+        # QK-norm + rotary pipeline as the baseline K, V. Placed
+        # BEFORE the GQA repeat_interleave so the gate acts on the
+        # KV-head layout (per-KV-head β broadcasts to all heads in
+        # a GQA group via the repeat). When
+        # `use_mqa_gated=False` (default) the branch is never
+        # taken — the K, V tensors are not touched — and the
+        # baseline forward graph is bit-identical. See
+        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+        if self.use_mqa_gated:
+            K_shared = F.linear(x, self.W_K_shared)  # [B, T, n_kv_heads·d_k]
+            K_shared = K_shared.reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k
+            )
+            V_shared = F.linear(x, self.W_V_shared)  # [B, T, n_kv_heads·d_k]
+            # Reshape V_shared to match V's head layout. K_local
+            # is always per-n_kv_heads (the head-local K slice of
+            # the merged qkvo_proj). V has 2·n_kv_heads slots when
+            # use_mega is on (the V_raw + V_ema concat); we use
+            # only the first n_kv_heads slots for the gate's
+            # broadcast (V_extra keeps its own scale unchanged).
+            V_shared_n = V_shared.reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k
+            )
+            beta_k = self.mqa_gate_k.view(1, 1, self.n_kv_heads, 1)
+            beta_v = self.mqa_gate_v.view(1, 1, self.n_kv_heads, 1)
+            K = K + beta_k * (K_shared - K)
+            if V_n_kv_heads == self.n_kv_heads:
+                V = V + beta_v * (V_shared_n - V)
+            else:
+                # Mega: V has 2·n_kv_heads slots (V_raw + V_ema).
+                # Mix V_raw with V_shared_n, leave V_ema alone.
+                V_raw = V[:, :, :self.n_kv_heads, :]
+                V_raw_mixed = V_raw + beta_v * (V_shared_n - V_raw)
+                V = torch.cat([V_raw_mixed, V[:, :, self.n_kv_heads:, :]], dim=2)
+
         # Apply RoPE
         # #49 QK-norm-post-RoPE: by default we apply RMSNorm to Q,K BEFORE
         # RoPE (the pre-RoPE norm). The modded-nanogpt variant applies the
@@ -1945,14 +3367,59 @@ class MultiHeadAttention(nn.Module):
             # RMSNorm still runs (it's a Q/K magnitude stabilizer,
             # separate concern from position), but the rotation is
             # bypassed.
-            Q = self.q_norm(Q)
-            K = self.k_norm(K)
+            # 162 — Q-only norm branch: when on, apply RMSNorm to Q
+            # only via the dedicated `q_only_norm` module and leave K
+            # untouched (no `k_norm` call). Overrides the symmetric
+            # QK-norm path above; the standard `q_norm`/`k_norm`
+            # modules are NOT used here (the lever has its own module).
+            # 165 — K-only norm branch: symmetric mirror; apply RMSNorm
+            # to K only via the dedicated `k_only_norm` module and leave
+            # Q untouched. Mutually exclusive with 162 (asserted at
+            # construction in __init__).
+            if self.use_q_only_norm:
+                Q = self.q_only_norm(Q)
+            elif self.use_k_only_norm:
+                K = self.k_only_norm(K)
+            else:
+                Q = self.q_norm(Q)
+                K = self.k_norm(K)
         elif self.use_qk_norm_post_rope:
-            Q = self.q_norm(self.rotary(Q))
-            K = self.k_norm(self.rotary(K))
+            if self.use_q_only_norm:
+                Q = self.q_only_norm(self.rotary(Q))
+                K = self.rotary(K)
+            elif self.use_k_only_norm:
+                Q = self.rotary(Q)
+                K = self.k_only_norm(self.rotary(K))
+            else:
+                Q = self.q_norm(self.rotary(Q))
+                K = self.k_norm(self.rotary(K))
         else:
-            Q = self.rotary(self.q_norm(Q))
-            K = self.rotary(self.k_norm(K))
+            if self.use_q_only_norm:
+                Q = self.rotary(self.q_only_norm(Q))
+                K = self.rotary(K)
+            elif self.use_k_only_norm:
+                Q = self.rotary(Q)
+                K = self.rotary(self.k_only_norm(K))
+            else:
+                Q = self.rotary(self.q_norm(Q))
+                K = self.rotary(self.k_norm(K))
+        # 169 — Depth-Conditional QK-Norm: per-block learnable scalar
+        # `qk_norm_scale` applied to both Q and K AFTER the per-head
+        # norm+RoPE and BEFORE the QK matmul (the standard pre-RoPE
+        # path is the 016-WIN path — the chosen control uses this
+        # same branch). At α_l = 1.0 init, the multiply is exactly
+        # the identity in fp32 (`1.0 * x = x`), so step-0 forward is
+        # byte-identical to 016's step-0 (max-abs-diff = 0.0 vs the
+        # 016 control). Placed AFTER all three norm+RoPE branches
+        # (nope/cope, post-RoPE, default pre-RoPE) so it composes
+        # uniformly — at α=1.0 the multiply commutes with every
+        # downstream tweak (q_gain, GQA repeat, q_temp_token) in
+        # fp32. Placed BEFORE the QK matmul so the lever sits at the
+        # QK-norm output, matching the NormFormer analog (Shleifer
+        # et al. 2021). See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        if self.use_qk_norm_depth:
+            Q = Q * self.qk_norm_scale
+            K = K * self.qk_norm_scale
         # #37 per-head Q-gain: multiply Q by (1 + q_gain) per head after
         # RoPE. Zero-init, so step 0 == baseline.
         if self.use_q_gain:
@@ -1970,8 +3437,60 @@ class MultiHeadAttention(nn.Module):
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
             if not self.use_mega:
                 V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
+        # 185 — Static per-head learned K-rotation. Applied AFTER the
+        # GQA repeat_interleave so K is in `[B, T, n_heads, d_k]` and
+        # the per-head rotation angle broadcasts cleanly to the
+        # post-repeat head count. Site is pre-RoPE / pre-qk_norm so
+        # the rotation acts as a static basis change on the raw K
+        # stream; orthogonal `R_h` preserves norms and dot products
+        # so QK^T magnitudes are unchanged (no softmax temperature
+        # shift). Init `θ_{h,i} = 0` ⇒ `cos(0) = 1`, `sin(0) = 0` in
+        # fp32 ⇒ K_a_new = K_a and K_b_new = K_b exactly ⇒ K
+        # unchanged at step 0 ⇒ baseline forward is bit-identical
+        # when the flag is OFF. When OFF the branch is never taken,
+        # the parameter is never built, and the forward graph is
+        # bit-identical to no-flag. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        if self.use_static_k_rotation:
+            cos_a = self.k_rotation_angles.cos()  # [H, d_k/2]
+            sin_a = self.k_rotation_angles.sin()  # [H, d_k/2]
+            # Reshape K to [B, T, H, d_k/2, 2] for the per-plane
+            # (2i, 2i+1) 2D rotation. R_h is a product of d_k/2
+            # block-diagonal 2D rotations on disjoint planes —
+            # block-diagonal ⇒ orthogonal.
+            K_pairs = K.reshape(
+                batch_size, seq_len, self.n_heads, self.d_k // 2, 2
+            )
+            K_a = K_pairs[..., 0]  # [B, T, H, d_k/2]
+            K_b = K_pairs[..., 1]  # [B, T, H, d_k/2]
+            cos_b = cos_a.view(1, 1, self.n_heads, self.d_k // 2)
+            sin_b = sin_a.view(1, 1, self.n_heads, self.d_k // 2)
+            K_a_new = K_a * cos_b - K_b * sin_b
+            K_b_new = K_a * sin_b + K_b * cos_b
+            K = torch.stack([K_a_new, K_b_new], dim=-1).reshape(
+                batch_size, seq_len, self.n_heads, self.d_k
+            )
         if self.use_k_gain:
             K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
+        # 174 — xPos exponential decay on K (Sun et al. 2022,
+        # arXiv:2212.10554). K is in `[B, T, H, D]` layout here (post-
+        # RoPE, post-GQA-repeat, post-k_gain). We multiply K by the
+        # per-position decay `g_t = exp(-xpos_gamma · t)` so the
+        # attention score `Q[t] · K[s]^T` picks up a factor
+        # `g_s = (1-γ)^s` that shrinks as `s` grows — biases attention
+        # toward recent tokens without altering the Q-side rotation.
+        # With `xpos_gamma = 0` (init) `g_t = 1` for every position ⇒
+        # `K = K * 1 = K` exactly ⇒ the trt forward is **bit-identical
+        # to the 500k-base RoPE baseline at step 0** (max-abs-diff =
+        # 0.0). Placed AFTER the per-head Q/K gains and GQA repeat so
+        # the decay broadcasts uniformly over heads. When
+        # `use_xpos=False` (default) the branch is never taken, no
+        # parameter created, no RNG consumed, baseline path bit-
+        # identical. See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        if self.use_xpos:
+            t = torch.arange(seq_len, device=K.device, dtype=K.dtype)
+            g_t = torch.exp(-self.xpos_gamma * t)  # [T]
+            K = K * g_t.view(1, seq_len, 1, 1)
 
         # ============================================================================
         # Query-tweaks post-RoPE Q modifications. Each is gated by its
@@ -2154,7 +3673,7 @@ class MultiHeadAttention(nn.Module):
             keep_prob = 1.0 - p
             # Per-(batch, head, token) coin; broadcast across d_k.
             key_mask = torch.empty(
-                batch_size, self.n_heads, seq_len, 1,
+                batch_size, self.n_heads, K.size(2), 1,
                 device=K.device, dtype=K.dtype,
             ).bernoulli_(keep_prob)
             K = K * key_mask / keep_prob
@@ -2174,10 +3693,109 @@ class MultiHeadAttention(nn.Module):
             else:
                 V = (1.0 - self.lambda_v) * V + self.lambda_v * v_residual
 
+        # 186 — Within-Block V-Carry. Per-head learnable scalar
+        # `α_h = tanh(v_carry_alphas_h)` drives a left-to-right
+        # recurrence along the time axis of V:
+        #   `V_new[0] = V[0];  V_new[t] = V[t] + α_h · V_new[t-1]` for `t ≥ 1`.
+        # Closed form: `V_new[t] = Σ_{k=0}^{t} α_h^k · V[t-k]`
+        # (a 1-pole IIR low-pass on V; equivalent to the linear-
+        # attention recurrence without the K side, à la Katharopoulos
+        # et al. 2020 arXiv:2006.16236). Implemented as a vectorized
+        # depthwise `F.conv1d` along T with kernel `[α_h^0, α_h^1,
+        # …, α_h^{T-1}]` per head — matches 134-Mega's depthwise
+        # EMA conv1d pattern (lines 2823-2834) and is ~0.5 GFLOPs/
+        # layer at tiny1m3m, vs ~2k sequential ops/head for the
+        # Python for-loop alternative (too slow on GPU).
+        #
+        # **Derivation (kernel flip + left-pad for F.conv1d
+        # cross-correlation).** We want `V_new[t] = Σ_{k=0}^{t}
+        # α_h^k V[t-k]`. `F.conv1d` computes cross-correlation
+        # `out[t] = Σ_k w[k] · x[t+k]` (no kernel flip). Pad `x` on
+        # the left by `T-1` zeros (so `x_padded[t+k] = V[t+k-T+1]`
+        # when `t+k ≥ T-1` else 0). Set `w[k] = α_h^{T-1-k}`
+        # (the un-flipped kernel reversed): then
+        #   `out[t] = Σ_{k=0}^{T-1} α_h^{T-1-k} · V[t+k-T+1]`
+        #         `= Σ_{j=0}^{t} α_h^{t-j} · V[j]`  (let `j = t+k-T+1`)
+        # which matches `V_new[t]`. α=0 init ⇒ `α_h^{T-1-k}` is
+        # `[0, …, 0, 1]` ⇒ conv1d output is `V` exactly ⇒ forward
+        # is bit-identical to baseline at step 0. The tanh parameter-
+        # ization keeps `|α_h| < 1` strictly so the geometric sum
+        # stays bounded at T=2048.
+        #
+        # **Layout.** Each (B, h, j) channel of V is processed
+        # independently along T with its head's kernel. We reshape
+        # V from `[B, H, T, d_k]` to `[B, H·d_k, T]` and use
+        # `groups=H·d_k` depthwise conv1d (each group is one
+        # channel with kernel length T; same FLOPs as 134-Mega's
+        # depthwise conv1d, ~0.5 GFLOPs/layer here). Sits
+        # AFTER the `use_value_residual` stash/blend and BEFORE the
+        # v_norm / v_rmsnorm / value_channel_gate / kda_channel_gate
+        # sites — composes cleanly with every preceding V-modifying
+        # lever (the recurrence is along T, the others are along
+        # d_k; order doesn't matter for downstream matmul blending).
+        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        if self.use_v_carry_block:
+            alpha = torch.tanh(self.v_carry_alphas)  # [H], |alpha| < 1
+            B, H, T, d_k = V.shape
+            # Build kernel [H, T], then FLIP for F.conv1d cross-
+            # correlation. arange in fp32 for stability when α_h is
+            # near ±1 (T=2048 ⇒ α^2048 underflows/overflows fp16 —
+            # keep the whole kernel in fp32 and downcast at the end).
+            arange = torch.arange(T, device=V.device, dtype=V.dtype)
+            alpha_pow = alpha.unsqueeze(1).pow(arange.unsqueeze(0))  # [H, T]
+            kernel = alpha_pow.flip(1)                              # [H, T]
+            # Depthwise conv1d: each (B, h, j) channel processed with
+            # its head's kernel. Reshape V from [B, H, T, d_k] to
+            # [B, H·d_k, T] (permute d_k before T so the conv axis
+            # is the last).
+            V_flat = (
+                V.permute(0, 1, 3, 2).contiguous().reshape(B, H * d_k, T)
+            )                                                       # [B, H·d_k, T]
+            V_padded = F.pad(V_flat, (T - 1, 0))                   # [B, H·d_k, 2T-1]
+            # weight [H·d_k, 1, T]: per-channel kernel, all d_k
+            # channels of head h share the same kernel.
+            weight = (
+                kernel.unsqueeze(1)
+                .expand(H, d_k, T)
+                .reshape(H * d_k, 1, T)
+                .contiguous()
+            )
+            V_out = F.conv1d(V_padded, weight, groups=H * d_k)
+            V = (
+                V_out.reshape(B, H, d_k, T)
+                .permute(0, 1, 3, 2)
+                .contiguous()
+            )                                                       # [B, H, T, d_k]
+
         # #92 Robust V-norm: normalize the value vectors per head before they
         # are mixed by attention (last dim = d_k).
         if self.use_v_norm:
             V = self.v_norm(V)
+        # 176 — Pre-AV V RMSNorm with per-head α-gate + per-head γ-gain
+        # (Wortsman 2023 V-norm primitive + per-head gating). Applied
+        # AFTER the closed-#92 / closed-029 v_norm site and BEFORE the
+        # value-channel-gate / kda-channel-gate sites (all compose by
+        # being multiplicative/identity on the same V tensor; the
+        # gate-α + gain-γ structure of 176 makes the order irrelevant
+        # for downstream matmul blending). Compute per-head:
+        #   α_h = relu(α_raw_h)            # identity at init (0→0)
+        #   rms = rsqrt(mean(V² along d_k) + 1e-6)   # unit RMS per head
+        #   V_rms = V * rms * γ_h          # γ_h=1 at init ⇒ identity
+        #   V_out = (1 − α_h) · V + α_h · V_rms
+        # Init α=0,γ=1 ⇒ V_out = V exactly ⇒ byte-identical to
+        # baseline at step 0 (max-abs-diff = 0.0). See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        if self.use_v_rmsnorm:
+            alpha = F.relu(self.v_rmsnorm_alpha).view(
+                1, self.n_heads, 1, 1
+            )
+            rms = torch.rsqrt(
+                V.pow(2).mean(dim=-1, keepdim=True) + 1e-6
+            )
+            V_rms = V * rms * self.v_rmsnorm_gain.view(
+                1, self.n_heads, 1, self.d_k
+            )
+            V = (1.0 - alpha) * V + alpha * V_rms
         if self.use_value_channel_gate:
             V = V * (1.0 + self.value_channel_gate.view(1, self.n_heads, 1, self.d_k))
         # 109 — KDA channel gate: per-(head, channel) bounded `2·σ(g)`
@@ -2246,11 +3864,40 @@ class MultiHeadAttention(nn.Module):
                 B, T, E - 1, self.n_kv_heads, self.d_k,
             )
             if self.use_nope or self.use_cope:
-                extra_K_4d = self.k_norm(extra_K_4d)
+                # 162 — Q-only norm: skip k_norm on extra K too (K stays raw).
+                # 165 — K-only norm: apply k_only_norm to extra K (K gets
+                # the dedicated lever module instead of the symmetric k_norm).
+                if self.use_q_only_norm:
+                    pass
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.k_only_norm(extra_K_4d)
+                else:
+                    extra_K_4d = self.k_norm(extra_K_4d)
             elif self.use_qk_norm_post_rope:
-                extra_K_4d = self.k_norm(self.rotary(extra_K_4d))
+                if self.use_q_only_norm:
+                    extra_K_4d = self.rotary(extra_K_4d)
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.k_only_norm(self.rotary(extra_K_4d))
+                else:
+                    extra_K_4d = self.k_norm(self.rotary(extra_K_4d))
             else:
-                extra_K_4d = self.rotary(self.k_norm(extra_K_4d))
+                if self.use_q_only_norm:
+                    extra_K_4d = self.rotary(extra_K_4d)
+                elif self.use_k_only_norm:
+                    extra_K_4d = self.rotary(self.k_only_norm(extra_K_4d))
+                else:
+                    extra_K_4d = self.rotary(self.k_norm(extra_K_4d))
+            # 169 — Depth-Conditional QK-Norm: mirror the per-block
+            # `qk_norm_scale` multiply on the MoA extra K so all K
+            # tokens entering the QK matmul see the same per-block
+            # normalization strength. Site is after the MoA per-K
+            # norm+RoPE and before the GQA repeat / cat with K_0.
+            # At α_l = 1.0 init the multiply is exactly the identity
+            # in fp32 so step-0 is bit-identical to the no-MoA, no-
+            # 169 path. See
+            # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+            if self.use_qk_norm_depth:
+                extra_K_4d = extra_K_4d * self.qk_norm_scale
             extra_K_pre = extra_K_4d.reshape(
                 B, T, E - 1, self.n_kv_heads, self.d_k,
             )
@@ -2358,6 +4005,57 @@ class MultiHeadAttention(nn.Module):
             scores = scores.masked_fill(
                 ~window.view(1, 1, seq_len, seq_len), -1e9
             )
+            # 182 — Per-head learnable attention window. Apply a
+            # hard-style per-head penalty AFTER the causal mask (so
+            # masked -1e9 positions keep their zero-probability) and
+            # BEFORE softmax. The half-window is `half_w_h = T ·
+            # sigmoid(w_h)` (shape [H], broadcast to [B, H, 1, 1]).
+            # The penalty `1e9 · relu(|t − s| − half_w_h)` is added
+            # to scores for positions OUTSIDE the per-head window —
+            # effective softmax zero, fp32-clean (no `−∞`, no NaN
+            # risk, matches 154-rebased-attn's rebased-softmax style).
+            # At init `w_h = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈ T
+            # − 0.00005·T > T − 1 = max|t − s|`, so the relu is
+            # identically 0 everywhere and the penalty is a no-op at
+            # step 0 ⇒ byte-identical to baseline. `ar` is
+            # `torch.arange(seq_len, ...)` from earlier in the
+            # manual branch. When `use_per_head_window=False`
+            # (default) the branch is never taken, no Parameter
+            # registered, baseline path bit-identical. See
+            # `autoresearch/ideas/182-per-head-window/idea.md`.
+            if self.use_per_head_window:
+                rel_dist = (
+                    ar[None, :].float() - ar[:, None].float()
+                ).abs()  # [T, T]
+                half_w = (
+                    float(seq_len)
+                    * torch.sigmoid(self.head_window_logit)
+                ).view(1, self.n_heads, 1, 1)  # [1, H, 1, 1]
+                scores = scores - 1e9 * F.relu(
+                    rel_dist.view(1, 1, seq_len, seq_len) - half_w
+                )
+            # 166 — T5-style bucketed relative position bias.
+            # Add `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
+            # causal mask (masked positions get -1e9 so the bias
+            # has no effect on them) and BEFORE softmax. With init
+            # `rpe_bias = 0` this is a no-op at step 0. The
+            # bucket index buffer is `[max_seq_len, max_seq_len]`
+            # int64 (moved to the scores device by `model.to(device)`,
+            # no per-forward host transfer — the `.to()` here is a
+            # no-op when the buffer is already on the scores device
+            # but kept as a defensive fallback for any future code
+            # path that might call this on CPU). The bias is
+            # computed as `rpe_bias[:, bidx]`, fancy-indexing the
+            # [H, B] parameter by a [T, T] int64 index to produce
+            # an [H, T, T] tensor that broadcasts over the batch
+            # axis of `scores`. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            if self.use_t5_rpe:
+                bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
+                    device=scores.device
+                )
+                bias = self.rpe_bias[:, bidx]  # [H, T, T]
+                scores = scores + bias.unsqueeze(0)
             # 022 — Softpick: drop-in for `torch.softmax` in the FIRE
             # branch only. The same `window` tensor is reused as the
             # mask argument so masked positions contribute zero to
@@ -2380,6 +4078,12 @@ class MultiHeadAttention(nn.Module):
             or self.use_ssmax  # 025 — SSMax: score-side multiply, can't go through SDPA's flash kernel.
             or self.use_attn_logit_bias  # 152 — Per-head logit bias (manual path; force SDPA off so step-0 is bit-identical).
             or self.use_per_head_temp  # 155 — Per-head temperature (manual path; force SDPA off so the score-side multiply is exact).
+            or self.use_t5_rpe  # 166 — T5-RPE bucket bias (manual path; force SDPA off so the score-side additive bias is exact).
+            or self.use_entmax  # 173 — Entmax-1.5: closed-form projection can't go through SDPA's flash kernel.
+            or self.use_logit_conv  # 180 — Pre-softmax causal conv on QK^T: score-space op, must run on manual path.
+            or self.use_anti_causal_subheads  # 179 — Per-head mask fill on the upper-triangle; SDPA flash can't apply a per-head fill, so force the manual path.
+            or self.use_per_head_window  # 182 — Per-head learnable window: score-space `1e9·relu(...)` subtract, must run on manual path.
+            or self.use_cross_block_score_share  # 204 — Cross-Block Attention Score Sharing: pre-softmax score blend with the previous block's `Q_{b-1}·K_{b-1}^T/√d_k`; SDPA's flash kernel fuses QK^T+softmax+AV and can't expose the pre-softmax logit for blending.
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -2421,6 +4125,42 @@ class MultiHeadAttention(nn.Module):
             else:
                 scale = 1.0 / (float(self.d_k) ** 0.5)
                 scores = torch.matmul(Qn, Kn.transpose(-1, -2)) * scale
+            # 204 — Cross-Block Attention Score Sharing. Blend the
+            # current block's pre-softmax scores with the previous
+            # block's (detached) pre-softmax scores via a learnable
+            # per-block scalar α = σ(score_share_alpha_raw):
+            #   `scores_eff = (1 − α) · scores_self + α · prev_block_scores`
+            # `prev_block_scores` is `Q_{b-1} · K_{b-1}^T / √d_k`,
+            # the PRE-SOFTMAX logit (NOT the post-softmax attention
+            # distribution — that's a different lever; see
+            # review.md finding B). `.detach()` keeps the cross-
+            # block gradient structurally bounded to α (mirrors
+            # the 021 / 164 / 168 cross-block detach contract).
+            # Always stash the current block's pre-softmax scores
+            # (detached, shape `[B, H, T, T]`) on
+            # `self._prev_block_scores` so the model loop can read
+            # it back after the layer-0 call and pass it as
+            # `prev_block_scores=` to layers 1..N-1. Init
+            # `α_raw = -10.0` ⇒ `α ≈ 4.5e-5` at step 0 ⇒
+            # `scores_eff ≈ scores_self` within fp32 noise of one
+            # extra multiply-add (max-abs-diff < 1e-4 across all
+            # 12 blocks, the reviewer-precise wording per finding
+            # D — NOT literal "bit-identical" since σ(-10) is
+            # ≈ 4.5e-5, not exactly 0). When the flag is off
+            # (default), the entire branch is gated and the
+            # baseline pre-softmax score path is bit-identical.
+            # See
+            # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+            if self.use_cross_block_score_share:
+                self._prev_block_scores = scores.detach()
+                if prev_block_scores is not None:
+                    # Layer l ≥ 1 — blend. The previous block's
+                    # `_prev_block_scores` is already detached (by
+                    # this same MHA.forward on the previous call),
+                    # so the gradient doesn't flow back into the
+                    # prev block's QK computation.
+                    alpha = torch.sigmoid(self.score_share_alpha_raw)
+                    scores = (1.0 - alpha) * scores + alpha * prev_block_scores
             # 152 — Per-head logit bias `b_h ∈ R^H`. Broadcast
             # `[1, H, 1, 1]` over the [B, H, T, T] score tensor,
             # applied BEFORE softmax (and before other score-side
@@ -2495,7 +4235,76 @@ class MultiHeadAttention(nn.Module):
             if self.use_fox:
                 scores = scores + self.fox(x).to(scores.dtype)
             # ---- Mask (causal / SWA) ----
-            scores = scores.masked_fill(~window.view(1, 1, seq_len, seq_len), -1e9)
+            mask_bool = ~window.view(1, 1, seq_len, seq_len)
+            if self.use_anti_causal_subheads:
+                # 179 — Per-head anti-causal gate. The fill value
+                # is broadcast over the [B, H, T, T] score tensor.
+                # `γ_h = sigmoid(ac_subhead_gate_h)` ⇒ init ≈ 4.5e-5
+                # ⇒ fill `≈ -9.99955e8` ⇒ upper-triangle
+                # `exp(-9.99955e8) < 1e-300` in fp32 ⇒ softmax row
+                # bitwise 0 on masked positions ⇒ byte-identical to
+                # the no-flag baseline at step 0. The optimizer can
+                # grow any γ_h ∈ [0, 1] per head over training.
+                # `torch.where` is used (not `masked_fill`) because
+                # `masked_fill` requires a 0-d value tensor; the
+                # per-head fill `[1, H, 1, 1]` broadcasts cleanly
+                # through `torch.where` against `[B, H, T, T]`.
+                # See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                gamma_h = torch.sigmoid(self.ac_subhead_gate).view(
+                    1, self.n_heads, 1, 1
+                )
+                fill_value = -1e9 * (1.0 - gamma_h)
+                scores = torch.where(mask_bool, fill_value, scores)
+            else:
+                scores = scores.masked_fill(mask_bool, -1e9)
+            # 180 — Pre-softmax 1D causal depthwise conv on attention
+            # logits. Applied AFTER the causal mask (so masked -1e9
+            # positions don't pollute the active convolution window via
+            # the delta-init identity) and BEFORE softmax. Left-pad
+            # scores by K-1 zeros along the last axis; then for each
+            # shift k ∈ [0, K) the slice `padded[..., k:k+S]` is the
+            # input contributing from position (s + k - (K-1)). Output
+            # at position s sums `w[h, k] * padded[..., s + k]` over k.
+            # Identity init (`w[:, K//2] = 1`, rest 0) ⇒ the conv is
+            # identity on scores ⇒ softmax unchanged ⇒ step-0 forward
+            # is byte-identical to baseline. Loop unrolled at module
+            # load (K is a small int constant for any given config);
+            # K=3 by default. We deliberately do NOT use F.conv1d +
+            # grouped conv here: the per-row conv pattern (each row of
+            # scores is independent) and the per-head kernel share
+            # requires reshaping [B,H,T,S]→[H,B*T,1,S]→groups=H which
+            # adds a transpose vs the slice+sum. At T=2048, H=4, the
+            # slice+sum is ~3·B·H·T·S = 100M FLOPs (≪ the 8.6G QK
+            # matmul) so the slice+sum wins on clarity and is fast
+            # enough. See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+            if self.use_logit_conv:
+                K_size = self.logit_conv_kernel_size
+                pad_amt = K_size - 1
+                padded = F.pad(scores, (pad_amt, 0))  # [B, H, T, S+K-1]
+                # Accumulate per-shift weighted slices into `scores`.
+                # The first slice is the initialization (avoids
+                # creating a zero tensor + K adds).
+                scores = self.logit_conv_w[:, 0].view(1, self.n_heads, 1, 1) * padded[:, :, :, 0:seq_len]
+                for k in range(1, K_size):
+                    scores = scores + self.logit_conv_w[:, k].view(1, self.n_heads, 1, 1) * padded[:, :, :, k:k + seq_len]
+            # 166 — T5-style bucketed relative position bias. Add
+            # `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
+            # causal mask (masked positions get -1e9 so the bias
+            # has no effect on them) and BEFORE softmax. With init
+            # `rpe_bias = 0` this is a no-op at step 0. The bucket
+            # index buffer is `[max_seq_len, max_seq_len]` int64
+            # (moved to the scores device by `model.to(device)`, no
+            # per-forward host transfer — the `.to()` here is a
+            # no-op when the buffer is already on the scores device
+            # but kept as a defensive fallback). Bias is computed as
+            # `rpe_bias[:, bidx]` — see the FIRE-branch comment above
+            # and `autoresearch/ideas/166-t5-rpe/idea.md`.
+            if self.use_t5_rpe:
+                bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
+                    device=scores.device
+                )
+                bias = self.rpe_bias[:, bidx]  # [H, T, T]
+                scores = scores + bias.unsqueeze(0)
             # ---- Q5 Talking-heads: logit-mix across heads pre-softmax ----
             if self.use_talking_heads_q:
                 # scores: [B, H, T, T]. M: [H, H]. Mix over H only.
@@ -2504,7 +4313,23 @@ class MultiHeadAttention(nn.Module):
                     "bhst,hH->bHst", scores, self.talking_heads_M
                 )
             # Softmax
-            attn_w = torch.softmax(scores, dim=-1)
+            if self.use_entmax:
+                # 173 — Entmax-1.5 (Tsallis α-entmax with α=1.5).
+                # Replace `torch.softmax` with the entmax-1.5
+                # projection. Per-head α_h is derived from
+                # `entmax_alpha_raw`; init 0 ⇒ α_h=1 ⇒ the helper
+                # short-circuits to `torch.softmax` for step-0
+                # bit-identity. The `window` tensor is reused as the
+                # mask argument (True = attend, False = masked out).
+                alpha_h = 1.0 + 0.5 * (1.0 + torch.tanh(self.entmax_alpha_raw))
+                attn_w = entmax_15(
+                    scores,
+                    window.view(1, 1, seq_len, seq_len),
+                    alpha_h,
+                    dim=-1,
+                )
+            else:
+                attn_w = torch.softmax(scores, dim=-1)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
             # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
@@ -2662,6 +4487,52 @@ class MultiHeadAttention(nn.Module):
             attn_output = F.scaled_dot_product_attention(
                 Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
             )
+        # 181 — Cross-Head Channel RMSNorm. Normalize each token's
+        # attention output ACROSS HEADS within each d_k slice so
+        # all H heads land on the same per-(t, k) scale before
+        # the W_O projection. Standard post-AV RMSNorm (LLaMA-3 /
+        # Gemma-2 / Qwen-2) normalizes over the concatenated
+        # d_model axis; 181 instead treats each d_k index as a
+        # single "channel" of H values and normalizes across
+        # those H values — explicitly coupling the head
+        # magnitudes. The 160-null closed per-head *independent*
+        # rescaling; 181 tests the *joint* post-AV magnitude
+        # coupling axis.
+        #   α_h = relu(α_raw_h)                          # 0 at init
+        #   rms[b, t, k] = sqrt(mean_h(out²) + ε)         # one per (b, t, k)
+        #   gain_h[k] = 1 + tanh(γ_raw_h[k])              # 1 at init
+        #   out = (1 − α_h)·out + α_h·(out / rms)·gain
+        # At init α=0, gain=1 ⇒ `out` unchanged exactly ⇒
+        # byte-identical to baseline at step 0 (max-abs-diff =
+        # 0.0). Sits BEFORE the `use_head_gain` branch below so
+        # the two compose by being multiplicative in series
+        # (but the mutual-exclusion asserts forbid both-on in a
+        # single run). See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        if self.use_cross_head_rmsnorm:
+            rms = (attn_output.pow(2).mean(dim=1, keepdim=True) + 1e-6).sqrt()
+            alpha = F.relu(self.cross_head_rmsnorm_alpha_raw).view(
+                1, self.n_heads, 1, 1
+            )
+            gain = 1.0 + torch.tanh(
+                self.cross_head_rmsnorm_gain_raw
+            ).view(1, self.n_heads, 1, self.d_k)
+            attn_output = (1.0 - alpha) * attn_output + alpha * (
+                attn_output / rms
+            ) * gain
+        # 160 — Per-head RMS gain on the attention output. Multiply each
+        # head's AV-aggregated output `o_h = (A·V)_h ∈ R^{T×d_k}` by a
+        # learnable scalar `g_h ∈ R^H` so each head controls its
+        # contribution magnitude to the residual stream. Init
+        # `g_h = 1.0` ⇒ `o_h *= 1 = o_h` byte-identical to baseline at
+        # step 0. Applied BEFORE the existing per-head gates
+        # (`use_attn_output_gate`, `use_attn_output_channel_gate`,
+        # `use_gated_attn`, `_apply_output_op`) so it composes cleanly
+        # with all of them — they multiply through. Default off →
+        # branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        if self.use_head_gain:
+            attn_output = attn_output * self.head_gain.view(1, self.n_heads, 1, 1)
         # #107 Exclusive self-attn: remove the component of each head's
         # output that lies along the current token's value vector.
         # V is already in [B, H, T, D] after the GQA repeat_interleave
@@ -2697,10 +4568,157 @@ class MultiHeadAttention(nn.Module):
         attn_output = attn_output.transpose(1, 2).reshape(
             batch_size, seq_len, self.d_model
         )
-        
+
+        # 191 — Per-token attention output gain. Multiply the
+        # post-merge `[B, T, d_model]` attention output by a
+        # learnable per-position scalar `(1 + γ_t)` where
+        # `γ_t ∈ R^T` is shared across batch and the d_model
+        # axis. Init γ=0 ⇒ (1 + 0) = 1 exactly ⇒
+        # `attn * 1 = attn` byte-identical to baseline at step 0.
+        # Per-token granularity (T scalars/block) is a different
+        # axis from the closed per-head (160: H scalars), per-
+        # channel (142: d_model scalars), and per-(h, k) (181:
+        # H·d_k scalars) levers. Sits AFTER the merge-reshape
+        # and BEFORE the W_O projection, alongside the
+        # `use_v_mix_conv` (163) and `use_av_carry` (168) post-
+        # merge sites — the three compose by being multiplicative
+        # in series (191 first scales the per-position
+        # contribution, 163 convolves along T, 168 carries across
+        # blocks), and the mutual-exclusion asserts forbid
+        # combining 191 with the pre-merge post-AV gates in a
+        # single run. Sliced to `[:seq_len]` so inference at
+        # shorter T only consumes the first `seq_len` scalars.
+        # Default off → branch never taken, baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+        if self.use_token_attn_gain:
+            attn_output = attn_output * (
+                1.0 + self.token_attn_gain[:seq_len].view(
+                    1, seq_len, 1
+                )
+            )
+
+        # 163 — Post-Attention V-Mix Depthwise Convolution. Apply a
+        # symmetric depthwise Conv1d over the time axis on the
+        # post-attention tensor `[B, T, d_model]` BEFORE the W_O
+        # projection. Conv weights are identity-initialized
+        # (center tap = 1, rest = 0, set inline at construction —
+        # see `MultiHeadAttention.__init__` for the raw-Parameter
+        # rationale). With `padding = k//2` symmetric (causal+
+        # future — the attention sublayer has already integrated
+        # the full causal context, so the conv may look at both
+        # neighbors) and `groups = d_model` (depthwise), the conv
+        # is a strict identity at step 0 ⇒ the post-attention
+        # tensor equals the no-flag path bit-for-bit. Composes
+        # cleanly with every preceding output-side lever
+        # (`use_head_gain`, `use_attn_output_gate`,
+        # `use_attn_output_channel_gate`, `use_gated_attn`,
+        # `use_talking_heads_out`, `_apply_output_op`) — those are
+        # multiplicative scalars on `attn_output`, the conv is a
+        # linear op that reads their combined result. Default off
+        # → branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+        if self.use_v_mix_conv:
+            h = F.conv1d(
+                attn_output.transpose(1, 2),
+                self.v_mix_conv_weight,
+                bias=None,
+                stride=1,
+                padding=self.v_mix_conv_kernel // 2,
+                groups=self.d_model,
+            )  # [B, d_model, T]
+            attn_output = h.transpose(1, 2)  # [B, T, d_model]
+
+        # 168 — AV-Output Carry: stash on layer 0 (`av_carry is None`
+        # ⇒ no previous block exists), blend on layer l ≥ 1
+        # (`av_carry is not None` ⇒ previous block's post-AV pre-W_O
+        # tensor). Site is post-merge-reshape (`[B, T, d_model]`),
+        # pre-W_O — sits BEFORE the W_O projection so it composes
+        # with 160/024/107/045 output-side gates (those run on
+        # per-head `[B, H, T, d_k]` above the reshape). With α=0 init,
+        # `α · av_{l-1} = 0` exactly in fp32 ⇒ the carry term is a
+        # numerical no-op at step 0 and the W_O projection sees the
+        # same input as the baseline path. `.detach()` mirrors 021's
+        # V-residual contract so the cross-block gradient is
+        # structurally bounded to α_av's 0-dim scalar.
+        if self.use_av_output_carry:
+            if av_carry is None:
+                self._av_carry = attn_output.detach()
+            else:
+                attn_output = attn_output + self.alpha_av * av_carry
+
         # ============ MERGED O PROJECTION ============
-        # Use the last part of qkvo_proj for output projection
-        output = F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        # Use the last part of qkvo_proj for output projection.
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the O slice of `qkvo_proj` during
+        # training. Sample `M ∈ {0,1}^{d_model × d_model}` with
+        # `M_ij ~ Bernoulli(1 - effective_rate)` and use
+        # `W_O_masked = W_O ⊙ M / (1 - effective_rate)` (inverted-
+        # dropout rescale so the expected magnitude matches the un-
+        # masked baseline — matches `F.dropout` and the 147-DropKey
+        # sibling's rescale). The mask is sampled per forward pass and
+        # shared across all batch elements and positions (one mask per
+        # layer per call, NOT per-token).
+        #
+        # **Warmup ramp.** The effective rate is
+        #     effective_rate = dropconnect_wo_rate
+        #                      * min(step, warmup) / warmup
+        # where `step = self._dc_step_count` (Python int, incremented
+        # at the END of each forward below) and `warmup =
+        # self.dropconnect_wo_warmup_steps`. At step 0 (first forward
+        # call) `effective_rate = 0.0` ⇒ the mask branch is short-
+        # circuited before any RNG is consumed ⇒ the trt forward is
+        # **bit-identical to baseline at step 0** (max-abs-diff = 0.0
+        # across the full forward, no parameter modified, no RNG
+        # consumed). At step `warmup` (default 100) the effective rate
+        # reaches `dropconnect_wo_rate` (default 0.05) and holds there
+        # for the remaining steps.
+        #
+        # At eval (`self.training == False`) and with
+        # `dropconnect_wo_rate=0.0` the branch is never taken ⇒ W_O is
+        # used unchanged and the forward graph is bit-identical to the
+        # no-DropConnect baseline. When `use_dropconnect_wo=False`
+        # (default) the branch is also never taken, no RNG consumed,
+        # baseline path bit-identical.
+        #
+        # The mask site is the O slice `qkvo_proj[qkv_size:]` (shape
+        # `[d_model, d_model]`) — this is the same tensor `F.linear`
+        # reads below, so masking it in-place produces exactly
+        # `output = attn_output @ W_O_masked` with no extra ops on
+        # `attn_output`. Composes cleanly with every preceding output-
+        # side lever (168 AV-carry, 163 v-mix-conv, 160 head-gain,
+        # 024 gated-attn, 107 exclusive-self-attn, 045 output-embed)
+        # — those all run on `attn_output` and the masked W_O sees
+        # the same input as the un-masked W_O would. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        w_o = self.qkvo_proj[self.qkv_size:]
+        if self.use_dropconnect_wo and self.training:
+            warmup = max(int(self.dropconnect_wo_warmup_steps), 1)
+            step = min(int(self._dc_step_count), warmup)
+            effective_rate = float(self.dropconnect_wo_rate) * step / warmup
+            if effective_rate > 0.0:
+                keep_prob = 1.0 - effective_rate
+                wo_mask = torch.empty_like(w_o).bernoulli_(keep_prob)
+                w_o = w_o * wo_mask / keep_prob
+        # 207 — W_O Low-Rank Bottleneck. After any 171-DropConnect
+        # masking (which runs first on `w_o`), add a learnable rank-r
+        # correction: `w_o_eff = w_o + σ(α) · (wo_a @ wo_b)`. At step
+        # 0 `wo_b = 0` ⇒ `wo_a @ wo_b = 0` exactly ⇒ the addition is a
+        # numerical no-op ⇒ `w_o_eff == w_o` bit-identical to the
+        # no-flag baseline (and to the 171-only path when 171 is on).
+        # Sits AFTER the 171 mask and BEFORE the `F.linear` so the
+        # composition is `output = attn_output @ (masked_w_o +
+        # lowrank_correction)`. The 171 mask is multiplied into
+        # `w_o` (in-place rewrite of the local var), and 207 adds the
+        # low-rank correction on top — the two levers multiply through
+        # the linear without re-projection. Default off → branch
+        # never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/207-wo-lowrank-bottleneck/idea.md` /
+        # `plan.md`.
+        if self.use_lowrank_wo:
+            alpha = torch.sigmoid(self.wo_lowrank_alpha)
+            w_o = w_o + alpha * (self.wo_a @ self.wo_b)
+        output = F.linear(attn_output, w_o)
         # #33 output embeddings: add the projected token embedding to the
         # attention OUTPUT (post-O). Different operating point from V/Q/K
         # (which inject into attention inputs). ve is the raw token
@@ -2708,6 +4726,15 @@ class MultiHeadAttention(nn.Module):
         # matches the baseline.
         if self.use_output_embed and ve is not None:
             output = output + F.linear(ve, self.output_embed_proj)
+        # 171 — DropConnect step counter increment. Done AT THE END of
+        # forward (after the W_O branch has already read `_dc_step_count`)
+        # so the first forward call sees step=0 ⇒ effective_rate=0.0 ⇒
+        # mask branch short-circuits ⇒ trt forward is bit-identical to
+        # baseline at step 0. Increments unconditionally on every
+        # forward (training or eval) — eval mode short-circuits the
+        # mask branch via `self.training` so the counter is harmless
+        # there. See `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self._dc_step_count += 1
         return output
 
 
@@ -2729,6 +4756,13 @@ class TransformerBlock(nn.Module):
         use_attn_output_channel_gate: bool = False,
         use_exclusive_self_attn: bool = False,
         use_kda_channel_gate: bool = False,
+        # 166 — T5-style bucketed relative position bias. Pass-
+        # through to the inner MHA (see
+        # `MultiHeadAttention.use_t5_rpe` for the mechanism).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        use_t5_rpe: bool = False,
+        t5_rpe_buckets: int = 32,
         # 152 — Per-head attention logit bias. Pass-through to the
         # inner MHA (see `MultiHeadAttention.use_attn_logit_bias` for
         # the mechanism and the math-identity caveat). Default off →
@@ -2739,16 +4773,66 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `MultiHeadAttention.use_per_head_temp`
         # for the mechanism. Default off → baseline path bit-identical.
         use_per_head_temp: bool = False,
+        # 180 — Pre-softmax 1D causal depthwise conv on attention
+        # logits. Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_logit_conv` for the mechanism
+        # (delta-init ⇒ step-0 byte-identical to baseline, optimizer
+        # grows a per-head smoothing kernel). Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+        use_logit_conv: bool = False,
+        logit_conv_kernel_size: int = 3,
+        # 179 — Anti-Causal Sub-Heads. Pass-through to the inner
+        # MHA. Per-head learnable scalar `γ_h` attenuates the
+        # upper-triangle fill by `(1 − γ_h)`. Init `-10` ⇒
+        # `γ_h ≈ 4.5e-5` at step 0 ⇒ byte-identical to baseline.
+        # See `MultiHeadAttention.use_anti_causal_subheads` for
+        # the full mechanism. Default off → baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        use_anti_causal_subheads: bool = False,
+        # 160 — Per-head RMS gain on the attention output. Pass-through
+        # to the inner MHA. See `MultiHeadAttention.use_head_gain` for
+        # the mechanism. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+        use_head_gain: bool = False,
+        # 181 — Cross-Head Channel RMSNorm. Pass-through to the
+        # inner MHA. See `MultiHeadAttention.use_cross_head_rmsnorm`
+        # for the mechanism. Default off → baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+        use_cross_head_rmsnorm: bool = False,
+        # 191 — Per-token attention output gain pass-through to
+        # the inner MHA. See `MultiHeadAttention.use_token_attn_gain`
+        # for the mechanism. Default off → baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+        use_token_attn_gain: bool = False,
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K during training. Pass-through
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 171 — DropConnect on W_O pass-through to the inner MHA.
+        # See `MultiHeadAttention.use_dropconnect_wo` for the
+        # mechanism (per-weight Bernoulli mask on W_O, inverted-
+        # dropout rescale, eval-mode skip, warmup-ramped effective
+        # rate so step 0 is byte-identical to baseline). Default off
+        # → baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        use_dropconnect_wo: bool = False,
+        dropconnect_wo_rate: float = 0.0,
+        dropconnect_wo_warmup_steps: int = 100,
         # 151 — RoV (Rotary Value Embeddings, gated). Pass-through to
         # the inner MHA. See `MultiHeadAttention.use_rov` for the
         # mechanism. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 174 — xPos exponential decay on K. Pass-through to the inner
+        # MHA (see `MultiHeadAttention.use_xpos` for the mechanism).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+        use_xpos: bool = False,
         # 154 — Rebased Attention. Pass-through to the inner MHA.
         # See `MultiHeadAttention.use_rebased_attn` for the
         # mechanism. Default off → baseline path bit-identical.
@@ -2766,6 +4850,21 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/156-moa/idea.md`.
         use_moa: bool = False,
         moa_num_experts: int = 2,
+        # 178 — Gated Multi-Query Attention. Per-KV-head scalar gate
+        # β_k, β_v blending per-head K, V with a single shared K, V
+        # projection. Init 0 ⇒ step-0 forward is bit-identical to
+        # the no-flag baseline. Default off → baseline path bit-
+        # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        use_mqa_gated: bool = False,
+        # 185 — Static per-head learned K-rotation pass-through to
+        # the inner MHA. Init θ=0 ⇒ step-0 forward bit-identical to
+        # baseline. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        use_static_k_rotation: bool = False,
+        # 182 — Per-head learnable attention window pass-through.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        use_per_head_window: bool = False,
         use_talking_heads_out: bool = False,
         out_op: str = "",
         use_layerscale: bool = False,
@@ -2798,6 +4897,12 @@ class TransformerBlock(nn.Module):
         # forward graph bit-identical. See
         # `autoresearch/ideas/153-relu2-ffn/idea.md`.
         use_relu2_ffn: bool = False,
+        # 170 — SwiGLU FFN (Shazeer 2020, arXiv:2002.05202;
+        # LLaMA-family FFN). Three-projection gated linear unit with
+        # zero-init gate. Default off → the standard `ffn_variant`
+        # cascade runs unchanged, baseline forward graph bit-
+        # identical. See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        use_swiglu_ffn: bool = False,
         use_qk_norm_post_rope: bool = False,
         use_sliding_window: bool = False,
         sliding_window_size: int = 512,
@@ -2827,6 +4932,35 @@ class TransformerBlock(nn.Module):
         # mechanism description. Default off → V stays unnormalized,
         # baseline path is bit-identical.
         use_v_layernorm: bool = False,
+        # 176 — Pre-AV V RMSNorm (per-head α-gate + per-head γ-gain):
+        # forward to MHA — see `MultiHeadAttention.use_v_rmsnorm` for
+        # the mechanism. Default off → V stays unnormalized, baseline
+        # path is bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        use_v_rmsnorm: bool = False,
+        # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). Pass-through
+        # to the inner MHA. See `MultiHeadAttention.use_q_only_norm` for
+        # the mechanism. Default off → baseline path bit-identical.
+        # See autoresearch/ideas/162-q-only-norm/idea.md.
+        use_q_only_norm: bool = False,
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_k_only_norm` for the mechanism.
+        # Default off → baseline path bit-identical. The K-mirror of
+        # 162; together with 016 (symmetric QK) forms a clean 3-way
+        # orthogonal attribution test. Mutually exclusive with
+        # use_q_only_norm (asserted at MHA construction). See
+        # autoresearch/ideas/165-k-only-norm/idea.md.
+        use_k_only_norm: bool = False,
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale
+        # on top of 016's WIN). Pass-through to the inner MHA. See
+        # `MultiHeadAttention.use_qk_norm_depth` for the mechanism.
+        # Default off → baseline path bit-identical. Sits on top of
+        # 016's pre-RoPE symmetric norm; mutually exclusive with
+        # 162 (Q-only) / 165 (K-only) / 049 (post-RoPE) at MHA
+        # construction. See
+        # `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        use_qk_norm_depth: bool = False,
         use_multiscale_heads: bool = False,
         use_parallel_block: bool = False,
         use_attn_sink: bool = False,
@@ -2900,6 +5034,10 @@ class TransformerBlock(nn.Module):
         # (see note at the MHA `use_softpick` kwarg). Default off →
         # baseline path bit-identical.
         use_softpick: bool = False,
+        # 173 — Entmax-1.5 sparse attention. Passed through to
+        # MultiHeadAttention (see note at the MHA `use_entmax`
+        # kwarg). Default off → baseline path bit-identical.
+        use_entmax: bool = False,
         # 025 — SSMax. Passed through to MultiHeadAttention (see note
         # at the MHA `use_ssmax` kwarg). Default off → baseline path
         # bit-identical.
@@ -2932,6 +5070,43 @@ class TransformerBlock(nn.Module):
         # MultiHeadAttention (see the MHA `use_value_residual` kwarg
         # for the mechanism). Default off → baseline path bit-identical.
         use_value_residual: bool = False,
+        # 164 — Q-Carry. Passed through to MultiHeadAttention
+        # (see MHA.use_q_carry for the mechanism). Default off →
+        # baseline path bit-identical.
+        use_q_carry: bool = False,
+        # 168 — AV-Output Carry pass-through to MultiHeadAttention
+        # (see MHA.use_av_output_carry for the mechanism). Default
+        # off → baseline path bit-identical.
+        use_av_output_carry: bool = False,
+        # 186 — Within-Block V-Carry pass-through to
+        # MultiHeadAttention (see MHA.use_v_carry_block for the
+        # mechanism). Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+        use_v_carry_block: bool = False,
+        # 163 — Post-Attention V-Mix Depthwise Convolution (Poli et
+        # al. "Hyena", 2023, arXiv:2302.10866). After the attention
+        # output is computed (post-SDPA, post-reshape, pre-W_O
+        # projection), apply a symmetric depthwise Conv1d on the
+        # time axis over the post-attention tensor `[B, T, d_model]`.
+        # Conv weights are built as a raw
+        # `nn.Parameter(zeros(d_model, 1, k))` with center tap = 1.0
+        # set inline (NOT `nn.Conv1d(...)` followed by `.data`
+        # reassignment — `nn.Conv1d` consumes RNG at init
+        # (kaiming_uniform_), which would shift the RNG state for
+        # every subsequent block's `qkvo_proj` random init and break
+        # the step-0 byte-identity claim across blocks 2..12). Same
+        # raw-`Parameter` pattern as `models/conv_ffn.py:103-105`
+        # (157-conv-ffn). Padding = `k//2` symmetric (causal+future)
+        # — the attention sublayer has already integrated the full
+        # causal context, so the conv may look at both neighbors.
+        # `v_mix_conv_kernel` defaults to 3 (spec pin); valid range
+        # is odd integers ≥ 3. Default off → baseline path
+        # bit-identical (no Parameter registered, no forward branch
+        # taken). Cost: n_layers × k × d_model extra params
+        # (12 × 3 × 64 = 2,304 at tiny1m3m, +0.25%). See
+        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+        use_v_mix_conv: bool = False,
+        v_mix_conv_kernel: int = 3,
         # 111 — DropPath / Stochastic Depth (Huang et al. 2016,
         # arXiv:1603.09382). Per-block Bernoulli gate during training:
         # with probability `1 - p_l` skip the whole block (residual
@@ -3093,6 +5268,34 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/157-conv-ffn/idea.md`.
         use_conv_ffn: bool = False,
         conv_ffn_kernel: int = 3,
+        # 188 — Cross-Block K/V Projection Sharing pass-through to
+        # the inner MHA. See `MultiHeadAttention.use_cross_block_kv_share`
+        # for the mechanism (Universal Transformers-style learnable
+        # convex blend of the layer's W_K/W_V with the previous
+        # block's W_K/W_V, gated on a 0-dim scalar per side with
+        # sigmoid-bounded init at -10). `prev_W_K` / `prev_W_V` are
+        # passed through the block's forward into the MHA forward.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+        use_cross_block_kv_share: bool = False,
+        # 204 — Cross-Block Attention Score Sharing pass-through
+        # to the inner MHA. See
+        # `MultiHeadAttention.use_cross_block_score_share` for the
+        # mechanism (per-block learnable scalar α =
+        # σ(score_share_alpha_raw) blends the current block's
+        # pre-softmax scores with the previous block's detached
+        # pre-softmax scores; init -10 ⇒ α ≈ 4.5e-5 ⇒ identity at
+        # step 0 within fp32 noise). `prev_block_scores` is passed
+        # through the block's forward into the MHA forward (same
+        # pattern as 021's `v_residual=` / 164's `q_carry=` / 168's
+        # `av_carry=` / 188's `prev_W_K=` / `prev_W_V=`).
+        # `score_share_alpha_init` defaults to -10.0 (the standard
+        # sigmoid-gated scalar init used by 188's K/V α params
+        # and the closed 021 `lambda_v` 1-D gain family). Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+        use_cross_block_score_share: bool = False,
+        score_share_alpha_init: float = -10.0,
     ):
         super().__init__()
         # #75 Post-norm: when set, the norm is applied AFTER the
@@ -3116,6 +5319,11 @@ class TransformerBlock(nn.Module):
             use_attn_output_channel_gate=use_attn_output_channel_gate,
             use_exclusive_self_attn=use_exclusive_self_attn,
             use_kda_channel_gate=use_kda_channel_gate,
+            # 166 — T5-RPE pass-through to the inner MHA. Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            use_t5_rpe=use_t5_rpe,
+            t5_rpe_buckets=t5_rpe_buckets,
             # 152 — Per-head logit bias pass-through to the inner MHA.
             # See `MultiHeadAttention.use_attn_logit_bias` for the
             # mechanism. Default off → baseline path bit-identical.
@@ -3125,13 +5333,53 @@ class TransformerBlock(nn.Module):
             # path bit-identical. See
             # `autoresearch/ideas/155-per-head-temp/idea.md`.
             use_per_head_temp=use_per_head_temp,
+            # 180 — Pre-softmax 1D causal conv pass-through.
+            use_logit_conv=use_logit_conv,
+            logit_conv_kernel_size=logit_conv_kernel_size,
+            # 179 — Anti-Causal Sub-Heads pass-through to the
+            # inner MHA. Per-head learnable scalar `γ_h` controls
+            # the per-head upper-triangle fill magnitude. Init
+            # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to baseline.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+            use_anti_causal_subheads=use_anti_causal_subheads,
+            # 160 — Per-head RMS gain on the attention output.
+            # Pass-through to the inner MHA. Default off → baseline
+            # path bit-identical. See
+            # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+            use_head_gain=use_head_gain,
+            # 181 — Cross-Head Channel RMSNorm. Pass-through to
+            # the inner MHA. Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+            use_cross_head_rmsnorm=use_cross_head_rmsnorm,
+            # 191 — Per-token attention output gain pass-through to
+            # the inner MHA. See
+            # `MultiHeadAttention.use_token_attn_gain` for the
+            # mechanism. Default off → baseline path bit-
+            # identical. See
+            # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+            use_token_attn_gain=use_token_attn_gain,
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,
+            # 171 — DropConnect on W_O pass-through to the inner MHA.
+            # See `MultiHeadAttention.use_dropconnect_wo` for the
+            # mechanism (per-weight Bernoulli mask on W_O with warmup-
+            # ramped effective rate). Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+            use_dropconnect_wo=use_dropconnect_wo,
+            dropconnect_wo_rate=dropconnect_wo_rate,
+            dropconnect_wo_warmup_steps=dropconnect_wo_warmup_steps,
             # 151 — RoV pass-through to the inner MHA. Default off
             # → baseline path bit-identical. See
             # `autoresearch/ideas/151-rov-gated/idea.md`.
             use_rov=use_rov,
+            # 174 — xPos exponential decay on K pass-through to the
+            # inner MHA. Default off → baseline path bit-identical.
+            # See `autoresearch/ideas/174-xpos-decay/idea.md`.
+            use_xpos=use_xpos,
             # 154 — Rebased Attention pass-through to the inner MHA.
             # Default off → baseline path bit-identical. See
             # `autoresearch/ideas/154-rebased-attn/idea.md`.
@@ -3142,6 +5390,18 @@ class TransformerBlock(nn.Module):
             # `autoresearch/ideas/156-moa/idea.md`.
             use_moa=use_moa,
             moa_num_experts=moa_num_experts,
+            # 178 — Gated MQA pass-through to the inner MHA. Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/178-mqa-gated/idea.md`.
+            use_mqa_gated=use_mqa_gated,
+            # 185 — Static per-head learned K-rotation pass-through
+            # to the inner MHA. Default off → baseline path bit-
+            # identical. See `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+            use_static_k_rotation=use_static_k_rotation,
+            # 182 — Per-head learnable attention window pass-through.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/182-per-head-window/idea.md`.
+            use_per_head_window=use_per_head_window,
             use_talking_heads_out=use_talking_heads_out,
             out_op=out_op,
             use_value_embed=use_value_embed,
@@ -3163,8 +5423,36 @@ class TransformerBlock(nn.Module):
             use_cope=use_cope,
             use_fox=use_fox,
             use_softpick=use_softpick,
+            use_entmax=use_entmax,
             use_ssmax=use_ssmax,
             use_value_residual=use_value_residual,
+            # 164 — Q-Carry pass-through to MultiHeadAttention
+            # (see MHA.use_q_carry for the mechanism). Default off →
+            # baseline path bit-identical. See
+            # `autoresearch/ideas/164-q-carry/plan.md`.
+            use_q_carry=use_q_carry,
+            # 168 — AV-Output Carry pass-through to MultiHeadAttention
+            # (see MHA.use_av_output_carry for the mechanism). Default
+            # off → baseline path bit-identical. See
+            # `autoresearch/ideas/168-av-output-carry/plan.md`.
+            use_av_output_carry=use_av_output_carry,
+            # 186 — Within-Block V-Carry pass-through to
+            # MultiHeadAttention (see MHA.use_v_carry_block for the
+            # mechanism). Default off → baseline path bit-identical.
+            # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+            use_v_carry_block=use_v_carry_block,
+            # 163 — Pass-through to MultiHeadAttention.
+            use_v_mix_conv=use_v_mix_conv,
+            v_mix_conv_kernel=v_mix_conv_kernel,
+            # 188 — Cross-Block K/V Projection Sharing pass-through.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+            use_cross_block_kv_share=use_cross_block_kv_share,
+            # 204 — Cross-Block Attention Score Sharing pass-through.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+            use_cross_block_score_share=use_cross_block_score_share,
+            score_share_alpha_init=score_share_alpha_init,
             # 129 — YOCO shared KV pass-through to the MHA. Default
             # off → standard path. See `autoresearch/ideas/129-yoco/idea.md`.
             use_shared_kv=use_shared_kv,
@@ -3193,6 +5481,22 @@ class TransformerBlock(nn.Module):
             # 029 — V-Norm pass-through: when set, MHA builds a per-head
             # `nn.LayerNorm(d_k)` on V — see MultiHeadAttention.use_v_layernorm.
             use_v_layernorm=use_v_layernorm,
+            # 176 — Pre-AV V RMSNorm pass-through: when set, MHA
+            # builds per-head `v_rmsnorm_alpha ∈ R^H` and
+            # `v_rmsnorm_gain ∈ R^{H × d_k}` and applies the gated
+            # RMSNorm to V before the AV product — see
+            # MultiHeadAttention.use_v_rmsnorm.
+            use_v_rmsnorm=use_v_rmsnorm,
+            # 162 — Q-Only RMSNorm pass-through: when set, MHA builds a
+            # per-head `nn.RMSNorm(d_k)` on Q only — see MultiHeadAttention.use_q_only_norm.
+            use_q_only_norm=use_q_only_norm,
+            # 165 — K-Only RMSNorm pass-through: when set, MHA builds a
+            # per-head `nn.RMSNorm(d_k)` on K only — see MultiHeadAttention.use_k_only_norm.
+            use_k_only_norm=use_k_only_norm,
+            # 169 — Depth-Conditional QK-Norm pass-through: when set,
+            # MHA registers `qk_norm_scale = nn.Parameter(torch.ones(()))`
+            # per block — see MultiHeadAttention.use_qk_norm_depth.
+            use_qk_norm_depth=use_qk_norm_depth,
             # Query-tweaks pass-through.
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,
@@ -3236,6 +5540,43 @@ class TransformerBlock(nn.Module):
             # baseline path runs bit-identical. See
             # `autoresearch/ideas/153-relu2-ffn/idea.md`.
             self.feed_forward = ReLU2FeedForward(d_model, d_ff, dropout)
+        elif use_swiglu_ffn:
+            # 170 — SwiGLU FFN (Shazeer 2020, arXiv:2002.05202;
+            # LLaMA-family FFN). Three-projection gated linear unit
+            # `y = down_proj(silu(W_gate·x) ⊙ (W_up·x))` with
+            # zero-init `gate_proj.weight` ⇒ `silu(0) = 0` ⇒ FFN
+            # output is exactly 0 at step 0 (clean ReZero-style
+            # baseline: the residual stream carries only the
+            # attention sub-block at step 0). d_ff is scaled by the
+            # Shazeer 2/3 trick (`d_ff_swiglu = (2 * d_ff) // 3`,
+            # 170 for d_ff_baseline=256) so total FFN param count
+            # matches the baseline to within ~0.4%. Branch sits
+            # AHEAD of every other FFN-replacement flag (MoE / TTT
+            # / `ffn_variant == "swiglu"`) so it isn't silently
+            # shadowed. Default off → the standard `ffn_variant`
+            # cascade runs bit-identical to baseline. See
+            # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+            # Mutual-exclusion guard: 170 owns the FFN slot, so a later
+            # combo of `use_swiglu_ffn + use_soft_moe + ffn_variant="swiglu"`
+            # would silently win by branch order. Fail loud here so the
+            # misuse is caught at construction, not at training time.
+            assert not (use_soft_moe or use_switch_ffn or use_ttt_ffn), (
+                "use_swiglu_ffn (170) is mutually exclusive with "
+                "use_soft_moe (117) / use_switch_ffn (146) / use_ttt_ffn: "
+                "all three replace the FFN with their own module, so they "
+                "shadow 170's gate."
+            )
+            assert ffn_variant != "swiglu", (
+                "use_swiglu_ffn (170) is mutually exclusive with "
+                "ffn_variant='swiglu' (legacy 2-projection SwiGLU without "
+                "zero-init gate) — pick one. The branch ordering silently "
+                "wins by 170."
+            )
+            from .components import SwiGLUZeroInitFeedForward
+            d_ff_swiglu = (2 * d_ff) // 3
+            self.feed_forward = SwiGLUZeroInitFeedForward(
+                d_model, d_ff_swiglu, dropout
+            )
         elif use_soft_moe:
             # 117 — Soft MoE: E parallel narrower FFNs + softmax
             # dispatch/combine. See `models/soft_moe.py` for the
@@ -3601,7 +5942,7 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
-    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None):
+    def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
         # the 0-indexed layer position (l=0 → p_l=1.0; l=n_layers-1 →
@@ -3705,7 +6046,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(n)
             else:
-                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(n, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -3740,7 +6081,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(x)
             else:
-                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(x, ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:
@@ -3778,7 +6119,7 @@ class TransformerBlock(nn.Module):
             if self.use_focal_mod:
                 attn_out = self.focal_mod(self.norm1(x))
             else:
-                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv)
+                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores)
             if self.use_layerscale:
                 attn_out = attn_out * (1.0 + self.attn_layerscale)
             if self.use_layer_scale:

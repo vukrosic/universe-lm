@@ -1,0 +1,10 @@
+{"ts":"2026-06-15T08:29:07Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:29:35Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"tasting","to":"needs-repitch","round":1,"note":"revise: c=8 makes lever bit-identical to closed softcap; re-pitch as either tight-clamp (c≈2) active bet OR explicit family-close null — see taste.md r1"}
+{"ts":"2026-06-15T08:30:55Z","agent":"miner","idea":"195-qk-clamp-min-max","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:32:03Z","agent":"miner","idea":"195-qk-clamp-min-max","from":"repitching","to":"needs-taste","round":2,"note":"applied 1 finding: switched c=8 -> c=2.0 so lever is active at step 0 and discontinuous-derivative claim is testable"}
+{"ts":"2026-06-15T08:33:13Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"needs-taste","to":"tasting","round":2,"note":"claimed"}
+{"ts":"2026-06-15T08:33:32Z","agent":"taste","idea":"195-qk-clamp-min-max","from":"tasting","to":"needs-review","round":1,"note":"accept: r1 blocker fully addressed — c=2.0 makes lever active at step 0 (5% clipped at init), not bit-identical to baseline or to closed softcap; hard-clamp sub-axis of logit-bounding family is a clean distinct bet with informative null; niche form fits (0 params, identity-able, mechanism not HP); see taste.md r2"}
+{"ts":"2026-06-15T08:47:33Z","agent":"reviewer","idea":"195-qk-clamp-min-max","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:48:39Z","agent":"reviewer","idea":"195-qk-clamp-min-max","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T08:50:20Z","agent":"code-impl","idea":"195-qk-clamp-min-max","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:57:47Z","agent":"orchestrator","idea":"195-qk-clamp-min-max","from":"planning","to":"needs-plan","round":1,"note":"reclaim stale planning lock (7m)"}

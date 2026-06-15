@@ -1,0 +1,4 @@
+{"ts":"2026-06-15T08:19:15Z","agent":"taste","idea":"198-pre-ffn-attnmix","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:19:49Z","agent":"taste","idea":"198-pre-ffn-attnmix","from":"tasting","to":"needs-review","round":1,"note":"accept: novel within-block pre-FFN cross-stream axis (only pre-FFN candidate in queue; .detach() + sigmoid(-10) γ clean lever; crisp 2-sided bet; 12 scalars; 021-WIN does not retire this) — route to definition at tiny1m3m seed 42"}
+{"ts":"2026-06-15T08:28:10Z","agent":"reviewer","idea":"198-pre-ffn-attnmix","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:29:17Z","agent":"reviewer","idea":"198-pre-ffn-attnmix","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}

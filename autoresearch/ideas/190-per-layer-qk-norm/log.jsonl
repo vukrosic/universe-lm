@@ -1,0 +1,6 @@
+{"ts":"2026-06-15T08:16:37Z","agent":"taste","idea":"190-per-layer-qk-norm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:17:06Z","agent":"taste","idea":"190-per-layer-qk-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp attribution bet on 016's WIN axis (block-level vs head-level γ); both branches informative, mechanism-shaped with bit-identical step-0, transfer-risk low, not portfolio-crowded"}
+{"ts":"2026-06-15T08:18:25Z","agent":"reviewer","idea":"190-per-layer-qk-norm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:22:05Z","agent":"reviewer","idea":"190-per-layer-qk-norm","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-15T08:45:09Z","agent":"reviser","idea":"190-per-layer-qk-norm","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-15T08:52:41Z","agent":"orchestrator","idea":"190-per-layer-qk-norm","from":"revising","to":"needs-revision","round":1,"note":"reclaim stale revising lock (7m)"}

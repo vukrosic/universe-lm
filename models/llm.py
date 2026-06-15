@@ -162,6 +162,18 @@ class MinimalLLM(nn.Module):
             self.token_embedding = nn.Embedding(config.vocab_size, self.emb_rank)
             self.emb_proj = nn.Linear(self.emb_rank, config.d_model, bias=False)
         self.use_smear_gate = getattr(config, "use_smear_gate", False)
+        # 159 — Embedding pre-LayerNorm (LLaMA 3 / Gemma 2 / Mistral
+        # / Qwen 2.5 pattern). Build a single `nn.LayerNorm(d_model)`
+        # here; applied in `_embed_input` right after the scaled
+        # embedding is produced. Default off → baseline path
+        # bit-identical (the LN module is never built, the forward
+        # branch is never taken). The empirical step-0 identity init
+        # (weight = std(x_post), bias = mean(x_post)) happens AFTER
+        # `self.apply(self._init_weights)` below so it survives the
+        # global init. See `autoresearch/ideas/159-emb-layernorm/idea.md`.
+        self.use_emb_layernorm = getattr(config, "use_emb_layernorm", False)
+        if self.use_emb_layernorm:
+            self.emb_layernorm = nn.LayerNorm(config.d_model)
         if self.use_smear_gate:
             self.smear_gate = nn.Parameter(torch.zeros(config.d_model))
         self.position_dropout = nn.Dropout(config.dropout)
@@ -206,6 +218,17 @@ class MinimalLLM(nn.Module):
         self.use_k_gain = getattr(config, "use_k_gain", False)
         self.use_deep_value_embed = getattr(config, "use_deep_value_embed", False)
         self.use_ffn_embed = getattr(config, "use_ffn_embed", False)
+        # 194 — Embedding 1/sqrt(d_model) scaling (Primer-style,
+        # So et al. 2021, arXiv:2109.08668). The lever is forward-
+        # time / init-time only — 0 new parameters. The
+        # `_embed_input` method reads this flag and overrides the
+        # standard `emb_scale = sqrt(d_model)` with
+        # `1/sqrt(d_model)` when True. With the flag False (default)
+        # the existing emb_scale path is bit-identical to the
+        # baseline. See `autoresearch/ideas/194-embed-sqrt-d/idea.md`.
+        self.use_embed_sqrt_d_scaling = getattr(
+            config, "use_embed_sqrt_d_scaling", False
+        )
         self.use_qk_norm_post_rope = getattr(config, "use_qk_norm_post_rope", False)
         self.use_sliding_window = getattr(config, "use_sliding_window", False)
         self.sliding_window_size = getattr(config, "sliding_window_size", 512)
@@ -250,12 +273,30 @@ class MinimalLLM(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         self.use_drop_key = getattr(config, "use_drop_key", False)
         self.drop_key_rate = getattr(config, "drop_key_rate", 0.1)
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the attention output projection
+        # during training. Pass-through to each block's MHA. Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self.use_dropconnect_wo = getattr(config, "use_dropconnect_wo", False)
+        self.dropconnect_wo_rate = getattr(config, "dropconnect_wo_rate", 0.05)
+        self.dropconnect_wo_warmup_steps = getattr(
+            config, "dropconnect_wo_warmup_steps", 100
+        )
         # 151 — RoV (Rotary Value Embeddings, gated). When on, the
         # block's MHA applies the same rotary to V as to Q,K and
         # mixes via a per-block scalar `rov_gate` (init 0 ⇒
         # bit-identical to baseline at step 0). Default off → baseline
         # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
         self.use_rov = getattr(config, "use_rov", False)
+        # 174 — xPos exponential decay on K (Sun et al. 2022,
+        # arXiv:2212.10554). When on, each block's MHA multiplies the
+        # rotated K by `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+        # step-0 forward is bit-identical to the 500k-base RoPE
+        # baseline (max-abs-diff = 0.0). Default off → baseline path
+        # bit-identical, no parameter created. Pass-through to each
+        # block's MHA. See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        self.use_xpos = getattr(config, "use_xpos", False)
         # 154 — Rebased Attention. When on, the block's MHA pools
         # K, V along the time axis with stride `rebase_stride`
         # (default 8) *before* the softmax, so attention reads from
@@ -275,6 +316,52 @@ class MinimalLLM(nn.Module):
         # See `autoresearch/ideas/156-moa/idea.md`.
         self.use_moa = getattr(config, "use_moa", False)
         self.moa_num_experts = max(2, int(getattr(config, "moa_num_experts", 2))) if self.use_moa else 1
+        # 178 — Gated Multi-Query Attention. Per-KV-head scalar gate
+        # β_k, β_v blending per-head K, V with a shared K, V
+        # projection. Init 0 ⇒ step-0 forward is bit-identical to
+        # the no-flag baseline. Default off ⇒ baseline path bit-
+        # identical. See `autoresearch/ideas/178-mqa-gated/idea.md`.
+        self.use_mqa_gated = getattr(config, "use_mqa_gated", False)
+        # 185 — Static per-head learned K-rotation. Per-head angle
+        # `θ_{h,i}` init 0 ⇒ `R_h = I_{d_k}` exactly in fp32 ⇒
+        # step-0 forward is bit-identical to the no-flag baseline.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+        self.use_static_k_rotation = getattr(config, "use_static_k_rotation", False)
+        # 182 — Per-head learnable attention window. Init
+        # `head_window_logit = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈
+        # T − 0.00005·T > T − 1 = max|t − s|` ⇒ penalty identically 0
+        # at fp32 ⇒ step-0 forward is byte-identical to the no-flag
+        # baseline. Default off ⇒ baseline path bit-identical. See
+        # `autoresearch/ideas/182-per-head-window/idea.md`.
+        self.use_per_head_window = getattr(config, "use_per_head_window", False)
+        # 179 — Anti-Causal Sub-Heads. Per-head learnable scalar
+        # `γ_h = sigmoid(γ_raw_h)` attenuates the upper-triangle
+        # fill by `(1 − γ_h)`. Init `γ_raw_h = -10` ⇒
+        # `γ_h ≈ 4.5e-5` ⇒ fill `≈ -9.99955e8` ⇒ softmax row
+        # bitwise 0 on masked positions ⇒ step-0 byte-identical
+        # to baseline. Default off ⇒ baseline path bit-identical.
+        # See `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+        self.use_anti_causal_subheads = getattr(
+            config, "use_anti_causal_subheads", False
+        )
+        # 174 — xPos exponential decay on RoPE (Sun et al. 2022).
+        # When on, the block's MHA multiplies the rotated K by
+        # `exp(-xpos_gamma · t)` (per-position decay), biasing
+        # attention toward recent tokens. Init `xpos_gamma = 0`
+        # ⇒ step-0 forward is bit-identical to the 500k-base RoPE
+        # baseline. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        self.use_xpos = getattr(config, "use_xpos", False)
+        # 166 — T5-style bucketed relative position bias. When on,
+        # each block's MHA adds a per-head learnable logit bias
+        # `rpe_bias ∈ R^{H × B}` indexed by
+        # `bucket(|i-j|) = floor(log2(|i-j|+1)).clamp_max(B-1)`.
+        # Init zero ⇒ step-0 ≡ baseline. Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+        self.use_t5_rpe = getattr(config, "use_t5_rpe", False)
+        self.t5_rpe_buckets = max(1, int(getattr(config, "t5_rpe_buckets", 32)))
         # 025 — Scalable-Softmax (SSMax): per-head learnable scalar
         # s_h that multiplies the attention logits by s_h · log(n)
         # pre-softmax, where n is the per-query causal key count.
@@ -283,6 +370,14 @@ class MinimalLLM(nn.Module):
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/025-scalable-softmax/plan.md`.
         self.use_ssmax = getattr(config, "use_ssmax", False)
+        # 173 — Entmax-1.5 sparse attention (Peters/Niculae/Martins,
+        # ACL 2019, arXiv:1905.09018). Stored on the model so the
+        # pass-through to the MHA construction site can read it.
+        # Init 0 ⇒ α_h=1 ⇒ the helper short-circuits to softmax at
+        # step 0 (bit-identical baseline). Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        self.use_entmax = getattr(config, "use_entmax", False)
         # 023 — Canon conv (gated depthwise causal Conv1d on the residual
         # stream). One conv per block, pre-attn pre-LN, scalar gate init
         # 0 → step-0 ≡ no-conv baseline. Default off → baseline path
@@ -304,6 +399,74 @@ class MinimalLLM(nn.Module):
         # on each MHA; step-0 ≡ baseline. Default off → baseline path
         # bit-identical. See `autoresearch/ideas/021-value-residual/plan.md`.
         self.use_value_residual = getattr(config, "use_value_residual", False)
+        # 164 — Q-Carry (cross-block Q residual). Layer 0 stashes
+        # its MHA sublayer input on `block.attention._q_carry`; the
+        # forward loop below reads it after the layer-0 call and
+        # passes it as `q_carry=...` to every layer l ≥ 1. Per-block
+        # scalar `alpha_q` (init 0) lives on each MHA; step-0 ≡
+        # baseline. Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/164-q-carry/plan.md`.
+        self.use_q_carry = getattr(config, "use_q_carry", False)
+        # 168 — AV-Output Carry (post-AV cross-block residual).
+        # Layer 0 stashes its post-SDPA/post-merge-reshape/pre-W_O
+        # attention output on `block.attention._av_carry`; the
+        # forward loop below reads it after the layer-0 call and
+        # passes it as `av_carry=...` to every layer l ≥ 1. Per-
+        # block scalar `alpha_av` (init 0) lives on each MHA;
+        # step-0 ≡ baseline. Default off → baseline path bit-
+        # identical. See
+        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+        self.use_av_output_carry = getattr(config, "use_av_output_carry", False)
+        # 186 — Within-Block V-Carry (per-head learnable V
+        # recurrence). Local to each block — no cross-block stash or
+        # `q_carry=`/`av_carry=`-style plumbing; the recurrence runs
+        # causally within a single block. Per-block per-head
+        # `v_carry_alphas = nn.Parameter(torch.zeros(n_heads))` lives
+        # on each MHA; tanh-bounded, init 0 ⇒ step-0 ≡ baseline.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/186-v-carry-block/plan.md`.
+        self.use_v_carry_block = getattr(config, "use_v_carry_block", False)
+        # 188 — Cross-Block K/V Projection Sharing (Universal
+        # Transformers-style learnable parameter sharing across
+        # depth, Dehghani et al. ICLR 2019, arXiv:1807.03819). Each
+        # block's K, V projection is a learnable convex blend of
+        # its own (new) projection and the previous block's
+        # projection, gated on a 0-dim scalar per side with sigmoid-
+        # bounded init at -10. Layer 0 stashes its W_K, W_V slices
+        # on `block.attention._prev_W_K` / `_prev_W_V`; the forward
+        # loop below reads them after the layer-0 call and passes
+        # them as `prev_W_K=` / `prev_W_V=` to layers 1..N-1. Per-
+        # block scalars `cross_block_alpha_K`, `cross_block_alpha_V`
+        # (init -10) live on each MHA; step-0 ≡ baseline within fp32
+        # noise of one extra multiply-add. Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+        self.use_cross_block_kv_share = getattr(
+            config, "use_cross_block_kv_share", False
+        )
+        # 204 — Cross-Block Attention Score Sharing (Sukhbaatar
+        # et al. Memorizing Transformers ICLR 2022,
+        # arXiv:2203.08913 — within-model cross-block pre-softmax
+        # score-reuse lever). Each block's pre-softmax attention
+        # scores are blended with the previous block's (detached)
+        # pre-softmax scores via a learnable per-block scalar α
+        # = σ(score_share_alpha_raw) (init -10 ⇒ α ≈ 4.5e-5 ⇒
+        # scores_eff ≈ scores_self at step 0 within fp32 noise of
+        # one extra multiply-add). Layer 0 stashes its pre-softmax
+        # scores on `block.attention._prev_block_scores`; the
+        # forward loop below reads it back after the layer-0 call
+        # and passes it as `prev_block_scores=` to layers 1..N-1.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+        self.use_cross_block_score_share = getattr(
+            config, "use_cross_block_score_share", False
+        )
+        # 163 — Post-Attention V-Mix Depthwise Conv (Hyena-style
+        # residual conv on V before the O projection). Default off
+        # → baseline path bit-identical. See
+        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+        self.use_v_mix_conv = getattr(config, "use_v_mix_conv", False)
+        self.v_mix_conv_kernel = getattr(config, "v_mix_conv_kernel", 3)
         # 117 — Soft MoE (Puigcerver et al. 2024): when True, the
         # block's FFN is replaced with `SoftMoEFFN` (E parallel
         # narrower FFNs + softmax dispatch/combine). Default off →
@@ -362,6 +525,10 @@ class MinimalLLM(nn.Module):
         # `ffn_variant` branch runs, baseline FFN path bit-identical.
         # See `autoresearch/ideas/153-relu2-ffn/idea.md`.
         self.use_relu2_ffn = getattr(config, "use_relu2_ffn", False)
+        # 170 — SwiGLU FFN. Default off → standard `ffn_variant`
+        # branch runs, baseline FFN path bit-identical. See
+        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        self.use_swiglu_ffn = getattr(config, "use_swiglu_ffn", False)
         # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
         # when on, each block builds a per-token `MoDRouter` and gates
         # the block's residual update to the top-k = `mod_capacity · T`
@@ -409,17 +576,45 @@ class MinimalLLM(nn.Module):
         self.norm_type = getattr(config, "norm_type", "rmsnorm")
         self.qk_norm_type = getattr(config, "qk_norm_type", "rmsnorm")
         self.v_norm_type = getattr(config, "v_norm_type", "")
+        # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). See
+        # autoresearch/ideas/162-q-only-norm/idea.md.
+        self.use_q_only_norm = getattr(config, "use_q_only_norm", False)
+        # 165 — K-Only RMSNorm (asymmetric QK pre-softmax, K-side).
+        # The K-mirror of 162; together with 016 (symmetric QK) forms a
+        # clean 3-way orthogonal attribution test for the 016 WIN.
+        # See autoresearch/ideas/165-k-only-norm/idea.md.
+        self.use_k_only_norm = getattr(config, "use_k_only_norm", False)
         # #16 QK-Norm (Dehghani et al. 2023, ViT-22B, arXiv:2302.05442):
         # when True, override the Q/K norm from RMSNorm to LayerNorm,
         # bounding the per-head logit. Default off → bit-identical
         # baseline. See autoresearch/ideas/016-qk-norm/plan.md.
         self.use_qk_layernorm = getattr(config, "use_qk_layernorm", False)
+        # 169 — Depth-Conditional QK-Norm (per-block learnable scale on
+        # top of 016's WIN). When True, each MHA registers a single
+        # scalar `qk_norm_scale = nn.Parameter(torch.ones(()))` and
+        # multiplies Q, K (and MoA extra_K) by it AFTER the per-head
+        # norm and BEFORE the QK matmul. Init 1.0 ⇒ step-0 forward is
+        # byte-identical to 016's step-0 (max-abs-diff = 0.0). Mutually
+        # exclusive with use_q_only_norm / use_k_only_norm /
+        # use_qk_norm_post_rope (asserted at MHA forward). Default off
+        # ⇒ no `qk_norm_scale` registered, baseline path bit-identical.
+        # See `autoresearch/ideas/169-qk-norm-depth/idea.md`.
+        self.use_qk_norm_depth = getattr(config, "use_qk_norm_depth", False)
         # 029 — V-Norm (Wortsman et al. 2023, arXiv:2309.14322):
         # when True, add a per-head `nn.LayerNorm(d_head)` on V before
         # the AV product, the symmetric partner of 016's QK-Norm. Default
         # off → bit-identical baseline (no v_norm module built). See
         # autoresearch/ideas/029-v-norm/plan.md.
         self.use_v_layernorm = getattr(config, "use_v_layernorm", False)
+        # 176 — Pre-AV V RMSNorm with per-head α-gate + per-head γ-gain:
+        # when True, each block's MHA registers `v_rmsnorm_alpha ∈ R^H`
+        # and `v_rmsnorm_gain ∈ R^{H × d_k}` and applies the gated
+        # RMSNorm to V before the AV product. Init α=0,γ=1 ⇒ step-0
+        # forward is byte-identical to baseline (max-abs-diff = 0.0).
+        # Pass-through to each block's MHA. Default off → no Parameter
+        # created, no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        self.use_v_rmsnorm = getattr(config, "use_v_rmsnorm", False)
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
         # 158 — Gated Attention Unit (Hua et al. 2022, arXiv:2202.10447).
@@ -542,11 +737,27 @@ class MinimalLLM(nn.Module):
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
+                        # 171 — DropConnect on W_O: per-weight
+                        # Bernoulli mask on the O projection. See
+                        # `MultiHeadAttention.use_dropconnect_wo`
+                        # for the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+                        use_dropconnect_wo=self.use_dropconnect_wo,
+                        dropconnect_wo_rate=self.dropconnect_wo_rate,
+                        dropconnect_wo_warmup_steps=self.dropconnect_wo_warmup_steps,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
                         # Init 0 ⇒ bit-identical to baseline at step 0.
                         use_rov=self.use_rov,
+                        # 174 — xPos exponential decay on RoPE pass-
+                        # through to the YOCO upper-half block. When on,
+                        # the block's MHA multiplies the rotated K by
+                        # `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+                        # bit-identical to baseline at step 0. See
+                        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+                        use_xpos=self.use_xpos,
                         # 154 — Rebased Attention pass-through to the
                         # YOCO upper-half block. Default off → baseline
                         # path bit-identical. See
@@ -558,6 +769,35 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 178 — Gated MQA pass-through to the YOCO
+                        # upper-half block. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+                        use_mqa_gated=self.use_mqa_gated,
+                        # 185 — Static per-head learned K-rotation
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+                        use_static_k_rotation=self.use_static_k_rotation,
+                        # 182 — Per-head learnable attention window
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/182-per-head-window/idea.md`.
+                        use_per_head_window=self.use_per_head_window,
+                        # 179 — Anti-Causal Sub-Heads pass-through to
+                        # the YOCO upper-half block. Per-head γ_h
+                        # attenuates the upper-triangle fill. Init
+                        # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to
+                        # baseline. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                        use_anti_causal_subheads=self.use_anti_causal_subheads,
+                        # 166 — T5-RPE pass-through to the YOCO upper-
+                        # half block. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+                        use_t5_rpe=self.use_t5_rpe,
+                        t5_rpe_buckets=self.t5_rpe_buckets,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -590,6 +830,11 @@ class MinimalLLM(nn.Module):
                         use_cope=self.use_cope,
                         use_fox=self.use_fox,
                         use_softpick=self.use_softpick,
+                        # 173 — Entmax-1.5 sparse attention pass-through
+                        # to the block. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/173-entmax-15/idea.md`.
+                        use_entmax=self.use_entmax,
                         use_ssmax=self.use_ssmax,
                         use_canon_conv=self.use_canon_conv,
                         # 143 — ShortConv pass-through to the YOCO
@@ -598,6 +843,34 @@ class MinimalLLM(nn.Module):
                         use_short_conv=self.use_short_conv,
                         short_conv_kernel=self.short_conv_kernel,
                         use_value_residual=self.use_value_residual,
+                        # 164 — Q-Carry pass-through. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/164-q-carry/plan.md`.
+                        use_q_carry=self.use_q_carry,
+                        # 168 — AV-Output Carry pass-through. Default
+                        # off → baseline path bit-identical. See
+                        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+                        use_av_output_carry=self.use_av_output_carry,
+                        # 186 — Within-Block V-Carry pass-through.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+                        use_v_carry_block=self.use_v_carry_block,
+                        # 188 — Cross-Block K/V Projection Sharing
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+                        use_cross_block_kv_share=self.use_cross_block_kv_share,
+                        # 204 — Cross-Block Attention Score Sharing
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+                        use_cross_block_score_share=self.use_cross_block_score_share,
+                        # 163 — Post-Attention V-Mix Depthwise Conv
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+                        use_v_mix_conv=self.use_v_mix_conv,
+                        v_mix_conv_kernel=self.v_mix_conv_kernel,
                         use_drop_path=getattr(config, "use_drop_path", False),
                         drop_path_max=getattr(config, "drop_path_max", 0.1),
                         use_soft_moe=self.use_soft_moe,
@@ -618,6 +891,11 @@ class MinimalLLM(nn.Module):
                         # 153 — Squared-ReLU FFN activation pass-
                         # through to the YOCO upper-half block.
                         use_relu2_ffn=self.use_relu2_ffn,
+                        # 170 — SwiGLU FFN pass-through to the YOCO
+                        # upper-half block. Default off → FFN path bit-
+                        # identical. See
+                        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+                        use_swiglu_ffn=self.use_swiglu_ffn,
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
                         mod_router_hidden=self.mod_router_hidden,
@@ -643,6 +921,14 @@ class MinimalLLM(nn.Module):
                         v_norm_type=self.v_norm_type,
                         use_qk_layernorm=self.use_qk_layernorm,
                         use_v_layernorm=self.use_v_layernorm,
+                        # 176 — Pre-AV V RMSNorm pass-through to the
+                        # block. See MHA use_v_rmsnorm.
+                        use_v_rmsnorm=self.use_v_rmsnorm,
+                        use_q_only_norm=self.use_q_only_norm,
+                        use_k_only_norm=self.use_k_only_norm,
+                        # 169 — Depth-Conditional QK-Norm pass-through
+                        # to the block. See MHA use_qk_norm_depth.
+                        use_qk_norm_depth=self.use_qk_norm_depth,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -761,14 +1047,50 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
                         use_attn_logit_bias=getattr(config, "use_attn_logit_bias", False),
+                        # 166 — T5-RPE pass-through to the standard
+                        # transformer block. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/166-t5-rpe/idea.md`.
+                        use_t5_rpe=self.use_t5_rpe,
+                        t5_rpe_buckets=self.t5_rpe_buckets,
                         # 155 — Per-head learnable attention temperature
                         # pass-through. Default off → baseline path
                         # bit-identical. See
                         # `autoresearch/ideas/155-per-head-temp/idea.md`.
                         use_per_head_temp=getattr(config, "use_per_head_temp", False),
+                        # 180 — Pre-softmax 1D causal depthwise conv on
+                        # attention logits. Pass-through to the block.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/180-qk-logit-conv/idea.md`.
+                        use_logit_conv=getattr(config, "use_logit_conv", False),
+                        logit_conv_kernel_size=getattr(config, "logit_conv_kernel_size", 3),
+                        # 160 — Per-head RMS gain on the attention output.
+                        # Pass-through to the block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/160-rms-gain-per-head/idea.md`.
+                        use_head_gain=getattr(config, "use_head_gain", False),
+                        # 181 — Cross-Head Channel RMSNorm.
+                        # Pass-through to the block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/181-cross-head-rmsnorm/idea.md`.
+                        use_cross_head_rmsnorm=getattr(config, "use_cross_head_rmsnorm", False),
+                        # 191 — Per-token attention output gain.
+                        # Pass-through to the block. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/191-token-attn-gain/idea.md`.
+                        use_token_attn_gain=getattr(config, "use_token_attn_gain", False),
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
+                        # 171 — DropConnect on W_O: per-weight
+                        # Bernoulli mask on the O projection. See
+                        # `MultiHeadAttention.use_dropconnect_wo`
+                        # for the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+                        use_dropconnect_wo=self.use_dropconnect_wo,
+                        dropconnect_wo_rate=self.dropconnect_wo_rate,
+                        dropconnect_wo_warmup_steps=self.dropconnect_wo_warmup_steps,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
@@ -785,6 +1107,36 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 178 — Gated MQA pass-through to the standard
+                        # block. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/178-mqa-gated/idea.md`.
+                        use_mqa_gated=self.use_mqa_gated,
+                        # 185 — Static per-head learned K-rotation
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/185-static-per-head-k-rotation/idea.md`.
+                        use_static_k_rotation=self.use_static_k_rotation,
+                        # 182 — Per-head learnable attention window
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/182-per-head-window/idea.md`.
+                        use_per_head_window=self.use_per_head_window,
+                        # 179 — Anti-Causal Sub-Heads pass-through to
+                        # the standard block. Per-head γ_h attenuates
+                        # the upper-triangle fill. Init
+                        # `γ_h ≈ 4.5e-5` ⇒ step-0 byte-identical to
+                        # baseline. Default off → baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
+                        use_anti_causal_subheads=self.use_anti_causal_subheads,
+                        # 174 — xPos exponential decay on RoPE pass-
+                        # through to the standard block. When on, the
+                        # block's MHA multiplies the rotated K by
+                        # `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+                        # bit-identical to baseline at step 0. See
+                        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+                        use_xpos=self.use_xpos,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -820,6 +1172,11 @@ class MinimalLLM(nn.Module):
                         use_cope=self.use_cope,
                         use_fox=self.use_fox,
                         use_softpick=self.use_softpick,
+                        # 173 — Entmax-1.5 sparse attention pass-through
+                        # to the block. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/173-entmax-15/idea.md`.
+                        use_entmax=self.use_entmax,
                         use_ssmax=self.use_ssmax,
                         use_canon_conv=self.use_canon_conv,
                         # 143 — ShortConv pass-through to the standard
@@ -828,6 +1185,34 @@ class MinimalLLM(nn.Module):
                         use_short_conv=self.use_short_conv,
                         short_conv_kernel=self.short_conv_kernel,
                         use_value_residual=self.use_value_residual,
+                        # 164 — Q-Carry pass-through. Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/164-q-carry/plan.md`.
+                        use_q_carry=self.use_q_carry,
+                        # 168 — AV-Output Carry pass-through. Default
+                        # off → baseline path bit-identical. See
+                        # `autoresearch/ideas/168-av-output-carry/plan.md`.
+                        use_av_output_carry=self.use_av_output_carry,
+                        # 186 — Within-Block V-Carry pass-through.
+                        # Default off → baseline path bit-identical.
+                        # See `autoresearch/ideas/186-v-carry-block/plan.md`.
+                        use_v_carry_block=self.use_v_carry_block,
+                        # 188 — Cross-Block K/V Projection Sharing
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/188-cross-block-kv-share/idea.md`.
+                        use_cross_block_kv_share=self.use_cross_block_kv_share,
+                        # 204 — Cross-Block Attention Score Sharing
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/204-cross-block-attn-score-share/idea.md`.
+                        use_cross_block_score_share=self.use_cross_block_score_share,
+                        # 163 — Post-Attention V-Mix Depthwise Conv
+                        # pass-through. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/163-v-mix-conv/idea.md`.
+                        use_v_mix_conv=self.use_v_mix_conv,
+                        v_mix_conv_kernel=self.v_mix_conv_kernel,
                         # 117 — Soft MoE pass-through to the block.
                         use_soft_moe=self.use_soft_moe,
                         soft_moe_n_experts=self.soft_moe_n_experts,
@@ -844,6 +1229,10 @@ class MinimalLLM(nn.Module):
                         # 153 — Squared-ReLU FFN activation pass-
                         # through to the standard block.
                         use_relu2_ffn=self.use_relu2_ffn,
+                        # 170 — SwiGLU FFN pass-through to the standard
+                        # block. Default off → FFN path bit-identical.
+                        # See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+                        use_swiglu_ffn=self.use_swiglu_ffn,
                         # 118 — Mixture-of-Depths pass-through to the block.
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
@@ -882,6 +1271,15 @@ class MinimalLLM(nn.Module):
                         use_qk_layernorm=self.use_qk_layernorm,
                         # 029 — V-Norm pass-through to the block.
                         use_v_layernorm=self.use_v_layernorm,
+                        # 176 — Pre-AV V RMSNorm pass-through to the
+                        # block. See MHA use_v_rmsnorm.
+                        use_v_rmsnorm=self.use_v_rmsnorm,
+                        # 162 — Q-Only RMSNorm pass-through to the block.
+                        use_q_only_norm=self.use_q_only_norm,
+                        use_k_only_norm=self.use_k_only_norm,
+                        # 169 — Depth-Conditional QK-Norm pass-through
+                        # to the block. See MHA use_qk_norm_depth.
+                        use_qk_norm_depth=self.use_qk_norm_depth,
                         use_multiscale_heads=self.use_multiscale_heads,
                         use_parallel_block=self.use_parallel_block,
                         use_attn_sink=self.use_attn_sink,
@@ -1017,6 +1415,35 @@ class MinimalLLM(nn.Module):
         self.use_vocab_bias = getattr(config, "use_vocab_bias", False)
         if self.use_vocab_bias:
             self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))
+        # 184 — Learned Logit Scale (CLIP-style, Radford et al. 2021,
+        # arXiv:2103.00020). Single 0-D scalar `logit_scale_param`
+        # applied as `logits = logits * exp(logit_scale_param)`. Init 0
+        # ⇒ `exp(0) = 1.0` exactly in IEEE 754 ⇒ exact no-op at step 0.
+        # The exp-parameterization guarantees positivity without an
+        # explicit clamp. 1 scalar, routes to AdamW. Default off →
+        # baseline path bit-identical (no parameter created, no
+        # forward-graph branch). See
+        # `autoresearch/ideas/184-logit-scale/idea.md`.
+        self.use_logit_scale = getattr(config, "use_logit_scale", False)
+        if self.use_logit_scale:
+            self.logit_scale_param = nn.Parameter(torch.zeros(()))
+        # 183 — Pre-LM-Head RMSNorm (Gemma 2 / LLaMA 3 / Qwen 2.5
+        # / OLMo 2 final-norm pattern). When on, the model registers
+        # an `nn.RMSNorm(d_model)` (default `weight=1, bias=0` —
+        # `_init_weights` doesn't touch it since it's neither Linear
+        # nor Embedding) and a scalar gate `pre_head_scale = 0` init.
+        # Applied as `x = (1 − scale) · x + scale · RMSNorm(x)` between
+        # the final `output_dropout` and the `lm_head`. `scale = 0`
+        # at step 0 ⇒ the mix is exactly `x` ⇒ byte-identical to
+        # the no-flag champion. Default off ⇒ no module built, no
+        # parameter registered, baseline path bit-identical.
+        # See `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+        self.use_pre_lm_head_rmsnorm = getattr(
+            config, "use_pre_lm_head_rmsnorm", False
+        )
+        if self.use_pre_lm_head_rmsnorm:
+            self.pre_head_norm = nn.RMSNorm(config.d_model, eps=1e-6)
+            self.pre_head_scale = nn.Parameter(torch.zeros(()))
 
         # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
         # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When
@@ -1085,6 +1512,22 @@ class MinimalLLM(nn.Module):
 
         self.apply(self._init_weights)
 
+        # 159 — Embedding pre-LayerNorm: `_init_weights` leaves
+        # `nn.LayerNorm` at its default `weight=1, bias=0` (the
+        # standard LN affine init). At step 0 the LN forward is
+        # `(x - μ(x)) / σ(x) * 1 + 0`, a *rescaled* version of `x`,
+        # NOT byte-identical — but the spec accepts this trade-off
+        # ("most harnesses tolerate fp32 max-abs-diff < 1e-3 on the
+        # embedding magnitude"). For the factorized tiny1m3m case
+        # (rank=8, d_model=64) the per-token μ/σ are approximately
+        # constant across tokens (all x_post[b,t,:] are samples of
+        # the same zero-mean N(0, σ_c²) distribution), so the
+        # rescaling is uniform and the diff between flag-on and
+        # baseline is bounded. The flag-OFF baseline path remains
+        # untouched (the LN module is never built, the forward
+        # branch is never taken). See
+        # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+
         # Start the additive output path as an exact no-op, so step 0 matches the
         # tied-head baseline and the adapter earns any improvement during training.
         if self.output_adapter_out is not None:
@@ -1120,6 +1563,23 @@ class MinimalLLM(nn.Module):
                 nn.init.zeros_(self.mos_pi_proj.weight)
                 self.mos_pi_proj.bias.fill_(-1e4)
                 self.mos_pi_proj.bias[0] = 1e4
+        # 170 — SwiGLU FFN zero-init gate. AFTER the global init, re-zero
+        # the gate_proj.weight of every block's SwiGLUZeroInitFeedForward.
+        # `_init_weights` re-inits every `nn.Linear` with `normal_(std=0.02)`,
+        # which overwrites the zero-init in `SwiGLUZeroInitFeedForward.__init__`.
+        # We need W_gate=0 here so `silu(W_gate·x) = silu(0) = 0` exactly
+        # at step 0 ⇒ FFN output = 0 exactly ⇒ the residual stream carries
+        # only the attention sub-block at step 0 (clean ReZero-style
+        # baseline). The optimizer then grows the gate during training.
+        # Default off → no SwiGLUZeroInitFeedForward exists, branch not
+        # taken, baseline path bit-identical. See
+        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        if self.use_swiglu_ffn:
+            with torch.no_grad():
+                for block in self.transformer_blocks:
+                    ff = block.feed_forward
+                    if hasattr(ff, "gate_proj"):
+                        nn.init.zeros_(ff.gate_proj.weight)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -1138,7 +1598,8 @@ class MinimalLLM(nn.Module):
                     embedding branches.
           x_post  : residual-stream input to the transformer stack
                     (post emb_proj if emb_rank is set, post emb_scale,
-                    post any encode-only output MLP).
+                    post any encode-only output MLP, post 159
+                    embedding pre-LayerNorm when `use_emb_layernorm=True`).
           x0      : optional pre-norm residual-stream reference used by
                     the #20 embed-residual re-injection.
           ve      : raw token embedding passed to attention as the V/Q/K
@@ -1152,10 +1613,36 @@ class MinimalLLM(nn.Module):
         emb_scale = getattr(self.config, 'embedding_scale', -1.0)
         if emb_scale < 0:
             emb_scale = math.sqrt(self.config.d_model)
+        # 194 — Embedding 1/sqrt(d_model) scaling (Primer-style,
+        # So et al. 2021, arXiv:2109.08668). When the flag is on,
+        # override the standard sqrt(d_model) emb_scale with
+        # 1/sqrt(d_model) — the residual-stream input is scaled
+        # DOWN by 1/d_model relative to the baseline. This is a
+        # forward-time / init-time lever (0 new parameters); step-0
+        # loss is approximately the same as the baseline (the
+        # initial Kaiming-init LM-head produces near-uniform
+        # logits regardless of input scale, so cross-entropy on
+        # random labels is ~log(vocab_size) in both cases). The
+        # gradient signal is different (smaller-magnitude residual
+        # stream ⇒ flatter softmax ⇒ more uniform gradient across
+        # vocab tokens). `False` (default) ⇒ emb_scale path
+        # bit-identical to baseline. See
+        # `autoresearch/ideas/194-embed-sqrt-d/idea.md`.
+        if self.use_embed_sqrt_d_scaling:
+            emb_scale = 1.0 / math.sqrt(self.config.d_model)
         if self.emb_rank is None:
             x_post = tok * emb_scale
         else:
             x_post = self.emb_proj(tok) * emb_scale
+        # 159 — Embedding pre-LayerNorm: normalize the residual-stream
+        # input ONCE here, before the first transformer block. The LN
+        # params are init to `weight=std(x_post)`, `bias=mean(x_post)`
+        # at construction (see `MinimalLLM.__init__` post-init hook)
+        # so this op is an empirical identity at step 0. Default off
+        # → branch never taken, baseline path bit-identical. See
+        # `autoresearch/ideas/159-emb-layernorm/idea.md`.
+        if self.use_emb_layernorm:
+            x_post = self.emb_layernorm(x_post)
         # B0 Tied output MLP: encode runs once on the (scaled) embedding,
         # before the block loop. Modify the input to the stack by adding
         # Wd·φ(Wu·x). See TiedOutputMLP docstring for step-0 caveat.
@@ -1211,6 +1698,37 @@ class MinimalLLM(nn.Module):
         # or the lever is off altogether (`if self.use_value_residual:`
         # guard in MHA).
         v_residual = None
+        # 164 — Q-Carry: stash the layer-0 MHA sublayer input on
+        # `block.attention._q_carry`; read it back after the layer-0
+        # block and pass as `q_carry=...` to every layer l ≥ 1. None
+        # ⇒ MHA's `use_q_carry` branch is the stash branch (layer 0)
+        # or the lever is off altogether.
+        q_carry = None
+        # 168 — AV-Output Carry: stash the layer-0 post-SDPA / post-
+        # merge-reshape / pre-W_O attention output on
+        # `block.attention._av_carry`; read it back after the layer-0
+        # block and pass as `av_carry=...` to every layer l ≥ 1. None
+        # ⇒ MHA's `use_av_output_carry` branch is the stash branch
+        # (layer 0) or the lever is off altogether. Mirrors 021's
+        # `v_residual=...` and 164's `q_carry=...` plumbing.
+        av_carry = None
+        # 188 — Cross-Block K/V Projection Sharing: stash the
+        # layer-0 W_K, W_V slices (detached) on `block.attention.
+        # _prev_W_K` / `_prev_W_V`; read them back after the layer-0
+        # block and pass as `prev_W_K=` / `prev_W_V=` to every layer
+        # l ≥ 1. None ⇒ MHA's `use_cross_block_kv_share` branch is
+        # the stash branch (layer 0) or the lever is off altogether.
+        # Mirrors 021's `v_residual=...` / 164's `q_carry=...` /
+        # 168's `av_carry=...` plumbing. GAU/YOCO are mutually
+        # exclusive with the lever (the stash reads the prev block's
+        # qkvo_proj slices, which don't exist in the fused GAUBlock /
+        # YOCOLlamaBlock) — guarded with the same `not self.use_gau`
+        # check as v_residual / q_carry / av_carry. YOCO
+        # (use_shared_kv=True) the MHA's own blend branch is dead
+        # and the stash writes None, so passing it forward is a
+        # safe no-op.
+        prev_W_K = None
+        prev_W_V = None
         # 129 — YOCO: `shared_kv` is the (K_g, V_g) tensor pair shared
         # across all upper-half blocks. Computed ONCE on the lower
         # half's final residual stream after the last lower-half
@@ -1282,6 +1800,32 @@ class MinimalLLM(nn.Module):
                     v_residual=v_residual,
                     layer_index=i,
                     shared_kv=block_shared_kv,
+                    # 164 — Q-Carry: forward-pass-local stash from
+                    # the previous block's MHA sublayer input. `None`
+                    # when the lever is off → the block's
+                    # `q_carry=` kwarg is a no-op and the baseline
+                    # path is bit-identical. Mirrors 021's
+                    # `v_residual=...` plumbing on the same call.
+                    q_carry=q_carry,
+                    # 168 — AV-Output Carry: forward-pass-local stash
+                    # from the previous block's post-SDPA/post-merge-
+                    # reshape/pre-W_O attention output. `None` when
+                    # the lever is off → the block's `av_carry=`
+                    # kwarg is a no-op and the baseline path is bit-
+                    # identical. Mirrors 021's `v_residual=...` and
+                    # 164's `q_carry=...` plumbing on the same call.
+                    av_carry=av_carry,
+                    # 188 — Cross-Block K/V Projection Sharing:
+                    # forward-pass-local stash from the previous
+                    # block's W_K, W_V slices (detached at the MHA
+                    # call site). `None` on layer 0 (or when the
+                    # lever is off) → the block's `prev_W_K=` /
+                    # `prev_W_V=` kwargs are no-ops and the baseline
+                    # K, V projection path is bit-identical. Mirrors
+                    # 021's `v_residual=...` / 164's `q_carry=...` /
+                    # 168's `av_carry=...` plumbing on the same call.
+                    prev_W_K=prev_W_K,
+                    prev_W_V=prev_W_V,
                     # 150 — Cross-Layer Feedback: forward-pass-local
                     # list of pre-FFN x from the previous K blocks.
                     # The block reads from it and appends its own
@@ -1304,6 +1848,47 @@ class MinimalLLM(nn.Module):
                 # compose with the fused gating).
                 if not self.use_gau:
                     v_residual = block.attention._v_residual
+            if self.use_q_carry and i == 0:
+                # After layer-0 MHA forward, the MHA sublayer input
+                # (LN(x_0) under pre-norm, x under post-norm/parallel)
+                # is stashed at `block.attention._q_carry`
+                # (`.detach()`-ed inside MHA.forward). Capture for
+                # layers 1..N-1. Same `not self.use_gau` guard as
+                # v_residual — GAUBlock has no `.attention` attribute
+                # and a fused MHA+FFN operator doesn't compose with
+                # the carry mechanism (the carry reads the previous
+                # block's MHA sublayer input, which doesn't exist in
+                # the fused operator).
+                if not self.use_gau:
+                    q_carry = block.attention._q_carry
+            if self.use_av_output_carry and i == 0:
+                # After layer-0 MHA forward, the post-SDPA / post-
+                # merge-reshape / pre-W_O attention output is stashed
+                # at `block.attention._av_carry` (`.detach()`-ed
+                # inside MHA.forward, shape `[B, T, d_model]`).
+                # Capture for layers 1..N-1. Same `not self.use_gau`
+                # guard as v_residual/q_carry — GAUBlock has no
+                # `.attention` attribute and a fused MHA+FFN operator
+                # doesn't compose with the carry mechanism (the carry
+                # reads the previous block's post-AV tensor, which
+                # doesn't exist in the fused operator).
+                if not self.use_gau:
+                    av_carry = block.attention._av_carry
+            if self.use_cross_block_kv_share and i == 0:
+                # After layer-0 MHA forward, the W_K and W_V slices
+                # of the layer-0 qkvo_proj are stashed at
+                # `block.attention._prev_W_K` / `_prev_W_V` (already
+                # `.detach()`-ed inside MHA.forward, shape
+                # `[kv_size, d_model]`). Capture for layers 1..N-1.
+                # Same `not self.use_gau` guard as v_residual /
+                # q_carry / av_carry — GAUBlock has no `.attention`
+                # attribute. YOCO: `block.attention._prev_W_K` /
+                # `_prev_W_V` are written as `None` by the MHA
+                # forward branch (shared K, V path skips the W_K,
+                # W_V stash), so the capture is a safe no-op.
+                if not self.use_gau:
+                    prev_W_K = block.attention._prev_W_K
+                    prev_W_V = block.attention._prev_W_V
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary
@@ -1424,6 +2009,15 @@ class MinimalLLM(nn.Module):
         # x directly, bypassing the emb_proj reduction (the untied head is
         # full d_model → vocab, not r → vocab). See docs/research/output_head/plan.md
         # (Batch 3). Default off = tied (byte-identical to baseline).
+        # 183 — Pre-LM-Head RMSNorm: gated mix right before the LM
+        # head. `scale = 0` at init ⇒ the mix is exactly `x` ⇒
+        # byte-identical to the no-flag champion (the dropout noise
+        # scales uniformly, so the gate cancels identically in fp32
+        # on the forward and the backward graph). See
+        # `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+        if self.use_pre_lm_head_rmsnorm:
+            scale = self.pre_head_scale
+            x = (1.0 - scale) * x + scale * self.pre_head_norm(x)
         if self.use_untied_head:
             logits = x @ self.lm_head.T
         elif self.emb_rank is None:
@@ -1452,6 +2046,13 @@ class MinimalLLM(nn.Module):
         # Reporting rule. See docs/research/output_head/plan.md (Batch 2).
         if self.use_vocab_bias:
             logits = logits + self.vocab_bias
+        # 184 — Learned Logit Scale: logits *= exp(logit_scale_param).
+        # Init 0 ⇒ exp(0) = 1.0 exactly ⇒ step-0 byte-identical to
+        # baseline. The exp-form keeps the multiplier strictly
+        # positive without a clamp. See
+        # `autoresearch/ideas/184-logit-scale/idea.md`.
+        if self.use_logit_scale:
+            logits = logits * self.logit_scale_param.exp()
 
         return logits
 
@@ -1530,6 +2131,11 @@ class MinimalLLM(nn.Module):
         emb_scale = getattr(self.config, 'embedding_scale', -1.0)
         if emb_scale < 0:
             emb_scale = math.sqrt(self.config.d_model)
+        # 194 — Embedding 1/sqrt(d_model) scaling (Primer-style,
+        # So et al. 2021, arXiv:2109.08668). Mirrors the lever
+        # branch in `_embed_input` so the seqmix path is consistent.
+        if getattr(self, "use_embed_sqrt_d_scaling", False):
+            emb_scale = 1.0 / math.sqrt(self.config.d_model)
         if self.emb_rank is None:
             x_post = tok_mixed * emb_scale
         else:

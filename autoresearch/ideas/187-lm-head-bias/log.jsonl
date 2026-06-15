@@ -1,0 +1,18 @@
+{"ts":"2026-06-15T07:18:53Z","agent":"taste","idea":"187-lm-head-bias","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:19:24Z","agent":"taste","idea":"187-lm-head-bias","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp bet on output/input decoupling via per-vocab additive bias at tied-embedding scale; fresh axis, transfer-risk:low (T5-validated), two-sided informative (win unlocks per-vocab lever; null closes axis at 0.94M); 183/184 output-head levers in flight are mechanistically orthogonal (1-D per-vocab vs scalar RMSNorm/scalar temperature)"}
+{"ts":"2026-06-15T07:22:37Z","agent":"reviewer","idea":"187-lm-head-bias","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:23:08Z","agent":"reviewer","idea":"187-lm-head-bias","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise"}
+{"ts":"2026-06-15T07:25:01Z","agent":"reviser","idea":"187-lm-head-bias","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:25:59Z","agent":"reviser","idea":"187-lm-head-bias","from":"revising","to":"needs-review","round":2,"note":"applied 4 findings (vocab_size 49152, baseline-cache fresh pull, existing-wiring ack, Alibi subclass)"}
+{"ts":"2026-06-15T07:28:58Z","agent":"reviewer","idea":"187-lm-head-bias","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-15T07:30:06Z","agent":"reviewer","idea":"187-lm-head-bias","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T07:34:17Z","agent":"code-impl","idea":"187-lm-head-bias","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:39:24Z","agent":"code-impl","idea":"187-lm-head-bias","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-15T07:50:43Z","agent":"daemon","idea":"187-lm-head-bias","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T07:51:06Z","agent":"daemon","idea":"187-lm-head-bias","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MAlibiLMHeadBiasConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T07:55:03Z","agent":"code-impl","idea":"187-lm-head-bias","from":"needs-recode","to":"recoding","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:55:25Z","agent":"code-impl","idea":"187-lm-head-bias","from":"recoding","to":"needs-run","round":2,"note":"recoded: subclass now present at configs/llm_config.py:2512, build-smoke passes locally (C constructs, MinimalLLM builds with vocab_bias=zeros(49152), no model changes)"}
+{"ts":"2026-06-15T07:57:29Z","agent":"daemon","idea":"187-lm-head-bias","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T07:57:42Z","agent":"daemon","idea":"187-lm-head-bias","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MAlibiLMHeadBiasConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-15T07:58:25Z","agent":"auto-implement","idea":"187-lm-head-bias","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-15T07:58:57Z","agent":"auto-implement","idea":"187-lm-head-bias","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
