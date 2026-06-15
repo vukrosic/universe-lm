@@ -7,3 +7,4 @@
 {"ts":"2026-06-15T07:28:58Z","agent":"reviewer","idea":"187-lm-head-bias","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
 {"ts":"2026-06-15T07:30:06Z","agent":"reviewer","idea":"187-lm-head-bias","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
 {"ts":"2026-06-15T07:34:17Z","agent":"code-impl","idea":"187-lm-head-bias","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-15T07:39:24Z","agent":"code-impl","idea":"187-lm-head-bias","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
