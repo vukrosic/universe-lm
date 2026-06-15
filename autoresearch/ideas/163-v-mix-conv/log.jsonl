@@ -17,3 +17,4 @@
 {"ts":"2026-06-14T06:20:21Z","agent":"reset-button","idea":"163-v-mix-conv","from":"running","to":"needs-run","round":3,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-14T07:02:41Z","agent":"runner","idea":"163-v-mix-conv","from":"needs-run","to":"done","round":3,"note":"WIN: trt=0.4607 vs cached mean=6.4346±0.0458 (Δ=-5.9739, unprecedented magnitude — re-run on fresh data split before trusting; see evidence.md caveat)"}
 {"ts":"2026-06-15T05:53:53Z","agent":"human","idea":"163-v-mix-conv","from":"done","to":"needs-run","round":3,"note":"re-run on fresh split: val 0.46 vs 6.4 baseline is leak-level; confirm or retract"}
+{"ts":"2026-06-15T05:58:51Z","agent":"daemon","idea":"163-v-mix-conv","from":"needs-run","to":"running","round":3,"note":"claimed: queued by daemon"}
