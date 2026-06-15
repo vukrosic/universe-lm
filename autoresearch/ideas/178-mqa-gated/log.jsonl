@@ -26,3 +26,4 @@
 {"ts":"2026-06-15T07:10:59Z","agent":"auto-implement","idea":"178-mqa-gated","from":"needs-recode","to":"needs-review","round":1,"note":"auto-fix gave up after 5 failed runs — needs a human"}
 {"ts":"2026-06-15T07:11:04Z","agent":"auto-implement","idea":"178-mqa-gated","from":"needs-review","to":"rejected","round":1,"note":"auto-rejected: blocked 3x with no path forward (see log)"}
 {"ts":"2026-06-15T07:23:38Z","agent":"human","idea":"178-mqa-gated","from":"rejected","to":"needs-run","round":1,"note":"re-queue: was rejected on a code-sync bug (config class missing on box), not a real failure; box now has the code"}
+{"ts":"2026-06-15T07:26:26Z","agent":"daemon","idea":"178-mqa-gated","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}

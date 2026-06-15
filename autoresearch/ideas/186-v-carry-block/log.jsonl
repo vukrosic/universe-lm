@@ -1,3 +1,4 @@
 {"ts":"2026-06-15T07:17:24Z","agent":"taste","idea":"186-v-carry-block","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:19:12Z","agent":"taste","idea":"186-v-carry-block","from":"tasting","to":"needs-review","round":1,"note":"accept: per-head learned within-block V-carry is distinct from 154/168/164/021 on 3 axes (placement, tensor, parameterization); 168 null is a real prior but the lever form is structurally different; per-head α_h readout at end-of-training turns a clean null into a mechanistic close"}
 {"ts":"2026-06-15T07:22:42Z","agent":"reviewer","idea":"186-v-carry-block","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T07:26:48Z","agent":"code-impl","idea":"186-v-carry-block","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

@@ -21,3 +21,4 @@
 {"ts":"2026-06-15T06:35:03Z","agent":"auto-implement","idea":"181-cross-head-rmsnorm","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
 {"ts":"2026-06-15T06:35:08Z","agent":"auto-implement","idea":"181-cross-head-rmsnorm","from":"needs-review","to":"rejected","round":2,"note":"auto-rejected: blocked 4x with no path forward (see log)"}
 {"ts":"2026-06-15T07:23:38Z","agent":"human","idea":"181-cross-head-rmsnorm","from":"rejected","to":"needs-run","round":2,"note":"re-queue: was rejected on a code-sync bug (config class missing on box), not a real failure; box now has the code"}
+{"ts":"2026-06-15T07:26:26Z","agent":"daemon","idea":"181-cross-head-rmsnorm","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
