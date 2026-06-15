@@ -11,3 +11,4 @@
 {"ts":"2026-06-15T10:35:03Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T10:35:11Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29691995m)"}
 {"ts":"2026-06-15T10:35:12Z","agent":"daemon","idea":"208-value-residual-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T11:19:52Z","agent":"daemon","idea":"208-value-residual-alibi","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 29692039m)"}
