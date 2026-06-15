@@ -6,3 +6,4 @@
 {"ts":"2026-06-15T08:30:44Z","agent":"taste","idea":"194-lowrank-ffn","from":"tasting","to":"needs-review","round":1,"note":"accept: rank-r residual moves to W_V (V is the only positively-binding single-side attention projection at 0.94M per 021 WIN); pre-registered null closes the entire low-rank-residual sub-block family (FFN tested, W_O tested in 207, W_V tested here) — falsifiable in both directions; complements 207 on the other d_model×d_model attention sub-block without duplication; identity-init α=0, +1.3% params, fits tiny1m3m"}
 {"ts":"2026-06-15T08:31:54Z","agent":"reviewer","idea":"194-lowrank-ffn","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:32:15Z","agent":"reviewer","idea":"194-lowrank-ffn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T08:49:03Z","agent":"code-impl","idea":"194-lowrank-ffn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

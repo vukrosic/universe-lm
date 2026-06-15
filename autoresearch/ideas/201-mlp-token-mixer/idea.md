@@ -1,52 +1,68 @@
 ---
 id: 201-mlp-token-mixer
-status: repitching
-round: 1
-updated: 2026-06-15T08:31:24Z
+status: needs-taste
+round: 2
+updated: 2026-06-15T08:49:07Z
 transfer-risk: med
-plain: Add a tiny token-mixing MLP over the attention output before the W_O projection (init at 0 contribution so step-0 is byte-identical), letting the model softly share information across nearby tokens outside of attention.
+plain: gMLP-style spatial gating unit (SGU) added alongside attention on the attention output, in 4 of 12 blocks (stochastic); α=sigmoid(α_raw) init -10 ⇒ bit-identical baseline at step 0; tests whether global per-channel post-attn mixing binds at 0.94M once 163's local-conv result is in.
 ---
 
-# 201 — MLP Token Mixer on Attention Output (Pre-W_O Cross-Token MLP)
+# 201 — gMLP Spatial Gating Unit on Attention Output (Per-Block Stochastic)
 
 ## Source
-- Tolstikhin et al., "MLP-Mixer" (NeurIPS 2021, arXiv:2105.01601) — uses MLP-only token mixing and channel mixing as an alternative to attention. Validated at ImageNet scale.
-- 163-v-mix-conv (in-repo needs-run) — depthwise Conv1d on attention output pre-W_O. Conv is a *local* token mixer; 201 is an *MLP* (global) token mixer.
-- 143-shortconv (closed borderline, Δ=−0.0134 not passing WIN bar) — pre-attention depthwise Conv1d on residual. Different placement (pre-attention vs pre-W_O).
+- Liu et al., "Pay Attention to MLPs" (gMLP, NeurIPS 2021, arXiv:2105.08050) — uses a *spatial gating unit* (a global per-channel gate applied after an MLP block) as the sole token mixer (no attention). 79.4% top-1 on ImageNet.
+- Tolstikhin et al., "MLP-Mixer" (NeurIPS 2021, arXiv:2105.01601) — alternative MLP-only token/channel mixing architecture. ImageNet scale.
+- 163-v-mix-conv (in-repo, `needs-implement`) — depthwise Conv1d kernel=3 on attention output pre-W_O. 163 is **local** mixing; 201 is **global** mixing on the same axis. Different bet.
+- 143-shortconv (closed borderline, Δ=−0.0134 not passing WIN bar) — pre-attention depthwise Conv1d on residual. Different placement.
 - 157-conv-ffn (closed null) — depthwise conv post-FFN-activation. Different placement.
-- Liu et al., "Pay Attention to MLPs" (gMLP, NeurIPS 2021, arXiv:2105.08050) — gMLP uses spatial gating unit (essentially an MLP token mixer) as alternative to attention.
-- 116-hyper-connections (closed null Δ=+0.0666 wrong-sign) — residual-stream expansion via mHC. Different axis.
 
 ## Mechanism
-Standard attention output: `out = softmax(QK^T/√d) @ V` shape `[B, T, d_model]`. Then `W_O(out)` projects back to the residual stream.
+Committed mechanism: **gMLP-style spatial gating unit (SGU)** on the attention output, pre-W_O, **added alongside attention** (not as a replacement, unlike gMLP proper).
 
-MLP token mixer: apply a 2-layer MLP that mixes information across the token axis (T), placed between the attention output and W_O:
-```
-attn_out = softmax(QK^T/√d) @ V              # [B, T, d_model]
-attn_out = attn_out + α · token_mlp(attn_out) # α learnable, init 0
-out = W_O(attn_out)
-```
-Where `token_mlp` is a 2-layer MLP: `token_mlp(x) = W_2 · gelu(W_1 · x)` with W_1, W_2 operating over the token axis (shape `[d_model × d_model]` for a per-token linear, or `[d_model × T × d_model]` for a full token-mixing MLP — too many params).
+The SGU computes a global per-channel summary of the attention output, applies a learned per-channel linear, and broadcasts the result back across the token axis:
 
-**Cleaner formulation**: use a 1D depthwise Conv1d with kernel size = T (full token mixing) or a smaller kernel size k=4 for local mixing. But this is just 163 with a different kernel.
+```
+attn_out = softmax(QK^T/√d) @ V                    # [B, T, d_model]
+# Spatial Gating Unit (gMLP §3.1)
+z = attn_out.mean(dim=T, keepdim=True)              # [B, 1, d_model]  (global avg-pool per channel)
+z = gelu(z)                                         # nonlinearity
+z = z @ W_g                                         # [B, 1, d_model]  per-channel learned linear
+z = z.expand(-1, T, -1).contiguous()                # broadcast over T
+attn_out_post = attn_out + α · z                    # α = sigmoid(α_raw), α_raw init -10 ⇒ α ≈ 4.5e-5
+out = W_O(attn_out_post)
+```
 
-**Different formulation**: an MLP across the **token axis only**, applied *per channel*:
-```
-token_mlp(x)[t, c] = sum_s W_1[c, s] · x[t, s]    # W_1: [d_model × T], W_2: [T × d_model]
-                   = W_2[c, s] · gelu(...)
-```
-This is a per-channel linear mixing across tokens. At init α=0, no contribution (bit-identical).
+W_g has shape `[d_model, d_model]` = 4,096 params per block. To stay in the fair-by-param regime (compare 163 at +0.25%, baseline ~0.94M), apply the SGU in **4 of 12 blocks (per-block stochastic)**:
+
+- 4 blocks × 4,096 = **16,384 params (+1.74% of 0.94M)**
+- Plus 4 α scalars (negligible)
+- **Bit-identical baseline at step 0**: α ≈ 4.5e-5 ⇒ SGU contribution is zero in fp32; construction via raw `Parameter(shape, requires_grad=True)` keeps RNG state aligned with the no-flag path.
+
+**Dropped formulations** (round 1 muddled three shapes; r2 commits to one):
+- Per-channel-across-T linear `W: [d_model, T]` — 262k params/block, infeasible (+335%).
+- Kernel=T depthwise conv — 131k params/block, infeasible (+167%).
+- `W_1, W_2 ∈ R^{d_model × d_model}` applied per-channel — that's the standard FFN, not a token mixer (no T-axis mixing).
 
 ## Design sketch
-- **File**: `models/layers.py` — add a `token_mlp_mixer` module to attention block.
-- **Config flag**: `use_mlp_token_mixer: bool = False`, `token_mixer_alpha_init: float = -10.0` (sigmoid ≈ 0).
-- **Compute**: 2-layer MLP with W_1, W_2 ∈ R^{d_model × d_model}, applied per-channel across tokens. `α = sigmoid(α_raw)`. `attn_out_post = attn_out + α · token_mlp(attn_out)`.
-- **Bit-identical at step 0**: α ≈ 0 ⇒ `attn_out_post = attn_out` exactly.
-- **Params**: 2 × d_model × d_model = 8192 + 1 α × 12 blocks = 12 α's, total ~98k extra params (+10.4% of 0.94M).
-- **Intuition**: attention is a *content-based* token mixer; an MLP token mixer is a *position-based* (or content-free) token mixer. Together they cover both axes. The bet: at 0.94M, attention alone may not be enough for cross-token information flow (e.g., for tokens that don't share content but are spatially related), and an MLP mixer adds a complementary channel. Different from 163 (depthwise conv = local MLP) and from 143-shortconv (pre-attention conv).
+- **File**: `models/layers.py` — add `gmlp_sgu` module to `MultiHeadAttention`. Config flag `use_gmlp_sgu: bool = False`, `gmlp_sgu_block_stride: int = 3` (apply to block index 0, 3, 6, 9 by default).
+- **Construction**: `self.sgu_W = nn.Parameter(torch.empty(d_model, d_model))` only when `block_idx % stride == 0` (4 of 12 blocks). Init via raw `.data` so RNG state matches the no-flag path.
+- **Forward**: after `attn_output` is computed (post-SDPA, post-reshape) and before `W_O` projection, compute the SGU as above. `α` is a `nn.Parameter` shape `[]` scalar (one per SGU-enabled block).
+- **Cost**: 4 × 4,096 = 16,384 params (+1.74% of 0.94M); forward: one global avg-pool + one matmul + one broadcast add per SGU-enabled block per step.
+- **Identity-init-able ✓**, **mechanism (not HP) ✓**, **no data/infra needed ✓**, **fits in <100 LoC ✓**.
 
 ## Scale evidence
-MLP-Mixer validated at ImageNet (up to ~432M params); gMLP validated at ImageNet. No published "MLP token mixer on attention output" win for LMs that I'm aware of. Transfer-risk: med (lever is a known architectural primitive applied to a fresh placement).
+gMLP validated at ImageNet (Liu et al. 2021, up to ~73M params, 79.4% top-1) and the SGU formulation is the published primitive. **No in-LM validation known** — gMLP was ImageNet-only and did not test language modeling. The lever is a known architectural primitive applied to a fresh placement (alongside attention, post-attn pre-W_O, on a 0.94M LM), which is the standard recipe-side novelty for this pipeline. Transfer-risk: **med** — same as the original.
 
 ## Why it's worth a slot
-**Pattern**: pre-attention conv (143-shortconv) closed borderline; post-attention conv (163) needs-run. 201 is the *MLP* analog of 163 — broader token mixing (kernel = full token axis or large window) vs conv's narrow kernel. The bet: conv mixes locally (kernel=3); MLP mixes globally. If the binding axis is *global* token mixing on attention output (not local), 201 wins where 163 doesn't. A 201 WIN would mean global token mixing complements attention; a 201 NULL would mean the cross-token information is fully handled by attention.
+
+**Sharp bet (one sentence)**: We expect 201 to be a clean null or small WIN (|Δval| ≤ 0.02, inside the ±0.04 noise band) at 0.94M regardless of 163's result, because attention's softmax already provides global content-based token mixing and a per-block-stochastic *position-based* gate has no clear axis the optimizer can exploit at 0.94M / 12L / 3M tokens; a WIN at Δval ≤ −0.02 would mean the post-attention output axis binds a global gate the softmax wasn't saturating on, which is plausible but rare at this scale.
+
+**Conditioned on 163's outcome** (163 is still `needs-implement` as of this re-pitch):
+- **If 163 (kernel=3 local conv) wins**: 201 tests whether the *range* of post-attn mixing matters — wider (global) vs 163's narrower (local). A 201 WIN-on-top-of-163-WIN would mean local was just a weak proxy for global; a 201 NULL-on-top-of-163-WIN would mean local was sufficient and the global SGU has no extra binding.
+- **If 163 nulls**: 201 tests whether a *global* post-attn path (different mechanism from 163's local conv) is the binding constraint. A 201 WIN-on-top-of-163-NULL would mean the post-attn mixing axis wants global, not local; a 201 NULL-on-top-of-163-NULL would close the post-attn mixing axis at 0.94M.
+
+**Testable prediction**: the optimizer's choice of α is the load-bearing diagnostic. If α stays near 0 throughout training, the lever didn't bind (null result, regardless of val-loss Δ). If α grows, by how much, and does val-loss follow? The α-trajectory is logged per-block at every checkpoint — that's the cheap post-hoc diagnostic that distinguishes "lever didn't bind" from "lever bound but in a different axis than expected."
+
+**Why the position-based vs content-based framing matters**: attention is a *content-based* token mixer (softmax(QK^T) weights V by key similarity). The SGU is a *position-based* token mixer (global avg-pool ignores content, learns a per-channel scalar). Together they cover both axes; the question is whether the per-channel global signal carries information attention wasn't already providing.
+
+**Why this slot and not more**: a 201 NULL closes the *global* post-attention mixing axis at 0.94M (a previously open axis, distinct from 163's local axis). A 201 WIN unlocks a cheap architectural primitive (16k params) that scales to the ladder. A NULL is informative even if the val-loss Δ is unobservable, because α-trajectory tells us whether the lever was even reachable for the optimizer.

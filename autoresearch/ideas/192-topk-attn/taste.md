@@ -1,5 +1,75 @@
 # Taste log — 192 topk-attn
 
+## r2 — 2026-06-15 — verdict: accept
+
+All five r1 findings are addressed in the repitch. The lever earns a slot.
+
+- **Parameterization committed (finding 1 closed).** r2 dropped the
+  learnable-`k_l` alternative entirely and committed to option (a) — hard-fixed
+  `k = T/4 = 512`, 0 new params, step-0 non-identical, framed as a *structural
+  lever* in the same category as 173-entmax / 022-softpick / 154-rebased. The
+  "what is the A/B" question is now answered: it tests whether *fixed* support
+  at 0.94M is the lever where 173's *learned* support wasn't. No ambiguity left.
+
+- **Mechanism against 173 named, magnitude bounded (finding 2 closed).** The
+  bet is now: at 92-step / d_k=16 / 12L, dropping the support-size dimension
+  removes one source of variance in the search (the entmax-1.5 Lagrange-multiplier
+  flicker at the support boundary — Peters et al. 2019 documented). 1-D search
+  over weights within a fixed 512-key budget should beat 2-D search (support +
+  weights). Predicted magnitude: primary **NULL** (|Δval| < 0.01), with a
+  long-shot WIN band Δ ∈ [-0.005, -0.015] and a DRIFT band Δ ∈ [+0.01, +0.05].
+  Each band has a mechanism that opens it. This is a real bet, not a vibe.
+
+- **d_k=16 hostility engaged (finding 3 closed).** r2 engages 177-talking-heads
+  explicitly: 177's DRIFT is *H×H soft output mixing*, 192 is *per-row hard
+  pre-softmax sparsification within a head* — the d_k=16 hostility of 177 does
+  not transfer because 192 never crosses heads. DRIFT risk is bounded to the
+  same d_k=16 band 177 hit, not catastrophic (192 cap ~+0.05 vs 177's +0.95).
+  This is the right answer: the lever inherits the *risk class* but not the
+  *blow-up mode*.
+
+- **154-rebased axis-slot framing (finding 4 closed).** 192 is the *opposite*
+  prior of 154 (hard global non-contiguous vs soft local contiguous). The
+  pitch is explicit: they are *competing* for the same axis-slot ("what kind
+  of sparsity helps?"), not stacking. A 192 null after 154-WIN closes the
+  axis on the "locality-specific" answer; a 192-WIN-after-154-WIN opens the
+  "sparsity-generic" path. The two-prong-outcome framing is correct.
+
+- **Byte-identity claim corrected (finding 5 closed).** r1 caught that the
+  default k=T/4 is non-trivially different at step 0 (random Gaussian topk
+  is not the full distribution). r2 reframes cleanly as a *structural lever,
+  same category as 173/022/154* — no more byte-identity pretense. This is
+  the right correction: the lever now competes in the correct cohort.
+
+**Why accept despite the saturated family.** Yes, this is the 5th sparse-
+softmax/attention-sparsity lever in the cohort (173-entmax closed-recode-cap,
+022-softpick closed, 182-windowed null, 154-rebased WIN, 177-talking-heads
+DRIFT). But the r1 concern was "this is a different lever presented as two
+bundled levers" — that's fixed. The lever tests a *strictly more restricted,
+strictly cleaner-gradient* cousin of 173, on a *different parameterization*
+(1-D search vs 2-D search). A 192-NULL is strictly more informative than
+re-running 173: it confirms 173's null on a different mechanism, not on the
+same one. The taste prompt allows "a clean null result must still be worth
+logging"; this is a clean null-result lever.
+
+**Why accept despite the 75% sparsity at d_k=16.** The DRIFT risk is named,
+bounded (+0.01 to +0.05), and has a mechanism (forced bottleneck breaks
+long-range signal at 12L). The lever has a tier in which to fail safely.
+This is what a taste-acceptable bet looks like — risk named, magnitude
+bounded, mechanism specified.
+
+**Transfer note (med tag holds).** Touvron 2021 validates top-k at 100M-300M
+on vision; 75% sparsity at T=2048 maps to ~98% at T=8192, sweet spot may
+shift. The pitch correctly flags `k ∈ {256, 512, 1024}` for the 135M-stage
+re-test with constant ratio. Do not lock now.
+
+**Verdict: accept** → `needs-review`, round reset to 1 (definition gate
+runs its own 3-round budget). The bet is sharp, the parameterization is
+committed, the priors are engaged, the information value is real even at
+NULL. Slot earned.
+
+---
+
 ## r1 — 2026-06-15 — verdict: revise
 
 The lever sits in a 5-deep sparse-attention family that has already produced one

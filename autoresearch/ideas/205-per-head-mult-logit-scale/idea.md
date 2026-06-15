@@ -1,8 +1,8 @@
 ---
 id: 205-per-head-mult-logit-scale
-status: needs-repitch
+status: repitching
 round: 1
-updated: 2026-06-15T08:45:24Z
+updated: 2026-06-15T08:48:24Z
 transfer-risk: low
 plain: Per-head convex interpolation between softmax(·) output and uniform 1/T (init m_h≈0 so step-0 is byte-identical); bounded on the softening side, allowing some heads to flatten toward uniform but no head can sharpen.
 ---
@@ -18,9 +18,12 @@ plain: Per-head convex interpolation between softmax(·) output and uniform 1/T 
 - Pattern: three per-head-attention-shape levers (152/155/160) all closed null at 0.94M. 184 won specifically because OUTPUT-side is not absorbable by Q/K. 205 is *post-softmax* (between QK and AV) and per-head.
 
 ## Mechanism
+
+> **Pre-softmax form dropped (r1 finding 1).** A previous draft included the pre-softmax form `scores / (τ_h · √d_k)` alongside this one; that is algebraically a reparameterization of closed 155-per-head-temp (same math, different name). The only mechanism in this pitch is the post-softmax form below.
+
 Standard attention: `scores = Q · K^T / √d_k` then `attn = softmax(scores)` then `out = attn @ V`.
 
-**Per-head convex interpolation toward uniform** (this is the only mechanism in the pitch — pre-softmax form dropped per r1 finding):
+**Per-head convex interpolation toward uniform** (post-softmax, bounded):
 ```
 # per head h, per layer l: m_{h,l} ∈ [0, 1], init raw_h = -4 ⇒ m_h ≈ 0.018  (≈ identity)
 m_h = sigmoid(raw_h)

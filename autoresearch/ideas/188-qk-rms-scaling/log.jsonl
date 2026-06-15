@@ -3,3 +3,4 @@
 {"ts":"2026-06-15T08:22:54Z","agent":"miner","idea":"188-qk-rms-scaling","from":"needs-repitch","to":"repitching","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:33:02Z","agent":"miner","idea":"188-qk-rms-scaling","from":"repitching","to":"needs-taste","round":2,"note":"applied 4 findings: stacked on 016 WIN, addressed 161 omission, sharpened bet (post-norm signal), corrected '5th variant' framing"}
 {"ts":"2026-06-15T08:47:18Z","agent":"taste","idea":"188-qk-rms-scaling","from":"needs-taste","to":"tasting","round":2,"note":"claimed r2"}
+{"ts":"2026-06-15T08:48:02Z","agent":"taste","idea":"188-qk-rms-scaling","from":"tasting","to":"needs-review","round":1,"note":"accept: r2 addresses all r1 findings (161 in defensive, 5th-variant reframed, bet is post-norm SNR not init); clean ctrl=016 WIN; null is informative (closes post-norm-temp axis separately from 161's plain-temp axis); mechanism-shaped + identity-init + fits tiny1m3m"}
