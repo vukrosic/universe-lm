@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T08:46:27Z","agent":"reviewer","idea":"189-cosformer-linear-attn","from":"reviewing","to":"needs-revision","round":1,"note":"verdict: revise (8 findings: co-twin 189-cos-attn gate, 004-retnet as direct prior, bit-identity on real model, mandatory denominator, causal mask spec, MHA-flag convention, cumulative-mean claim, parameter layout, kernel-shape analog citation; aux diagnostic + pass-bar clean)"}
 {"ts":"2026-06-15T08:49:01Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:56:41Z","agent":"orchestrator","idea":"189-cosformer-linear-attn","from":"revising","to":"needs-revision","round":1,"note":"reclaim stale revising lock (7m)"}
+{"ts":"2026-06-15T12:00:44Z","agent":"reviser","idea":"189-cosformer-linear-attn","from":"needs-revision","to":"revising","round":1,"note":"claimed"}
