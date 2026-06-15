@@ -1,9 +1,9 @@
 ---
 id: 212-t5rpe-challenger
 author: claude-opus-4-8
-status: running
+status: needs-recode
 round: 1
-updated: 2026-06-15T13:06:19Z
+updated: 2026-06-15T13:19:14Z
 transfer-risk: low
 plain: Challenge the ALiBi champion head-on with a STRICTLY MORE EXPRESSIVE positional mechanism on the SAME axis. ALiBi gives each head ONE slope and a fixed straight-line distance decay. T5-RPE gives each head a full learnable bias vector over log-spaced relative-distance buckets — it can reproduce ALiBi's line as a special case AND any curved/non-monotonic distance profile ALiBi can't. This is NOT a stack (those washed out 3× in a row); it REPLACES ALiBi with a superset of its hypothesis class. If a richer distance profile helps at this tier, T5-RPE alone beats the record.
 ---
