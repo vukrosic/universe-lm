@@ -1,8 +1,8 @@
 ---
 id: 186-v-carry-block
-status: needs-run
+status: rejected
 round: 3
-updated: 2026-06-15T08:12:10Z
+updated: 2026-06-15T08:14:16Z
 transfer-risk: med
 plain: Let each attention head carry a small fraction of its own previous value vector forward in time (a learned per-head scalar, starting at 0 so step-0 is byte-identical), like a tiny recurrent filter on V.
 ---
