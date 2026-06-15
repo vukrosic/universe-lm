@@ -17,3 +17,4 @@
 {"ts":"2026-06-14T10:16:53Z","agent":"implement-button","idea":"169-qk-norm-depth","from":"needs-run","to":"implementing","round":2,"note":"claimed by implement button"}
 {"ts":"2026-06-14T10:20:54Z","agent":"implement-button","idea":"169-qk-norm-depth","from":"implementing","to":"needs-run","round":2,"note":"code ready; runnable at tiny1m3m seed 42; local smoke confirmed: 12 qk_norm_scale @1.0, MinimalLLM builds, 949452 params (+12 over 016); 169 vs 016 forward max-abs-diff=0.0 at step 0; baseline Tiny1M3MConfig has zero qk_norm_scale (flag-off path bit-identical)"}
 {"ts":"2026-06-14T10:35:40Z","agent":"runner","idea":"169-qk-norm-depth","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux (cache CACHED for box 5b8a7fea8963, treatment-only run)"}
+{"ts":"2026-06-15T00:58:44Z","agent":"reset-button","idea":"169-qk-norm-depth","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}
