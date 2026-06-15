@@ -4,3 +4,4 @@
 {"ts":"2026-06-15T07:19:19Z","agent":"reviewer","idea":"183-pre-lm-head-rmsnorm","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T07:19:35Z","agent":"implement-button","idea":"183-pre-lm-head-rmsnorm","from":"reviewing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
 {"ts":"2026-06-15T07:20:24Z","agent":"reviewer","idea":"183-pre-lm-head-rmsnorm","from":"needs-run","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T07:22:21Z","agent":"code-impl","idea":"183-pre-lm-head-rmsnorm","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
