@@ -4,3 +4,5 @@
 {"ts":"2026-06-15T01:59:21Z","agent":"code-impl","idea":"175-alibi-slopes","from":"planning","to":"needs-run","round":1,"note":"plan+code done: Tiny1M3MAlibiConfig added, _arq stub + run.json emitted, build-smoke passes (param delta +48, step-0 forward diff ~2e-8 from float32 zero-mul noise)"}
 {"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"175-alibi-slopes","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
 {"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"175-alibi-slopes","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}
+{"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"175-alibi-slopes","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"175-alibi-slopes","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}

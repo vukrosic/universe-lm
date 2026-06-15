@@ -9,3 +9,5 @@
 {"ts":"2026-06-15T03:00:37Z","agent":"code-impl","idea":"177-talking-heads","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
 {"ts":"2026-06-15T04:59:49Z","agent":"runner","idea":"177-talking-heads","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (commit-changed baseline; prepending N=3 ctrls)"}
 {"ts":"2026-06-15T05:03:02Z","agent":"reset","idea":"177-talking-heads","from":"running","to":"needs-run","round":1,"note":"clean reset: daemon will own the drain"}
+{"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"177-talking-heads","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"177-talking-heads","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}
