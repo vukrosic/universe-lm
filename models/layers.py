@@ -4005,6 +4005,66 @@ class MultiHeadAttention(nn.Module):
         K = K.reshape(batch_size, seq_len, self.n_kv_heads, self.d_k)
         V = V.reshape(batch_size, seq_len, V_n_kv_heads, self.d_k)
 
+        # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+        # (orthogonal-rebase axis, Q+K-side, pre-RoPE placement).
+        # Applied AFTER the Q/K head reshape (so Q is `[B, T,
+        # n_heads, d_k]` and K is `[B, T, n_kv_heads, d_k]`) and
+        # BEFORE the qk_norm + RoPE block. Builds cos/sin tables
+        # from `pre_rope_rotation_angles` and applies a 2D
+        # rotation on each `(2i, 2i+1)` plane. Q uses the full
+        # `[n_heads, d_k//2]` angle grid (per-head rotation on all
+        # n_heads Q heads). K uses the first `[n_kv_heads, d_k//2]`
+        # rows of the same parameter (the per-KV-head projection
+        # of the per-head angle grid — at GQA-active configs the
+        # K rotation is naturally per-KV-head and the per-head
+        # "second row" of the GQA group is unused). The block-
+        # diagonal `R_h` (product of d_k/2 2D rotations on
+        # disjoint planes) is orthogonal, so QK^T magnitudes are
+        # preserved (no softmax temperature shift). Init
+        # `φ_{h,i} = 0` ⇒ `cos(0)=1, sin(0)=0` in fp32 ⇒
+        # `Q = R_h @ Q = Q` and `K = R_h @ K = K` exactly ⇒
+        # step-0 forward is bit-identical to the no-flag
+        # baseline. When OFF the branch is never taken, the
+        # parameter is never built, and the forward graph is
+        # bit-identical to no-flag. See
+        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+        if self.use_pre_rope_rotation:
+            # angles: [n_heads, d_k//2]. Build cos/sin once per
+            # forward (tiny, ~4×8=32 values; the cos/sin ops
+            # broadcast over the [B, T] axis in the apply).
+            cos_a = self.pre_rope_rotation_angles.cos()  # [H, d_k/2]
+            sin_a = self.pre_rope_rotation_angles.sin()  # [H, d_k/2]
+            # --- Q side: per-head rotation on all n_heads Q
+            # heads. Q is [B, T, n_heads, d_k] layout.
+            Q_pairs = Q.reshape(
+                batch_size, seq_len, self.n_heads, self.d_k // 2, 2
+            )
+            Q_a = Q_pairs[..., 0]  # [B, T, H, d_k/2]
+            Q_b = Q_pairs[..., 1]  # [B, T, H, d_k/2]
+            cos_q = cos_a.view(1, 1, self.n_heads, self.d_k // 2)
+            sin_q = sin_a.view(1, 1, self.n_heads, self.d_k // 2)
+            Q_a_new = Q_a * cos_q - Q_b * sin_q
+            Q_b_new = Q_a * sin_q + Q_b * cos_q
+            Q = torch.stack([Q_a_new, Q_b_new], dim=-1).reshape(
+                batch_size, seq_len, self.n_heads, self.d_k
+            )
+            # --- K side: per-KV-head rotation using the first
+            # n_kv_heads rows of the angle parameter. K is
+            # [B, T, n_kv_heads, d_k] layout (pre-GQA-repeat).
+            K_angles = self.pre_rope_rotation_angles[: self.n_kv_heads]
+            K_pairs = K.reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k // 2, 2
+            )
+            K_a = K_pairs[..., 0]  # [B, T, n_kv, d_k/2]
+            K_b = K_pairs[..., 1]  # [B, T, n_kv, d_k/2]
+            cos_k = K_angles.cos().view(1, 1, self.n_kv_heads, self.d_k // 2)
+            sin_k = K_angles.sin().view(1, 1, self.n_kv_heads, self.d_k // 2)
+            K_a_new = K_a * cos_k - K_b * sin_k
+            K_b_new = K_a * sin_k + K_b * cos_k
+            K = torch.stack([K_a_new, K_b_new], dim=-1).reshape(
+                batch_size, seq_len, self.n_kv_heads, self.d_k
+            )
+
         # 178 — Gated Multi-Query Attention. Blend the per-head K, V
         # with a shared K, V projection via a per-KV-head scalar
         # gate: `K_h = K_local_h + β_k_h · (K_shared_h − K_local_h)`,
@@ -6652,6 +6712,12 @@ class TransformerBlock(nn.Module):
             # baseline path bit-identical. See
             # `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
             use_per_layer_k_rotation=use_per_layer_k_rotation,
+            # 192 — Pre-RoPE per-head × per-pair learned Q+K
+            # rotation pass-through to the inner MHA (Q+K-side,
+            # pre-RoPE placement). Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+            use_pre_rope_rotation=use_pre_rope_rotation,
             # 182 — Per-head learnable attention window pass-through.
             # Default off → baseline path bit-identical. See
             # `autoresearch/ideas/182-per-head-window/idea.md`.
@@ -7475,6 +7541,13 @@ class TransformerBlock(nn.Module):
                 ff_out = ff_out * (1.0 + self.ffn_layerscale)
             if self.use_layer_scale:
                 ff_out = ff_out * self.ffn_gamma
+            # 197 — DeepNet α on the parallel block. Both sublayers
+            # share the input, so a single scalar is applied to their
+            # combined sum (equivalent to applying it to each
+            # independently, since `α` is a constant). See
+            # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+            if self.use_deepnet_alpha:
+                return x + self.deepnet_alpha * (self.dropout(attn_out) + self.dropout(ff_out))
             return x + self.dropout(attn_out) + self.dropout(ff_out)
 
         if self.use_post_norm:
@@ -7502,7 +7575,18 @@ class TransformerBlock(nn.Module):
             # sublayer's contribution to the residual stream to unit-RMS.
             if self.use_sub_ln:
                 attn_out = self.sub_ln_attn(attn_out)
-            x = self.norm1(x + self.dropout(attn_out))
+            # 197 — DeepNet α fixed residual init (post-norm path).
+            # The `α` scalar is a single global Python float computed
+            # once at block construction from `n_layers` (see
+            # `self.deepnet_alpha` set in `__init__`). When the flag
+            # is on, the sublayer's contribution is `α·f(x)` instead
+            # of `f(x)`. Flag off ⇒ no multiply, baseline path bit-
+            # identical. See
+            # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+            if self.use_deepnet_alpha:
+                x = self.norm1(x + self.deepnet_alpha * self.dropout(attn_out))
+            else:
+                x = self.norm1(x + self.dropout(attn_out))
 
             ffn_in = x
             if self.use_ffn_embed and ve is not None:
@@ -7518,7 +7602,12 @@ class TransformerBlock(nn.Module):
                 ff_out = ff_out * self.ffn_gamma
             if self.use_sub_ln:
                 ff_out = self.sub_ln_ffn(ff_out)
-            x = self.norm2(x + self.dropout(ff_out))
+            # 197 — DeepNet α on the FFN sublayer (post-norm path).
+            # Same fixed scalar as the attention branch above.
+            if self.use_deepnet_alpha:
+                x = self.norm2(x + self.deepnet_alpha * self.dropout(ff_out))
+            else:
+                x = self.norm2(x + self.dropout(ff_out))
         else:
             # Pre-norm (default): norm before sublayer, residual after.
             # 024 — pass the raw residual `x` (pre-LN signal) to the MHA
@@ -7554,6 +7643,17 @@ class TransformerBlock(nn.Module):
             # the baseline add (x = x + dropout(attn_out)).
             if self.use_re_zero:
                 x = x + self.re_zero_alpha_attn * self.dropout(attn_out)
+            elif self.use_deepnet_alpha:
+                # 197 — DeepNet α fixed residual init (pre-norm
+                # attn). Single global scalar `α = 1/√(2·n_layers)`;
+                # the residual add becomes `x + α·f(x)` instead of
+                # `x + f(x)`. ReZero is checked first (learned form
+                # dominates), `deepnet_alpha` (fixed form) is the
+                # second branch. Mutually exclusive in this chain
+                # by construction — the user picks one or the other.
+                # See
+                # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+                x = x + self.deepnet_alpha * self.dropout(attn_out)
             elif self.resid_mode:
                 x = self._resid_add(x, self.dropout(attn_out), "attn")
             else:
@@ -7653,6 +7753,11 @@ class TransformerBlock(nn.Module):
             # R1 ReZero (pre-norm branch, FFN): same gate on the FFN add.
             if self.use_re_zero:
                 x = x + self.re_zero_alpha_ffn * self.dropout(ff_out)
+            elif self.use_deepnet_alpha:
+                # 197 — DeepNet α on the FFN sublayer (pre-norm). Same
+                # fixed scalar as the attention branch above. See
+                # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
+                x = x + self.deepnet_alpha * self.dropout(ff_out)
             elif self.resid_mode:
                 x = self._resid_add(x, self.dropout(ff_out), "ffn")
             else:

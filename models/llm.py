@@ -374,6 +374,13 @@ class MinimalLLM(nn.Module):
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
         self.use_per_layer_k_rotation = getattr(config, "use_per_layer_k_rotation", False)
+        # 192 — Pre-RoPE per-head × per-pair learned Q+K rotation
+        # (Q+K-side, pre-RoPE placement). Init `φ_{h,i} = 0` ⇒
+        # `R_h = I_{d_k}` exactly in fp32 ⇒ step-0 forward is
+        # bit-identical to the no-flag baseline. Default off →
+        # baseline path bit-identical. See
+        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+        self.use_pre_rope_rotation = getattr(config, "use_pre_rope_rotation", False)
         # 182 — Per-head learnable attention window. Init
         # `head_window_logit = 10 ⇒ sigmoid(10) ≈ 0.99995 ⇒ half_w ≈
         # T − 0.00005·T > T − 1 = max|t − s|` ⇒ penalty identically 0
@@ -954,6 +961,16 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wo=self.use_lowrank_wo,
                         wo_rank=self.wo_rank,
                         wo_lowrank_alpha_init=self.wo_lowrank_alpha_init,
+                        # 194 — W_V Low-Rank Residual Correction
+                        # pass-through to the block. See
+                        # `MultiHeadAttention.use_lowrank_wv` for
+                        # the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/194-lowrank-ffn/
+                        # idea.md` / `plan.md`.
+                        use_lowrank_wv=self.use_lowrank_wv,
+                        wv_rank=self.wv_rank,
+                        wv_lowrank_alpha_init=self.wv_lowrank_alpha_init,
                         # 199 — Spectral-Norm-Bounded W_O Projection
                         # pass-through to the MHA. Per-block
                         # learnable scalar `γ_l` (init 0) and
@@ -1004,6 +1021,12 @@ class MinimalLLM(nn.Module):
                         # Default off → baseline path bit-identical.
                         # See `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
                         use_per_layer_k_rotation=self.use_per_layer_k_rotation,
+                        # 192 — Pre-RoPE per-head × per-pair learned
+                        # Q+K rotation pass-through (Q+K-side,
+                        # pre-RoPE placement). Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+                        use_pre_rope_rotation=self.use_pre_rope_rotation,
                         # 182 — Per-head learnable attention window
                         # pass-through. Default off → baseline path
                         # bit-identical. See
@@ -1380,6 +1403,16 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wo=self.use_lowrank_wo,
                         wo_rank=self.wo_rank,
                         wo_lowrank_alpha_init=self.wo_lowrank_alpha_init,
+                        # 194 — W_V Low-Rank Residual Correction
+                        # pass-through to the block. See
+                        # `MultiHeadAttention.use_lowrank_wv` for
+                        # the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/194-lowrank-ffn/
+                        # idea.md` / `plan.md`.
+                        use_lowrank_wv=self.use_lowrank_wv,
+                        wv_rank=self.wv_rank,
+                        wv_lowrank_alpha_init=self.wv_lowrank_alpha_init,
                         # 199 — Spectral-Norm-Bounded W_O Projection
                         # pass-through to the MHA. Per-block
                         # learnable scalar `γ_l` (init 0) and
@@ -1423,6 +1456,12 @@ class MinimalLLM(nn.Module):
                         # Default off → baseline path bit-identical.
                         # See `autoresearch/ideas/200-rope-phase-offset-per-layer/idea.md`.
                         use_per_layer_k_rotation=self.use_per_layer_k_rotation,
+                        # 192 — Pre-RoPE per-head × per-pair learned
+                        # Q+K rotation pass-through (Q+K-side,
+                        # pre-RoPE placement). Default off →
+                        # baseline path bit-identical. See
+                        # `autoresearch/ideas/192-pre-rope-qk-rotation/idea.md`.
+                        use_pre_rope_rotation=self.use_pre_rope_rotation,
                         # 182 — Per-head learnable attention window
                         # pass-through. Default off → baseline path
                         # bit-identical. See
