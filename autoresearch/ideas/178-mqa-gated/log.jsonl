@@ -1,1 +1,2 @@
 {"ts":"2026-06-15T05:46:20Z","agent":"implement-button","idea":"178-mqa-gated","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-15T05:47:45Z","agent":"taste","idea":"178-mqa-gated","from":"implementing","to":"needs-repitch","round":1,"note":"revise: closed MHA-vs-GQA family; need a sharper bet (probe framing: do gates move? not 'might lower loss'); queue crowded (4 other attention ideas); pick one of 3 directions in taste.md r1"}
