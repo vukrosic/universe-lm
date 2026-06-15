@@ -3,7 +3,11 @@
 ## Flag
 - `use_v_carry_block: bool = False` — default OFF. New field on
   - `configs/llm_config.py` — `LLMConfig` (default off) and the treatment subclass
-    `Tiny1M3MVCarryBlockConfig(Tiny1M3MConfig)` with `use_v_carry_block: bool = True`.
+    `Tiny1M3MVCarryBlockConfig(Tiny1M3MAlibiConfig)` with `use_v_carry_block: bool = True`.
+    Stacks on the current 175-alibi champion per `autoresearch/champion.json` (val 6.2403);
+    the 180-qk-logit-conv config was reverted as a causal-mask LEAK, so it is NOT the
+    champion — subclassing it would inherit the leak. With `use_v_carry_block=False`,
+    the subclass reduces to the champion (max-abs-diff = 0.0 verified in build smoke).
   - `models/layers.py` — `MultiHeadAttention.__init__(use_v_carry_block: bool = False)`.
   - `models/llm.py` — `MinimalLLM` reads `config.use_v_carry_block` and threads
     `use_v_carry_block=...` into every `TransformerBlock(...)` construction.
@@ -12,9 +16,12 @@
 - `configs/llm_config.py`
   - Add `use_v_carry_block: bool = False` to `LLMConfig` (single source of truth
     for the dataclass, mirrored into `MultiHeadAttention` and `TransformerBlock`).
-  - Append a new `Tiny1M3MVCarryBlockConfig(Tiny1M3MConfig)` subclass that flips
+  - Append a new `Tiny1M3MVCarryBlockConfig(Tiny1M3MAlibiConfig)` subclass that flips
     `use_v_carry_block = True` (matches the established pattern of
     `Tiny1M3MValueResidualConfig`, `Tiny1M3MQCarryConfig`, `Tiny1M3MAVOutputCarryConfig`).
+    Stacking on `Tiny1M3MAlibiConfig` (the 175-alibi champion, val 6.2403) means the
+    lever composes on top of learnable per-head ALiBi slopes, not on the bare
+    `Tiny1M3MConfig` baseline.
 - `models/layers.py`
   - `MultiHeadAttention.__init__`: accept `use_v_carry_block: bool = False`. When
     on, allocate `self.v_carry_alphas = nn.Parameter(torch.zeros(n_heads))`
