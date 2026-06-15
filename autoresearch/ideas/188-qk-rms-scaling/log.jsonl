@@ -8,3 +8,4 @@
 {"ts":"2026-06-15T08:57:43Z","agent":"orchestrator","idea":"188-qk-rms-scaling","from":"reviewing","to":"needs-review","round":1,"note":"reclaim stale reviewing lock (7m)"}
 {"ts":"2026-06-15T12:00:56Z","agent":"reviewer","idea":"188-qk-rms-scaling","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T12:02:06Z","agent":"reviewer","idea":"188-qk-rms-scaling","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T12:03:33Z","agent":"code-impl","idea":"188-qk-rms-scaling","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
