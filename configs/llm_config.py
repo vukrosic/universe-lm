@@ -104,6 +104,30 @@ class LLMConfig:
     # Default off → baseline path bit-identical. See
     # `autoresearch/ideas/152-attn-logit-bias/idea.md`.
     use_attn_logit_bias: bool = False
+    # 205 — Per-Head Post-Softmax Convex Interpolation Toward
+    # Uniform. Per-head `m_h = σ(raw_h)` (init `raw_h = -4` ⇒
+    # `m_h ≈ 0.018` at step 0). After softmax, blend the per-head
+    # attention distribution toward the per-row uniform 1/(t+1)
+    # over the active (causal) positions: `attn_h_post = (1 − m_h)·
+    # attn_h + m_h · uniform`. Bounded in [0, 1] via sigmoid ⇒ the
+    # optimizer can only soften any head toward uniform, never
+    # sharpen it. At init `m_h ≈ 0.018` ⇒ per-cell deviation in
+    # `attn_w` is bounded by ~0.018, well within fp32 noise. The
+    # forward branch is gated on `self.use_per_head_post_softmax_mix`,
+    # parameter is not registered when off, so the no-flag baseline
+    # path is bit-identical. Forces the manual attention path. Cost:
+    # H × L = 48 params (+0.005% of 0.94M). Distinct from the
+    # closed per-head attention-shape nulls 152/155/160 (pre-softmax
+    # bias/temp, post-AV gain) — this is the bounded *post-softmax*
+    # axis. See
+    # `autoresearch/ideas/205-per-head-mult-logit-scale/idea.md`.
+    use_per_head_post_softmax_mix: bool = False
+    # 205 — `raw_h` init for the post-softmax-mix per-head scalar.
+    # Default -4.0 ⇒ `m_h = σ(-4) ≈ 0.018` at init (close to
+    # identity, lever-bound but cheap). Pinned to -4.0 per the
+    # committed parameterization in the idea spec. See
+    # `autoresearch/ideas/205-per-head-mult-logit-scale/idea.md`.
+    per_head_post_softmax_mix_init_raw: float = -4.0
     # 166 — T5-style bucketed relative position bias
     # (Raffel et al. JMLR 2020, arXiv:1910.10683; re-used in
     # BigBird, REALM, LongT5). Per-head learnable logit bias
@@ -353,6 +377,31 @@ class LLMConfig:
     # runs bit-identical to baseline. See
     # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
     use_swiglu_ffn: bool = False
+    # 198 — Pre-FFN Attention Mixing (FiLM-style cross-stream
+    # conditioning; Perez et al. 2018, arXiv:1709.07871). The
+    # standard FFN reads `ffn_in = norm2(x)` (pre-norm) where `x`
+    # already includes the attention add. 198 instead mixes the
+    # *raw* attention output (post-`self.attention(...)`, before any
+    # layerscale / sub_ln / rezero / dropout wrapping) into the
+    # FFN input as a learned residual:
+    #     ffn_in = norm2(x + sigmoid(γ_raw) · attn_out_raw.detach())
+    # The `.detach()` keeps γ's gradient cleanly tied to FFN-side
+    # loss only (no gradient through the attention path's
+    # Q/K/V/O projections at step 0 — the same discipline as 021's
+    # value-residual V.detach). Init `pre_ffn_attn_mix_init=-10`
+    # ⇒ `sigmoid(-10) ≈ 4.5400e-5` ⇒ the mix contribution is
+    # `~4.5e-5 · O(1) ≈ 4.5e-5` in fp32 at step 0 ⇒ baseline path
+    # is fp32-noise bit-identical at step 0. Placement: pre-norm2
+    # path only (the parallel-block / post-norm paths are
+    # alternative architectures off by default; the lever is
+    # silently shadowed if the user combines 198 with those
+    # flags — documented in `models/layers.py`). Default off ⇒
+    # no Parameter registered, no forward branch taken, baseline
+    # path bit-identical. Cost: 1 scalar × 12 blocks = 12 scalars
+    # (+0.0013% of 0.94M). See
+    # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
+    use_pre_ffn_attn_mix: bool = False
+    pre_ffn_attn_mix_init: float = -10.0
     # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style, Jiang
     # et al. 2020 arXiv:2008.02496; Woo et al. 2020). When True, each
     # block builds a `ConvFFN(d_model, kernel=k)` that applies a
