@@ -3,3 +3,5 @@
 {"ts":"2026-06-15T05:47:43Z","agent":"taste","idea":"179-anti-causal-subheads","from":"tasting","to":"needs-review","round":1,"note":"accept: per-head mask-mix is fresh vs closed layer-level batch; clean byte-identical step-0, +48 params, null is also informative. Train/inference gamma flip is a definition-gate concern, not taste."}
 {"ts":"2026-06-15T05:50:06Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T05:50:09Z","agent":"reviewer","idea":"179-anti-causal-subheads","from":"reviewing","to":"needs-revision","round":2,"note":"verdict: revise"}
+{"ts":"2026-06-15T05:54:48Z","agent":"reviser","idea":"179-anti-causal-subheads","from":"needs-revision","to":"revising","round":2,"note":"claimed"}
+{"ts":"2026-06-15T05:54:52Z","agent":"reviser","idea":"179-anti-causal-subheads","from":"revising","to":"needs-review","round":3,"note":"applied 3 findings: finite -1e9 mask (no -inf), pass/fail bar at 6.3988±0.04, inference schedule=keep γ trained"}
