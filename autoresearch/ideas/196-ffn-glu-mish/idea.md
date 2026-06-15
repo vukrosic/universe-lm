@@ -1,8 +1,8 @@
 ---
 id: 196-ffn-glu-mish
-status: needs-taste
+status: needs-repitch
 round: 1
-updated: 2026-06-15T08:30:00Z
+updated: 2026-06-15T08:29:12Z
 transfer-risk: med
 plain: Swap the FFN gating activation from SiLU (in SwiGLU) to Mish (MishGLU) — a smoother, non-monotonic alternative that may help the FFN's gradient flow.
 ---

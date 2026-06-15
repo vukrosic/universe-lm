@@ -2,3 +2,4 @@
 {"ts":"2026-06-15T08:19:11Z","agent":"taste","idea":"191-token-attn-gain","from":"tasting","to":"needs-review","round":1,"note":"accept: per-token granularity (T scalars/block) is a real axis distinct from closed 142 per-channel/160 per-head/176 V-pre-av — bit-identity at step 0, falsifiable bet (per-token escapes W_O absorption that 160 didn't), NULL still informative (closes post-AV family), transfer-risk low"}
 {"ts":"2026-06-15T08:22:04Z","agent":"reviewer","idea":"191-token-attn-gain","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
 {"ts":"2026-06-15T08:23:17Z","agent":"reviewer","idea":"191-token-attn-gain","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-15T08:29:14Z","agent":"code-impl","idea":"191-token-attn-gain","from":"needs-plan","to":"planning","round":1,"note":"claimed"}

@@ -1,8 +1,8 @@
 ---
 id: 200-rope-phase-offset-per-layer
-status: tasting
+status: needs-repitch
 round: 1
-updated: 2026-06-15T08:28:12Z
+updated: 2026-06-15T08:28:51Z
 transfer-risk: med
 plain: Give each layer its own learnable phase shift on the RoPE rotation angles (init 0 so step-0 is byte-identical), letting depth re-orient the geometric meaning of each pair — a depth-axis extension of per-head RoPE.
 ---
