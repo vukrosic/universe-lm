@@ -262,12 +262,30 @@ class MinimalLLM(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         self.use_drop_key = getattr(config, "use_drop_key", False)
         self.drop_key_rate = getattr(config, "drop_key_rate", 0.1)
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the attention output projection
+        # during training. Pass-through to each block's MHA. Default
+        # off → baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self.use_dropconnect_wo = getattr(config, "use_dropconnect_wo", False)
+        self.dropconnect_wo_rate = getattr(config, "dropconnect_wo_rate", 0.05)
+        self.dropconnect_wo_warmup_steps = getattr(
+            config, "dropconnect_wo_warmup_steps", 100
+        )
         # 151 — RoV (Rotary Value Embeddings, gated). When on, the
         # block's MHA applies the same rotary to V as to Q,K and
         # mixes via a per-block scalar `rov_gate` (init 0 ⇒
         # bit-identical to baseline at step 0). Default off → baseline
         # path bit-identical. See `autoresearch/ideas/151-rov-gated/idea.md`.
         self.use_rov = getattr(config, "use_rov", False)
+        # 174 — xPos exponential decay on K (Sun et al. 2022,
+        # arXiv:2212.10554). When on, each block's MHA multiplies the
+        # rotated K by `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+        # step-0 forward is bit-identical to the 500k-base RoPE
+        # baseline (max-abs-diff = 0.0). Default off → baseline path
+        # bit-identical, no parameter created. Pass-through to each
+        # block's MHA. See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        self.use_xpos = getattr(config, "use_xpos", False)
         # 154 — Rebased Attention. When on, the block's MHA pools
         # K, V along the time axis with stride `rebase_stride`
         # (default 8) *before* the softmax, so attention reads from
@@ -287,6 +305,14 @@ class MinimalLLM(nn.Module):
         # See `autoresearch/ideas/156-moa/idea.md`.
         self.use_moa = getattr(config, "use_moa", False)
         self.moa_num_experts = max(2, int(getattr(config, "moa_num_experts", 2))) if self.use_moa else 1
+        # 174 — xPos exponential decay on RoPE (Sun et al. 2022).
+        # When on, the block's MHA multiplies the rotated K by
+        # `exp(-xpos_gamma · t)` (per-position decay), biasing
+        # attention toward recent tokens. Init `xpos_gamma = 0`
+        # ⇒ step-0 forward is bit-identical to the 500k-base RoPE
+        # baseline. Default off → baseline path bit-identical.
+        # See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        self.use_xpos = getattr(config, "use_xpos", False)
         # 166 — T5-style bucketed relative position bias. When on,
         # each block's MHA adds a per-head learnable logit bias
         # `rpe_bias ∈ R^{H × B}` indexed by
@@ -304,6 +330,14 @@ class MinimalLLM(nn.Module):
         # Default off → baseline path bit-identical. See
         # `autoresearch/ideas/025-scalable-softmax/plan.md`.
         self.use_ssmax = getattr(config, "use_ssmax", False)
+        # 173 — Entmax-1.5 sparse attention (Peters/Niculae/Martins,
+        # ACL 2019, arXiv:1905.09018). Stored on the model so the
+        # pass-through to the MHA construction site can read it.
+        # Init 0 ⇒ α_h=1 ⇒ the helper short-circuits to softmax at
+        # step 0 (bit-identical baseline). Default off → baseline
+        # path bit-identical. See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        self.use_entmax = getattr(config, "use_entmax", False)
         # 023 — Canon conv (gated depthwise causal Conv1d on the residual
         # stream). One conv per block, pre-attn pre-LN, scalar gate init
         # 0 → step-0 ≡ no-conv baseline. Default off → baseline path
@@ -407,6 +441,10 @@ class MinimalLLM(nn.Module):
         # `ffn_variant` branch runs, baseline FFN path bit-identical.
         # See `autoresearch/ideas/153-relu2-ffn/idea.md`.
         self.use_relu2_ffn = getattr(config, "use_relu2_ffn", False)
+        # 170 — SwiGLU FFN. Default off → standard `ffn_variant`
+        # branch runs, baseline FFN path bit-identical. See
+        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        self.use_swiglu_ffn = getattr(config, "use_swiglu_ffn", False)
         # 118 — Mixture-of-Depths (Raposo et al. 2024, arXiv:2404.02258):
         # when on, each block builds a per-token `MoDRouter` and gates
         # the block's residual update to the top-k = `mod_capacity · T`
@@ -484,6 +522,15 @@ class MinimalLLM(nn.Module):
         # off → bit-identical baseline (no v_norm module built). See
         # autoresearch/ideas/029-v-norm/plan.md.
         self.use_v_layernorm = getattr(config, "use_v_layernorm", False)
+        # 176 — Pre-AV V RMSNorm with per-head α-gate + per-head γ-gain:
+        # when True, each block's MHA registers `v_rmsnorm_alpha ∈ R^H`
+        # and `v_rmsnorm_gain ∈ R^{H × d_k}` and applies the gated
+        # RMSNorm to V before the AV product. Init α=0,γ=1 ⇒ step-0
+        # forward is byte-identical to baseline (max-abs-diff = 0.0).
+        # Pass-through to each block's MHA. Default off → no Parameter
+        # created, no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        self.use_v_rmsnorm = getattr(config, "use_v_rmsnorm", False)
         self.use_multiscale_heads = getattr(config, "use_multiscale_heads", False)
         self.use_parallel_block = getattr(config, "use_parallel_block", False)
         # 158 — Gated Attention Unit (Hua et al. 2022, arXiv:2202.10447).
@@ -606,11 +653,27 @@ class MinimalLLM(nn.Module):
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
+                        # 171 — DropConnect on W_O: per-weight
+                        # Bernoulli mask on the O projection. See
+                        # `MultiHeadAttention.use_dropconnect_wo`
+                        # for the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+                        use_dropconnect_wo=self.use_dropconnect_wo,
+                        dropconnect_wo_rate=self.dropconnect_wo_rate,
+                        dropconnect_wo_warmup_steps=self.dropconnect_wo_warmup_steps,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
                         # Init 0 ⇒ bit-identical to baseline at step 0.
                         use_rov=self.use_rov,
+                        # 174 — xPos exponential decay on RoPE pass-
+                        # through to the YOCO upper-half block. When on,
+                        # the block's MHA multiplies the rotated K by
+                        # `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+                        # bit-identical to baseline at step 0. See
+                        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+                        use_xpos=self.use_xpos,
                         # 154 — Rebased Attention pass-through to the
                         # YOCO upper-half block. Default off → baseline
                         # path bit-identical. See
@@ -660,6 +723,11 @@ class MinimalLLM(nn.Module):
                         use_cope=self.use_cope,
                         use_fox=self.use_fox,
                         use_softpick=self.use_softpick,
+                        # 173 — Entmax-1.5 sparse attention pass-through
+                        # to the block. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/173-entmax-15/idea.md`.
+                        use_entmax=self.use_entmax,
                         use_ssmax=self.use_ssmax,
                         use_canon_conv=self.use_canon_conv,
                         # 143 — ShortConv pass-through to the YOCO
@@ -702,6 +770,11 @@ class MinimalLLM(nn.Module):
                         # 153 — Squared-ReLU FFN activation pass-
                         # through to the YOCO upper-half block.
                         use_relu2_ffn=self.use_relu2_ffn,
+                        # 170 — SwiGLU FFN pass-through to the YOCO
+                        # upper-half block. Default off → FFN path bit-
+                        # identical. See
+                        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+                        use_swiglu_ffn=self.use_swiglu_ffn,
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
                         mod_router_hidden=self.mod_router_hidden,
@@ -727,6 +800,9 @@ class MinimalLLM(nn.Module):
                         v_norm_type=self.v_norm_type,
                         use_qk_layernorm=self.use_qk_layernorm,
                         use_v_layernorm=self.use_v_layernorm,
+                        # 176 — Pre-AV V RMSNorm pass-through to the
+                        # block. See MHA use_v_rmsnorm.
+                        use_v_rmsnorm=self.use_v_rmsnorm,
                         use_q_only_norm=self.use_q_only_norm,
                         use_k_only_norm=self.use_k_only_norm,
                         # 169 — Depth-Conditional QK-Norm pass-through
@@ -869,6 +945,15 @@ class MinimalLLM(nn.Module):
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
+                        # 171 — DropConnect on W_O: per-weight
+                        # Bernoulli mask on the O projection. See
+                        # `MultiHeadAttention.use_dropconnect_wo`
+                        # for the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+                        use_dropconnect_wo=self.use_dropconnect_wo,
+                        dropconnect_wo_rate=self.dropconnect_wo_rate,
+                        dropconnect_wo_warmup_steps=self.dropconnect_wo_warmup_steps,
                         # 151 — RoV (Rotary Value Embeddings, gated):
                         # per-block scalar `rov_gate` mixes the rotary-
                         # rotated V into V via `V ← V + rov_gate·V_rot`.
@@ -885,6 +970,13 @@ class MinimalLLM(nn.Module):
                         # See `autoresearch/ideas/156-moa/idea.md`.
                         use_moa=self.use_moa,
                         moa_num_experts=self.moa_num_experts,
+                        # 174 — xPos exponential decay on RoPE pass-
+                        # through to the standard block. When on, the
+                        # block's MHA multiplies the rotated K by
+                        # `exp(-xpos_gamma · t)` per position. Init 0 ⇒
+                        # bit-identical to baseline at step 0. See
+                        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+                        use_xpos=self.use_xpos,
                         use_talking_heads_out=getattr(config, "use_talking_heads_out", False),
                         out_op=getattr(config, "out_op", ""),
                         use_re_zero=getattr(config, "use_re_zero", False),
@@ -920,6 +1012,11 @@ class MinimalLLM(nn.Module):
                         use_cope=self.use_cope,
                         use_fox=self.use_fox,
                         use_softpick=self.use_softpick,
+                        # 173 — Entmax-1.5 sparse attention pass-through
+                        # to the block. Default off → baseline path
+                        # bit-identical. See
+                        # `autoresearch/ideas/173-entmax-15/idea.md`.
+                        use_entmax=self.use_entmax,
                         use_ssmax=self.use_ssmax,
                         use_canon_conv=self.use_canon_conv,
                         # 143 — ShortConv pass-through to the standard
@@ -958,6 +1055,10 @@ class MinimalLLM(nn.Module):
                         # 153 — Squared-ReLU FFN activation pass-
                         # through to the standard block.
                         use_relu2_ffn=self.use_relu2_ffn,
+                        # 170 — SwiGLU FFN pass-through to the standard
+                        # block. Default off → FFN path bit-identical.
+                        # See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+                        use_swiglu_ffn=self.use_swiglu_ffn,
                         # 118 — Mixture-of-Depths pass-through to the block.
                         use_mod=self.use_mod,
                         mod_capacity=self.mod_capacity,
@@ -996,6 +1097,9 @@ class MinimalLLM(nn.Module):
                         use_qk_layernorm=self.use_qk_layernorm,
                         # 029 — V-Norm pass-through to the block.
                         use_v_layernorm=self.use_v_layernorm,
+                        # 176 — Pre-AV V RMSNorm pass-through to the
+                        # block. See MHA use_v_rmsnorm.
+                        use_v_rmsnorm=self.use_v_rmsnorm,
                         # 162 — Q-Only RMSNorm pass-through to the block.
                         use_q_only_norm=self.use_q_only_norm,
                         use_k_only_norm=self.use_k_only_norm,
@@ -1256,6 +1360,23 @@ class MinimalLLM(nn.Module):
                 nn.init.zeros_(self.mos_pi_proj.weight)
                 self.mos_pi_proj.bias.fill_(-1e4)
                 self.mos_pi_proj.bias[0] = 1e4
+        # 170 — SwiGLU FFN zero-init gate. AFTER the global init, re-zero
+        # the gate_proj.weight of every block's SwiGLUZeroInitFeedForward.
+        # `_init_weights` re-inits every `nn.Linear` with `normal_(std=0.02)`,
+        # which overwrites the zero-init in `SwiGLUZeroInitFeedForward.__init__`.
+        # We need W_gate=0 here so `silu(W_gate·x) = silu(0) = 0` exactly
+        # at step 0 ⇒ FFN output = 0 exactly ⇒ the residual stream carries
+        # only the attention sub-block at step 0 (clean ReZero-style
+        # baseline). The optimizer then grows the gate during training.
+        # Default off → no SwiGLUZeroInitFeedForward exists, branch not
+        # taken, baseline path bit-identical. See
+        # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        if self.use_swiglu_ffn:
+            with torch.no_grad():
+                for block in self.transformer_blocks:
+                    ff = block.feed_forward
+                    if hasattr(ff, "gate_proj"):
+                        nn.init.zeros_(ff.gate_proj.weight)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

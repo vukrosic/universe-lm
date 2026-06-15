@@ -95,6 +95,136 @@ def softpick(scores: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> tor
 
 
 # ============================================================================
+# 173 — Entmax-1.5 (Peters/Niculae/Martins, ACL 2019, arXiv:1905.09018).
+# Sparse, differentiable drop-in for softmax. α-entmax is the optimizer
+# of `p·(α-1)·s − H_α^T(p)` over the simplex. Closed form: project
+# `(α-1)·s` onto Δ^{n-1} by clamping negatives to 0 and renormalizing.
+# At α=1 the projection is softmax (continuous limit); at α=2 it is
+# sparsemax; α=1.5 is the empirical sweet spot ("entmax-1.5"). For
+# α=1.5 the per-element closed form is `p_i = max(0, 0.5·(s_i − λ))^2`
+# where `λ` is the Lagrange multiplier chosen so `Σp = 1`. We solve for
+# λ by bisection on the simplex constraint — 25 iterations is enough
+# for n_keys ≤ 4096.
+# Per-head learnable α_h: `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`. Init
+# `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the α=1 limit IS softmax, so we
+# short-circuit to `torch.softmax` for perfect step-0 bit-identity with
+# the baseline (max-abs-diff = 0.0). For α > 1 the bisection delivers
+# the sparse projection in fp32 with tol=1e-7. The `mask` arg mirrors
+# softpick: True = attend, False = zero out (a masked position's score
+# is replaced with −inf so it cannot be in the support of the
+# projection). α_per_head has shape [H] and is broadcast over
+# [B, H, T, T]. See `autoresearch/ideas/173-entmax-15/idea.md`.
+# ============================================================================
+def entmax_15(
+    scores: torch.Tensor,
+    mask: torch.Tensor,
+    alpha_per_head: torch.Tensor,
+    dim: int = -1,
+    n_iter: int = 25,
+    tol: float = 1e-7,
+) -> torch.Tensor:
+    """α-entmax-1.5 attention normalization via bisection on λ.
+
+    Args:
+        scores: attention logits, shape [B, H, T_q, T_k].
+        mask: bool tensor broadcast-compatible with `scores`. True =
+            attend, False = mask out (replaced with −inf internally).
+        alpha_per_head: per-head α values, shape [H]. Must satisfy
+            α ≥ 1. For α = 1 the projection is exactly softmax
+            (short-circuited to torch.softmax for bit-identity).
+        dim: reduction axis (default -1, the key axis).
+        n_iter: bisection budget (default 25; converges to <1e-7 in
+            ~20 iterations for n_keys ≤ 4096).
+        tol: bisection tolerance on `Σp − 1` (default 1e-7; well below
+            the 1e-5 fp32 noise floor used in this repo's step-0
+            identity checks).
+
+    Returns:
+        Tensor of the same shape and dtype as `scores`. Each row sums
+        to 1.0 (over unmasked positions) and is sparse (true zeros)
+        for low-scoring positions.
+    """
+    # Per-head amp1 = (α − 1). Broadcast to [1, H, 1, 1] for the
+    # [B, H, T_q, T_k] score layout. We assume a single amp1 value
+    # shared across heads in the current call (i.e. the MHA only
+    # applies ONE alpha to all heads via averaging); the per-head
+    # parameter is the longer-term lever — see the idea spec.
+    amp1_per_head = (alpha_per_head - 1.0).view(1, -1, 1, 1)
+    # When all heads have α = 1 (init case: amp1 = 0 everywhere), the
+    # bisection degenerates (0/0 in the exponent). The α = 1 limit IS
+    # softmax, so short-circuit for perfect step-0 bit-identity.
+    if amp1_per_head.abs().max().item() == 0.0:
+        return torch.softmax(
+            scores.masked_fill(~mask, float("-inf")), dim=dim
+        ).to(scores.dtype)
+    # Use a single α across heads for the bisection (the per-head
+    # parameter is averaged). This keeps the algorithm vectorized
+    # over the [B, T_q] axes without per-row scalar loops. The
+    # per-head granularity lives in the param layout, not the forward.
+    amp1 = float(amp1_per_head.mean().item())
+    if amp1 <= 0.0:
+        # α ≤ 1 ⇒ softmax (the limit is continuous). Defensive.
+        return torch.softmax(
+            scores.masked_fill(~mask, float("-inf")), dim=dim
+        ).to(scores.dtype)
+    # Work in fp32; cast back at the end.
+    s = scores.to(torch.float32).masked_fill(~mask, float("-inf"))
+    if dim != -1 and dim != s.ndim - 1:
+        s = s.transpose(dim, -1)
+        perm_back = True
+    else:
+        perm_back = False
+    # Bracket λ: lower = amp1·(min s) − 1 (definitely under-shoots
+    # Σp=1), upper = amp1·(max s) (definitely over-shoots). Using
+    # masked positions (s = −inf) means amp1·s = −inf, so they don't
+    # contribute. amax/amin with −inf/inf sentinels handle the mask
+    # automatically (a fully-masked row's max would be −inf; we clamp
+    # below to avoid that pathology).
+    s_max = s.amax(dim=-1, keepdim=True)
+    s_min = s.amin(dim=-1, keepdim=True)
+    # Track which rows are fully-masked (no valid position to attend
+    # to). For these rows, the projection is undefined; we set the
+    # bracket to [0, 0] and the final output to zero. In practice the
+    # model never produces fully-masked rows (causal attention always
+    # has at least the diagonal), but the helper must be robust to
+    # adversarial inputs (e.g. the swap site passes a mask where some
+    # rows are entirely False).
+    fully_masked = ~mask.any(dim=-1, keepdim=True)  # [B, H, T_q, 1]
+    safe_s_max = torch.where(torch.isfinite(s_max), s_max, torch.zeros_like(s_max))
+    safe_s_min = torch.where(torch.isfinite(s_min), s_min, torch.zeros_like(s_min))
+    lo = (amp1 * safe_s_min - 1.0)
+    hi = (amp1 * safe_s_max)
+    # Bisection: each step, project, check Σp, halve bracket.
+    # Vectorized: we keep lo/hi as [B, H, T_q, 1] tensors and
+    # update them with torch.where.
+    for _ in range(n_iter):
+        mid = 0.5 * (lo + hi)
+        # p_i = max(0, amp1·s_i − mid)^(1/amp1)
+        z = torch.clamp(amp1 * s - mid, min=0.0)
+        proj_sum = z.pow(1.0 / amp1).sum(dim=-1, keepdim=True)
+        # If sum < 1 we need a SMALLER λ (mid is too high ⇒ projected
+        # mass too low); lower the upper bound.
+        # If sum > 1 we need a LARGER λ; raise the lower bound.
+        go_up = proj_sum < 1.0  # need smaller mid → lower hi
+        lo = torch.where(~go_up, mid, lo)  # if sum >= 1, mid is a valid lower bound
+        hi = torch.where(go_up, mid, hi)   # if sum < 1, mid is a valid upper bound
+        if (hi - lo).max().item() < tol:
+            break
+    # Final projection at the midpoint.
+    lam = 0.5 * (lo + hi)
+    z = torch.clamp(amp1 * s - lam, min=0.0)
+    p_t = z.pow(1.0 / amp1)
+    # Normalize: p_t / Σp_t over the key axis. Row sums of unmasked
+    # positions are 1.0 by construction (λ chosen for Σp=1).
+    out = p_t / (p_t.sum(dim=-1, keepdim=True) + 1e-12)
+    # Zero out fully-masked rows (no valid position to project onto).
+    out = torch.where(fully_masked, torch.zeros_like(out), out)
+    if perm_back:
+        out = out.transpose(dim, -1)
+    return out.to(scores.dtype)
+
+
+# ============================================================================
 # #90 Invented residual-stream normalizations. Drop-in for RMSNorm; all are
 # O(d) per token with a learnable per-channel gain `g`. Selected via the
 # `norm_type` config flag; the internal Q/K norms are left untouched.
@@ -741,6 +871,26 @@ class MultiHeadAttention(nn.Module):
         # `masked_fill` in the FIRE branch, so masked positions
         # contribute zero to both numerator and denominator.
         use_softpick: bool = False,
+        # 173 — Entmax-1.5 sparse attention (Peters/Niculae/Martins,
+        # ACL 2019, arXiv:1905.09018). Replace `torch.softmax` in the
+        # manual attention path with the Tsallis α-entmax projection
+        # `p_i = max(0, 0.5·(s_i − λ))^2 / Σp`, where α=1.5 is the
+        # "entmax-1.5" sweet spot. The lever is per-head learnable
+        # α_h parameterized as `α_h = 1 + 0.5·(1 + tanh(α_raw_h))`,
+        # init `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the α=1 limit IS softmax,
+        # short-circuited in the helper for byte-identity at step 0.
+        # As training proceeds the optimizer can push `α_raw_h`
+        # positive to make the attention sparser (towards sparsemax
+        # at α=2). Default off → baseline path bit-identical (no
+        # Parameter registered, no branch taken, no bisection). Forces
+        # the manual attention path (entmax-1.5 can't go through
+        # SDPA's flash kernel — the projection is closed-form
+        # per-row, not a softmax-callable). Distinct from
+        # 022-softpick (no params, fixed operator), 025-SSMax (per-head
+        # scaling on softmax, not a replacement), 020-FoX (post-softmax
+        # forget gate, softmax stays). See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        use_entmax: bool = False,
         # 025 — Scalable-Softmax (SSMax, Nakanishi 2025, arXiv:2501.19399):
         # per-head learnable scalar s_h that multiplies the attention
         # logits by `s_h · log(n)` pre-softmax, where n is the per-query
@@ -874,6 +1024,21 @@ class MultiHeadAttention(nn.Module):
         # module is built; baseline path bit-identical. See
         # autoresearch/ideas/029-v-norm/plan.md.
         use_v_layernorm: bool = False,
+        # 176 — Pre-AV V RMSNorm (per-head α-gate + per-head γ-gain,
+        # Wortsman 2023 V-norm primitive + per-head gating in the
+        # closed-016 family). Apply RMSNorm to V along `d_k` BEFORE
+        # the AV product, with a per-head scalar gate
+        # `α_h = relu(α_raw_h)` (init 0) and per-head gain
+        # `γ_h ∈ R^{d_k}` (init 1.0). Output
+        # `V_out = (1 − α_h)·V + α_h·RMSNorm(V)·γ_h`. Init α=0,γ=1
+        # ⇒ step-0 forward is byte-identical to baseline
+        # (max-abs-diff = 0.0). Mutually exclusive with
+        # use_v_layernorm (closed-029) and the closed-#92
+        # v_norm_type zoo (asserted in `forward`). Default off →
+        # no Parameter registered, no branch taken, baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        use_v_rmsnorm: bool = False,
         # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). Apply
         # `nn.RMSNorm(d_head, eps=1e-6)` to Q only, leave K untouched.
         # nn.RMSNorm weight=1, bias=0 init ⇒ at step 0 the lever
@@ -966,6 +1131,26 @@ class MultiHeadAttention(nn.Module):
         # `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the attention output projection
+        # during training. Sampled per forward pass; same mask for all
+        # batch elements and positions; rescale by `1/(1-p)` so the
+        # expected magnitude matches the un-masked baseline (inverted-
+        # dropout convention, matches `F.dropout` and the 147-DropKey
+        # rescale). At eval (`self.training == False`) and with
+        # `dropconnect_wo_rate=0.0` the branch is never taken ⇒
+        # forward graph bit-identical to the no-DropConnect baseline.
+        # The effective rate is **ramped** from 0.0 → `dropconnect_wo_rate`
+        # over the first `dropconnect_wo_warmup_steps` training forwards
+        # (see `self._dc_step_count` below) so step 0 has effective rate
+        # 0.0 ⇒ the mask branch is short-circuited ⇒ trt forward is
+        # bit-identical to baseline at step 0 (max-abs-diff = 0.0 across
+        # the full forward). Default off → no Parameter created, no
+        # branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        use_dropconnect_wo: bool = False,
+        dropconnect_wo_rate: float = 0.0,
+        dropconnect_wo_warmup_steps: int = 100,
         # 151 — RoV (Rotary Value Embeddings, gated; Su et al. 2024
         # Hunyuan-DiT / RoV for ViT, arXiv:2403.13257 §2.3). Apply the
         # same rotary position embedding already used on Q, K to the
@@ -979,6 +1164,25 @@ class MultiHeadAttention(nn.Module):
         # Q,K; RoV becomes a no-op (the geometric lever is
         # unavailable). See `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 174 — xPos exponential decay on the RoPE-magnitude (Sun et
+        # al. 2022, arXiv:2212.10554). One learnable per-layer scalar
+        # `xpos_gamma = nn.Parameter(torch.zeros(1))` applied to the
+        # rotated K as `K = K · exp(-xpos_gamma · t)` (the paper's
+        # `g_t = (1 − γ)^t`, in `exp` form for numerical stability;
+        # the two are identical at γ=0 and both equal 1). With γ = 0
+        # (init) the decay is identity ⇒ K is unchanged ⇒ attention
+        # scores are unchanged ⇒ forward is bit-identical to the
+        # 500k-base RoPE baseline at step 0. The lever is the per-layer
+        # "how local is local" knob the optimizer can dial: γ > 0
+        # shrinks distant keys toward zero (bias attention toward
+        # recent tokens), γ < 0 grows them (extend context). Decay
+        # applied to K only (not Q) so the score factor is
+        # `g_s = (1-γ)^s` on K's position — matches the standard
+        # xPos reading. The single scalar per MHA ⇒ 12 scalars at
+        # tiny1m3m (+0.001% of 0.94M). Default off → no parameter
+        # created, no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+        use_xpos: bool = False,
         # 154 — Rebased Attention (Shi et al. 2024, arXiv:2407.06641):
         # pool K, V along the time axis with stride `rebase_stride`
         # (default 8) before the softmax, so attention reads from R =
@@ -1135,6 +1339,51 @@ class MultiHeadAttention(nn.Module):
         elif use_v_layernorm:
             self.use_v_norm = True
             self.v_norm = nn.LayerNorm(self.d_k)
+        # 176 — Pre-AV V RMSNorm: when `use_v_rmsnorm=True` and the
+        # closed-#92 v_norm_type is off and use_v_layernorm is off,
+        # register two new per-head Parameters. `v_rmsnorm_alpha ∈
+        # R^H` init 0 (relu(0) = 0 ⇒ identity blend at step 0);
+        # `v_rmsnorm_gain ∈ R^{H × d_k}` init 1.0 (per-head identity
+        # gain at step 0). Independent of the closed-#92 v_norm_type
+        # zoo and of closed-029 use_v_layernorm (mutual-exclusion
+        # asserted at forward). Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off.
+        # Also expose `self.use_v_layernorm` and `self.v_norm_type` as
+        # raw kwarg shadows so the mutual-exclusion asserts at
+        # forward can distinguish the two closed V-norm axes
+        # (`use_v_layernorm` is closed-029 LayerNorm;
+        # `v_norm_type != ""` is closed-#92 zoo).
+        self.use_v_layernorm = use_v_layernorm
+        self.v_norm_type = v_norm_type
+        self.use_v_rmsnorm = use_v_rmsnorm
+        if use_v_rmsnorm:
+            self.v_rmsnorm_alpha = nn.Parameter(torch.zeros(self.n_heads))
+            self.v_rmsnorm_gain = nn.Parameter(
+                torch.ones(self.n_heads, self.d_k)
+            )
+        else:
+            self.v_rmsnorm_alpha = None
+            self.v_rmsnorm_gain = None
+        # 176 — Pre-AV V RMSNorm: when `use_v_rmsnorm=True` and the
+        # closed-#92 v_norm_type is off and use_v_layernorm is off,
+        # register two new per-head Parameters. `v_rmsnorm_alpha ∈
+        # R^H` init 0 (relu(0) = 0 ⇒ identity blend at step 0);
+        # `v_rmsnorm_gain ∈ R^{H × d_k}` init 1.0 (per-head identity
+        # gain at step 0). Independent of the closed-#92 v_norm_type
+        # zoo and of closed-029 use_v_layernorm (mutual-exclusion
+        # asserted at forward). Default off → both attributes are
+        # `None` so lookups stay valid; the forward `if` guard
+        # short-circuits when the flag is off.
+        self.use_v_rmsnorm = use_v_rmsnorm
+        if use_v_rmsnorm:
+            self.v_rmsnorm_alpha = nn.Parameter(torch.zeros(self.n_heads))
+            self.v_rmsnorm_gain = nn.Parameter(
+                torch.ones(self.n_heads, self.d_k)
+            )
+        else:
+            self.v_rmsnorm_alpha = None
+            self.v_rmsnorm_gain = None
 
         # 013 — CoPE: gate the Rotary construction. When on, RoPE is
         # replaced by a content-aware bias (CoPE) added to the
@@ -1164,6 +1413,21 @@ class MultiHeadAttention(nn.Module):
         # `softpick` helper at the top of this file is the entire
         # implementation.
         self.use_softpick = use_softpick
+        # 173 — Entmax-1.5 sparse attention. The `use_entmax` flag is
+        # stored on self so the manual attention path can branch on it
+        # at the swap site (line ~3035 below, replacing `softmax`).
+        # `entmax_alpha_raw ∈ R^H` is the raw parameter; the actual
+        # α_h = 1 + 0.5·(1 + tanh(α_raw_h)) is derived in the helper
+        # call. Init `α_raw_h = 0` ⇒ `α_h = 1` ⇒ the helper
+        # short-circuits to `torch.softmax` for byte-identity at step
+        # 0. When `use_entmax=False` the parameter is NOT registered
+        # (the `if` guard keeps it out of the parameter list so it
+        # doesn't consume RNG or optimizer state) and the baseline
+        # forward graph is untouched. See
+        # `autoresearch/ideas/173-entmax-15/idea.md`.
+        self.use_entmax = use_entmax
+        if use_entmax:
+            self.entmax_alpha_raw = nn.Parameter(torch.zeros(self.n_heads))
         # 025 — SSMax: one learnable per-head scalar s_h (init 1.0).
         # Built lazily; the parameter is never referenced when the
         # flag is off, so the baseline path is bit-identical. The
@@ -1317,7 +1581,10 @@ class MultiHeadAttention(nn.Module):
             )
             # Precomputed bucket index matrix, shape [T_max, T_max],
             # int64. `bucket[i, j] = floor(log2(|i-j|+1)).clamp_max
-            # (B-1)`. Built once at construction (no RNG).
+            # (B-1)`. Built once at construction (no RNG). Follows
+            # `model.to(device)` because it's a registered buffer, so
+            # no per-forward host transfer. See
+            # `autoresearch/ideas/166-t5-rpe/idea.md`.
             with torch.no_grad():
                 idx = torch.arange(max_seq_len)
                 diff = (idx[:, None] - idx[None, :]).abs()
@@ -1634,6 +1901,33 @@ class MultiHeadAttention(nn.Module):
         # forward graph bit-identical to baseline.
         self.use_drop_key = use_drop_key
         self.drop_key_rate = float(drop_key_rate)
+        # 171 — DropConnect on W_O. Stored on self so the forward
+        # branch at the W_O application site can read both the flag
+        # and the rate. The flag is also stored so the standard
+        # boolean-gated pattern (`if self.use_dropconnect_wo and
+        # self.training and self.dropconnect_wo_rate > 0.0`) matches
+        # the 147-DropKey sibling exactly. No `nn.Parameter` is
+        # created — the lever only consumes RNG during the training
+        # forward (the mask is sampled fresh each call). Default off
+        # → no module built, no branch taken, baseline path bit-
+        # identical. See `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self.use_dropconnect_wo = use_dropconnect_wo
+        self.dropconnect_wo_rate = float(dropconnect_wo_rate)
+        self.dropconnect_wo_warmup_steps = int(dropconnect_wo_warmup_steps)
+        # 171 — DropConnect training-step counter (Python int, not a
+        # buffer; lives on the module instance, increments at the END
+        # of each forward so the first forward call sees step=0 ⇒
+        # effective_rate=0.0 ⇒ mask branch short-circuits ⇒ trt forward
+        # is bit-identical to baseline at step 0). Per-MHA counter:
+        # each block's MHA tracks its own steps (every block gets the
+        # same count in practice — all MHAs are called once per
+        # forward, so they tick together — but tracking per-block
+        # avoids any cross-block coupling if the model ever calls MHA
+        # selectively). Only used to compute `effective_rate` during
+        # training; eval mode short-circuits the mask anyway so the
+        # counter is irrelevant there. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self._dc_step_count: int = 0
         # 151 — RoV (Rotary Value Embeddings, gated). One learnable
         # per-block scalar `rov_gate` (init 0 ⇒ step-0
         # `V_combined = V + 0·V_rot = V` ⇒ bit-identical to baseline).
@@ -1645,6 +1939,18 @@ class MultiHeadAttention(nn.Module):
         self.use_rov = use_rov
         if self.use_rov:
             self.rov_gate = nn.Parameter(torch.zeros(1))
+        # 174 — xPos exponential decay. Stored on self so the
+        # forward branch at the K application site can read both the
+        # flag and the gamma parameter. One learnable per-layer scalar
+        # `xpos_gamma` (init 0 ⇒ step-0 forward is bit-identical to
+        # baseline RoPE: `K *= exp(0·t) = 1`). Default off → no
+        # parameter created, no branch taken, baseline path bit-
+        # identical (12 extra scalars at tiny1m3m when on, ~+0.001%
+        # of 0.94M params). See `autoresearch/ideas/174-xpos-decay/
+        # idea.md`.
+        self.use_xpos = use_xpos
+        if self.use_xpos:
+            self.xpos_gamma = nn.Parameter(torch.zeros(1))
         # 154 — Rebased Attention. Stored on self; the rebase pool
         # is applied in `forward()` right after the [B,T,H,D] reshape
         # (post-RoPE) and *before* the [B,H,T,D] transpose, so K, V
@@ -2100,6 +2406,30 @@ class MultiHeadAttention(nn.Module):
             "(169 sits on top of 016's pre-RoPE symmetric norm; combining with "
             "the post-RoPE variant restructures the lever)."
         )
+        # 176 — Pre-AV V RMSNorm: mutually exclusive with the two
+        # closed V-side norm axes (closed-029 use_v_layernorm +
+        # closed-#92 v_norm_type zoo) and with v_mix_conv (a learned
+        # conv on V pre-AV; composing it with the per-head α-gated
+        # RMSNorm would restructure the lever). 176 is a strictly
+        # distinct parameterization from all three — the closed
+        # axes have no per-head α-gate and no per-head γ-gain, so
+        # combining them with 176 would be running two independent
+        # normalizations on the same tensor.
+        assert not (self.use_v_rmsnorm and self.use_v_layernorm), (
+            "use_v_rmsnorm=True is mutually exclusive with use_v_layernorm=True "
+            "(closed-029 LayerNorm V-side; both attach a per-head norm to "
+            "V pre-AV and the composition restructures the lever)."
+        )
+        assert not (self.use_v_rmsnorm and self.v_norm_type not in ("", "none", None)), (
+            "use_v_rmsnorm=True is mutually exclusive with the closed-#92 "
+            "v_norm_type zoo (v_norm_type != \"\"); both attach a per-head "
+            "norm to V pre-AV."
+        )
+        assert not (self.use_v_rmsnorm and self.use_v_mix_conv), (
+            "use_v_rmsnorm=True is mutually exclusive with use_v_mix_conv=True "
+            "(v_mix_conv is a learned conv on V pre-AV; the composition "
+            "restructures the lever and is not what 176 tests)."
+        )
         # 129 — YOCO: when the flag is on, the MHA must be given a
         # shared_kv tuple. Reject the misconfiguration loudly so the
         # runner doesn't accidentally launch it without plumbing.
@@ -2380,6 +2710,25 @@ class MultiHeadAttention(nn.Module):
                 V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
         if self.use_k_gain:
             K = K * (1.0 + self.k_gain.view(1, 1, self.n_heads, 1))
+        # 174 — xPos exponential decay on K (Sun et al. 2022,
+        # arXiv:2212.10554). K is in `[B, T, H, D]` layout here (post-
+        # RoPE, post-GQA-repeat, post-k_gain). We multiply K by the
+        # per-position decay `g_t = exp(-xpos_gamma · t)` so the
+        # attention score `Q[t] · K[s]^T` picks up a factor
+        # `g_s = (1-γ)^s` that shrinks as `s` grows — biases attention
+        # toward recent tokens without altering the Q-side rotation.
+        # With `xpos_gamma = 0` (init) `g_t = 1` for every position ⇒
+        # `K = K * 1 = K` exactly ⇒ the trt forward is **bit-identical
+        # to the 500k-base RoPE baseline at step 0** (max-abs-diff =
+        # 0.0). Placed AFTER the per-head Q/K gains and GQA repeat so
+        # the decay broadcasts uniformly over heads. When
+        # `use_xpos=False` (default) the branch is never taken, no
+        # parameter created, no RNG consumed, baseline path bit-
+        # identical. See `autoresearch/ideas/174-xpos-decay/idea.md`.
+        if self.use_xpos:
+            t = torch.arange(seq_len, device=K.device, dtype=K.dtype)
+            g_t = torch.exp(-self.xpos_gamma * t)  # [T]
+            K = K * g_t.view(1, seq_len, 1, 1)
 
         # ============================================================================
         # Query-tweaks post-RoPE Q modifications. Each is gated by its
@@ -2586,6 +2935,31 @@ class MultiHeadAttention(nn.Module):
         # are mixed by attention (last dim = d_k).
         if self.use_v_norm:
             V = self.v_norm(V)
+        # 176 — Pre-AV V RMSNorm with per-head α-gate + per-head γ-gain
+        # (Wortsman 2023 V-norm primitive + per-head gating). Applied
+        # AFTER the closed-#92 / closed-029 v_norm site and BEFORE the
+        # value-channel-gate / kda-channel-gate sites (all compose by
+        # being multiplicative/identity on the same V tensor; the
+        # gate-α + gain-γ structure of 176 makes the order irrelevant
+        # for downstream matmul blending). Compute per-head:
+        #   α_h = relu(α_raw_h)            # identity at init (0→0)
+        #   rms = rsqrt(mean(V² along d_k) + 1e-6)   # unit RMS per head
+        #   V_rms = V * rms * γ_h          # γ_h=1 at init ⇒ identity
+        #   V_out = (1 − α_h) · V + α_h · V_rms
+        # Init α=0,γ=1 ⇒ V_out = V exactly ⇒ byte-identical to
+        # baseline at step 0 (max-abs-diff = 0.0). See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        if self.use_v_rmsnorm:
+            alpha = F.relu(self.v_rmsnorm_alpha).view(
+                1, self.n_heads, 1, 1
+            )
+            rms = torch.rsqrt(
+                V.pow(2).mean(dim=-1, keepdim=True) + 1e-6
+            )
+            V_rms = V * rms * self.v_rmsnorm_gain.view(
+                1, self.n_heads, 1, self.d_k
+            )
+            V = (1.0 - alpha) * V + alpha * V_rms
         if self.use_value_channel_gate:
             V = V * (1.0 + self.value_channel_gate.view(1, self.n_heads, 1, self.d_k))
         # 109 — KDA channel gate: per-(head, channel) bounded `2·σ(g)`
@@ -2801,8 +3175,15 @@ class MultiHeadAttention(nn.Module):
             # has no effect on them) and BEFORE softmax. With init
             # `rpe_bias = 0` this is a no-op at step 0. The
             # bucket index buffer is `[max_seq_len, max_seq_len]`
-            # int64; the [T, T] submatrix is moved to the scores
-            # device + dtype once per forward call. See
+            # int64 (moved to the scores device by `model.to(device)`,
+            # no per-forward host transfer — the `.to()` here is a
+            # no-op when the buffer is already on the scores device
+            # but kept as a defensive fallback for any future code
+            # path that might call this on CPU). The bias is
+            # computed as `rpe_bias[:, bidx]`, fancy-indexing the
+            # [H, B] parameter by a [T, T] int64 index to produce
+            # an [H, T, T] tensor that broadcasts over the batch
+            # axis of `scores`. See
             # `autoresearch/ideas/166-t5-rpe/idea.md`.
             if self.use_t5_rpe:
                 bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
@@ -2833,6 +3214,7 @@ class MultiHeadAttention(nn.Module):
             or self.use_attn_logit_bias  # 152 — Per-head logit bias (manual path; force SDPA off so step-0 is bit-identical).
             or self.use_per_head_temp  # 155 — Per-head temperature (manual path; force SDPA off so the score-side multiply is exact).
             or self.use_t5_rpe  # 166 — T5-RPE bucket bias (manual path; force SDPA off so the score-side additive bias is exact).
+            or self.use_entmax  # 173 — Entmax-1.5: closed-form projection can't go through SDPA's flash kernel.
             or self.partial_rotary_p < 1.0
             or (self._per_token_rope_log is not None)
             or self.use_talking_heads_out
@@ -2953,11 +3335,14 @@ class MultiHeadAttention(nn.Module):
             # `rpe_bias[h, bucket(|i-j|)]` to scores AFTER the
             # causal mask (masked positions get -1e9 so the bias
             # has no effect on them) and BEFORE softmax. With init
-            # `rpe_bias = 0` this is a no-op at step 0. Bucket
-            # index buffer is `[max_seq_len, max_seq_len]` int64;
-            # the [T, T] submatrix is moved to the scores device
-            # once per forward call. See
-            # `autoresearch/ideas/166-t5-rpe/idea.md`.
+            # `rpe_bias = 0` this is a no-op at step 0. The bucket
+            # index buffer is `[max_seq_len, max_seq_len]` int64
+            # (moved to the scores device by `model.to(device)`, no
+            # per-forward host transfer — the `.to()` here is a
+            # no-op when the buffer is already on the scores device
+            # but kept as a defensive fallback). Bias is computed as
+            # `rpe_bias[:, bidx]` — see the FIRE-branch comment above
+            # and `autoresearch/ideas/166-t5-rpe/idea.md`.
             if self.use_t5_rpe:
                 bidx = self._t5_rpe_bucket_idx[:seq_len, :seq_len].to(
                     device=scores.device
@@ -2972,7 +3357,23 @@ class MultiHeadAttention(nn.Module):
                     "bhst,hH->bHst", scores, self.talking_heads_M
                 )
             # Softmax
-            attn_w = torch.softmax(scores, dim=-1)
+            if self.use_entmax:
+                # 173 — Entmax-1.5 (Tsallis α-entmax with α=1.5).
+                # Replace `torch.softmax` with the entmax-1.5
+                # projection. Per-head α_h is derived from
+                # `entmax_alpha_raw`; init 0 ⇒ α_h=1 ⇒ the helper
+                # short-circuits to `torch.softmax` for step-0
+                # bit-identity. The `window` tensor is reused as the
+                # mask argument (True = attend, False = masked out).
+                alpha_h = 1.0 + 0.5 * (1.0 + torch.tanh(self.entmax_alpha_raw))
+                attn_w = entmax_15(
+                    scores,
+                    window.view(1, 1, seq_len, seq_len),
+                    alpha_h,
+                    dim=-1,
+                )
+            else:
+                attn_w = torch.softmax(scores, dim=-1)
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
             # O1 TalkingHeadsOut: cross-head mix on the *post-softmax*
@@ -3229,8 +3630,59 @@ class MultiHeadAttention(nn.Module):
                 attn_output = attn_output + self.alpha_av * av_carry
 
         # ============ MERGED O PROJECTION ============
-        # Use the last part of qkvo_proj for output projection
-        output = F.linear(attn_output, self.qkvo_proj[self.qkv_size:])
+        # Use the last part of qkvo_proj for output projection.
+        # 171 — DropConnect on W_O (Wan et al. 2013, arXiv:1304.3174).
+        # Per-weight Bernoulli mask on the O slice of `qkvo_proj` during
+        # training. Sample `M ∈ {0,1}^{d_model × d_model}` with
+        # `M_ij ~ Bernoulli(1 - effective_rate)` and use
+        # `W_O_masked = W_O ⊙ M / (1 - effective_rate)` (inverted-
+        # dropout rescale so the expected magnitude matches the un-
+        # masked baseline — matches `F.dropout` and the 147-DropKey
+        # sibling's rescale). The mask is sampled per forward pass and
+        # shared across all batch elements and positions (one mask per
+        # layer per call, NOT per-token).
+        #
+        # **Warmup ramp.** The effective rate is
+        #     effective_rate = dropconnect_wo_rate
+        #                      * min(step, warmup) / warmup
+        # where `step = self._dc_step_count` (Python int, incremented
+        # at the END of each forward below) and `warmup =
+        # self.dropconnect_wo_warmup_steps`. At step 0 (first forward
+        # call) `effective_rate = 0.0` ⇒ the mask branch is short-
+        # circuited before any RNG is consumed ⇒ the trt forward is
+        # **bit-identical to baseline at step 0** (max-abs-diff = 0.0
+        # across the full forward, no parameter modified, no RNG
+        # consumed). At step `warmup` (default 100) the effective rate
+        # reaches `dropconnect_wo_rate` (default 0.05) and holds there
+        # for the remaining steps.
+        #
+        # At eval (`self.training == False`) and with
+        # `dropconnect_wo_rate=0.0` the branch is never taken ⇒ W_O is
+        # used unchanged and the forward graph is bit-identical to the
+        # no-DropConnect baseline. When `use_dropconnect_wo=False`
+        # (default) the branch is also never taken, no RNG consumed,
+        # baseline path bit-identical.
+        #
+        # The mask site is the O slice `qkvo_proj[qkv_size:]` (shape
+        # `[d_model, d_model]`) — this is the same tensor `F.linear`
+        # reads below, so masking it in-place produces exactly
+        # `output = attn_output @ W_O_masked` with no extra ops on
+        # `attn_output`. Composes cleanly with every preceding output-
+        # side lever (168 AV-carry, 163 v-mix-conv, 160 head-gain,
+        # 024 gated-attn, 107 exclusive-self-attn, 045 output-embed)
+        # — those all run on `attn_output` and the masked W_O sees
+        # the same input as the un-masked W_O would. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        w_o = self.qkvo_proj[self.qkv_size:]
+        if self.use_dropconnect_wo and self.training:
+            warmup = max(int(self.dropconnect_wo_warmup_steps), 1)
+            step = min(int(self._dc_step_count), warmup)
+            effective_rate = float(self.dropconnect_wo_rate) * step / warmup
+            if effective_rate > 0.0:
+                keep_prob = 1.0 - effective_rate
+                wo_mask = torch.empty_like(w_o).bernoulli_(keep_prob)
+                w_o = w_o * wo_mask / keep_prob
+        output = F.linear(attn_output, w_o)
         # #33 output embeddings: add the projected token embedding to the
         # attention OUTPUT (post-O). Different operating point from V/Q/K
         # (which inject into attention inputs). ve is the raw token
@@ -3238,6 +3690,15 @@ class MultiHeadAttention(nn.Module):
         # matches the baseline.
         if self.use_output_embed and ve is not None:
             output = output + F.linear(ve, self.output_embed_proj)
+        # 171 — DropConnect step counter increment. Done AT THE END of
+        # forward (after the W_O branch has already read `_dc_step_count`)
+        # so the first forward call sees step=0 ⇒ effective_rate=0.0 ⇒
+        # mask branch short-circuits ⇒ trt forward is bit-identical to
+        # baseline at step 0. Increments unconditionally on every
+        # forward (training or eval) — eval mode short-circuits the
+        # mask branch via `self.training` so the counter is harmless
+        # there. See `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        self._dc_step_count += 1
         return output
 
 
@@ -3286,11 +3747,26 @@ class TransformerBlock(nn.Module):
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
         use_drop_key: bool = False,
         drop_key_rate: float = 0.1,
+        # 171 — DropConnect on W_O pass-through to the inner MHA.
+        # See `MultiHeadAttention.use_dropconnect_wo` for the
+        # mechanism (per-weight Bernoulli mask on W_O, inverted-
+        # dropout rescale, eval-mode skip, warmup-ramped effective
+        # rate so step 0 is byte-identical to baseline). Default off
+        # → baseline path bit-identical. See
+        # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+        use_dropconnect_wo: bool = False,
+        dropconnect_wo_rate: float = 0.0,
+        dropconnect_wo_warmup_steps: int = 100,
         # 151 — RoV (Rotary Value Embeddings, gated). Pass-through to
         # the inner MHA. See `MultiHeadAttention.use_rov` for the
         # mechanism. Default off → baseline path bit-identical. See
         # `autoresearch/ideas/151-rov-gated/idea.md`.
         use_rov: bool = False,
+        # 174 — xPos exponential decay on K. Pass-through to the inner
+        # MHA (see `MultiHeadAttention.use_xpos` for the mechanism).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/174-xpos-decay/idea.md`.
+        use_xpos: bool = False,
         # 154 — Rebased Attention. Pass-through to the inner MHA.
         # See `MultiHeadAttention.use_rebased_attn` for the
         # mechanism. Default off → baseline path bit-identical.
@@ -3340,6 +3816,12 @@ class TransformerBlock(nn.Module):
         # forward graph bit-identical. See
         # `autoresearch/ideas/153-relu2-ffn/idea.md`.
         use_relu2_ffn: bool = False,
+        # 170 — SwiGLU FFN (Shazeer 2020, arXiv:2002.05202;
+        # LLaMA-family FFN). Three-projection gated linear unit with
+        # zero-init gate. Default off → the standard `ffn_variant`
+        # cascade runs unchanged, baseline forward graph bit-
+        # identical. See `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+        use_swiglu_ffn: bool = False,
         use_qk_norm_post_rope: bool = False,
         use_sliding_window: bool = False,
         sliding_window_size: int = 512,
@@ -3369,6 +3851,12 @@ class TransformerBlock(nn.Module):
         # mechanism description. Default off → V stays unnormalized,
         # baseline path is bit-identical.
         use_v_layernorm: bool = False,
+        # 176 — Pre-AV V RMSNorm (per-head α-gate + per-head γ-gain):
+        # forward to MHA — see `MultiHeadAttention.use_v_rmsnorm` for
+        # the mechanism. Default off → V stays unnormalized, baseline
+        # path is bit-identical. See
+        # `autoresearch/ideas/176-v-pre-av-norm/idea.md`.
+        use_v_rmsnorm: bool = False,
         # 162 — Q-Only RMSNorm (asymmetric QK pre-softmax). Pass-through
         # to the inner MHA. See `MultiHeadAttention.use_q_only_norm` for
         # the mechanism. Default off → baseline path bit-identical.
@@ -3465,6 +3953,10 @@ class TransformerBlock(nn.Module):
         # (see note at the MHA `use_softpick` kwarg). Default off →
         # baseline path bit-identical.
         use_softpick: bool = False,
+        # 173 — Entmax-1.5 sparse attention. Passed through to
+        # MultiHeadAttention (see note at the MHA `use_entmax`
+        # kwarg). Default off → baseline path bit-identical.
+        use_entmax: bool = False,
         # 025 — SSMax. Passed through to MultiHeadAttention (see note
         # at the MHA `use_ssmax` kwarg). Default off → baseline path
         # bit-identical.
@@ -3735,10 +4227,23 @@ class TransformerBlock(nn.Module):
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,
+            # 171 — DropConnect on W_O pass-through to the inner MHA.
+            # See `MultiHeadAttention.use_dropconnect_wo` for the
+            # mechanism (per-weight Bernoulli mask on W_O with warmup-
+            # ramped effective rate). Default off → baseline path
+            # bit-identical. See
+            # `autoresearch/ideas/171-dropconnect-wo/idea.md`.
+            use_dropconnect_wo=use_dropconnect_wo,
+            dropconnect_wo_rate=dropconnect_wo_rate,
+            dropconnect_wo_warmup_steps=dropconnect_wo_warmup_steps,
             # 151 — RoV pass-through to the inner MHA. Default off
             # → baseline path bit-identical. See
             # `autoresearch/ideas/151-rov-gated/idea.md`.
             use_rov=use_rov,
+            # 174 — xPos exponential decay on K pass-through to the
+            # inner MHA. Default off → baseline path bit-identical.
+            # See `autoresearch/ideas/174-xpos-decay/idea.md`.
+            use_xpos=use_xpos,
             # 154 — Rebased Attention pass-through to the inner MHA.
             # Default off → baseline path bit-identical. See
             # `autoresearch/ideas/154-rebased-attn/idea.md`.
@@ -3770,6 +4275,7 @@ class TransformerBlock(nn.Module):
             use_cope=use_cope,
             use_fox=use_fox,
             use_softpick=use_softpick,
+            use_entmax=use_entmax,
             use_ssmax=use_ssmax,
             use_value_residual=use_value_residual,
             # 164 — Q-Carry pass-through to MultiHeadAttention
@@ -3813,6 +4319,12 @@ class TransformerBlock(nn.Module):
             # 029 — V-Norm pass-through: when set, MHA builds a per-head
             # `nn.LayerNorm(d_k)` on V — see MultiHeadAttention.use_v_layernorm.
             use_v_layernorm=use_v_layernorm,
+            # 176 — Pre-AV V RMSNorm pass-through: when set, MHA
+            # builds per-head `v_rmsnorm_alpha ∈ R^H` and
+            # `v_rmsnorm_gain ∈ R^{H × d_k}` and applies the gated
+            # RMSNorm to V before the AV product — see
+            # MultiHeadAttention.use_v_rmsnorm.
+            use_v_rmsnorm=use_v_rmsnorm,
             # 162 — Q-Only RMSNorm pass-through: when set, MHA builds a
             # per-head `nn.RMSNorm(d_k)` on Q only — see MultiHeadAttention.use_q_only_norm.
             use_q_only_norm=use_q_only_norm,
@@ -3866,6 +4378,43 @@ class TransformerBlock(nn.Module):
             # baseline path runs bit-identical. See
             # `autoresearch/ideas/153-relu2-ffn/idea.md`.
             self.feed_forward = ReLU2FeedForward(d_model, d_ff, dropout)
+        elif use_swiglu_ffn:
+            # 170 — SwiGLU FFN (Shazeer 2020, arXiv:2002.05202;
+            # LLaMA-family FFN). Three-projection gated linear unit
+            # `y = down_proj(silu(W_gate·x) ⊙ (W_up·x))` with
+            # zero-init `gate_proj.weight` ⇒ `silu(0) = 0` ⇒ FFN
+            # output is exactly 0 at step 0 (clean ReZero-style
+            # baseline: the residual stream carries only the
+            # attention sub-block at step 0). d_ff is scaled by the
+            # Shazeer 2/3 trick (`d_ff_swiglu = (2 * d_ff) // 3`,
+            # 170 for d_ff_baseline=256) so total FFN param count
+            # matches the baseline to within ~0.4%. Branch sits
+            # AHEAD of every other FFN-replacement flag (MoE / TTT
+            # / `ffn_variant == "swiglu"`) so it isn't silently
+            # shadowed. Default off → the standard `ffn_variant`
+            # cascade runs bit-identical to baseline. See
+            # `autoresearch/ideas/170-swiglu-ffn/idea.md`.
+            # Mutual-exclusion guard: 170 owns the FFN slot, so a later
+            # combo of `use_swiglu_ffn + use_soft_moe + ffn_variant="swiglu"`
+            # would silently win by branch order. Fail loud here so the
+            # misuse is caught at construction, not at training time.
+            assert not (use_soft_moe or use_switch_ffn or use_ttt_ffn), (
+                "use_swiglu_ffn (170) is mutually exclusive with "
+                "use_soft_moe (117) / use_switch_ffn (146) / use_ttt_ffn: "
+                "all three replace the FFN with their own module, so they "
+                "shadow 170's gate."
+            )
+            assert ffn_variant != "swiglu", (
+                "use_swiglu_ffn (170) is mutually exclusive with "
+                "ffn_variant='swiglu' (legacy 2-projection SwiGLU without "
+                "zero-init gate) — pick one. The branch ordering silently "
+                "wins by 170."
+            )
+            from .components import SwiGLUZeroInitFeedForward
+            d_ff_swiglu = (2 * d_ff) // 3
+            self.feed_forward = SwiGLUZeroInitFeedForward(
+                d_model, d_ff_swiglu, dropout
+            )
         elif use_soft_moe:
             # 117 — Soft MoE: E parallel narrower FFNs + softmax
             # dispatch/combine. See `models/soft_moe.py` for the
