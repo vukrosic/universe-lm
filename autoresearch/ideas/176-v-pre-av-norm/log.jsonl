@@ -13,3 +13,4 @@
 {"ts":"2026-06-15T05:07:01Z","agent":"daemon","idea":"176-v-pre-av-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T05:07:19Z","agent":"runner","idea":"176-v-pre-av-norm","from":"running","to":"running","round":1,"note":"claimed: queued in tmux"}
 {"ts":"2026-06-15T05:44:34Z","agent":"reset-button","idea":"176-v-pre-av-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-15T05:51:13Z","agent":"daemon","idea":"176-v-pre-av-norm","from":"needs-run","to":"done","round":1,"note":"NULL: trt=6.4291 inside 6.3988±0.04 (Δ+0.0303)"}
