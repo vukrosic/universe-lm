@@ -1,0 +1,15 @@
+# Taste review — 166-t5-rpe
+
+## r1 — 2026-06-14 — verdict: accept
+
+- **Leverage.** Canonical, paper-validated mechanism at T5-XXL (11B) and 100M+ in BigBird/REALM/LongT5. Realistic shot at an orthogonal positional-encoding axis at 0.94M: param cost is +128/block (H=4 × B=32, negligible) and the lever sits *after* QK matmul so it composes cleanly with the existing FIRE/RoPE-on-QK path. Step-0 identity is clean (`bias = zeros` ⇒ logits bit-identical to no-RPE baseline). If it fires, a measurable val-loss delta on top of 009 FIRE is in play.
+- **Information value (sharp, both branches).** The three outcomes are all interpretable and orthogonal to the recent nulls:
+  - win-alongside-FIRE → positional info is *over-determined* at this tier (rotational + additive give partial redundancy);
+  - win-instead-of-FIRE (in an isolated re-test) → additive logit bias is the better mechanism at 0.94M;
+  - null → closes the additive-bias PE family at our tier and confirms the rotational family is the binding axis. Every branch teaches something the closed PE axes cannot.
+- **Non-obviousness / axis gap.** Closed PE axes (NoPE, post-norm tying, RoPE base sweep, FIRE, CoPE) are all *rotational* or *structural*. The *additive-logit-bias* family (T5-RPE, ALiBi) is unclosed at our tier for autoregressive LMs. Distinct from the recent nulls: 152-attn-logit-bias was a *per-head* bias with no positional component (closed.md explicitly marks that as a separate axis — "per-head attention bias", closed at PaLM-2/OLMo-2 scale where head specialization appears), and 155-per-head-temp/154-rebased-attn/153-relu2-ffn are not PE at all. 166 fills a real PE-family gap, not a re-pitch.
+- **Portfolio fit.** PE family has been quiet since 009 FIRE WIN / 013 CoPE drift. Recent null cluster (152/153/155/156) is per-head attention shape and capacity-injection — different axes. One more PE bet is not crowding.
+- **Niche fit.** Mechanism (not HP), zero-init identity, runs at tiny1m3m, ~30 LoC. Step-0 bit-identity claim is testable and follows from the `zeros(H,B)` init the spec describes. Log-bucket function `floor(log2(|i-j|+1))` is the canonical T5 parameterization.
+- **Crisp bet.** "An *additive* logit bias may capture distance-dependent attention priors that a *rotational* transform cannot" — one sentence, testable, falsifiable.
+- **Transfer.** Risk tagged `med` is honest: T5 is encoder-decoder, autoregressive-LM validation at our scale is thin. But the mechanism is structurally simple, the bucket parameterization is canonical, and a clean null at tiny1m3m is a transferable negative (rotational family binds at the 135M recipe too). Win carries. Med risk accepted because the null is still informative.
+- **Verdict: accept.** Sharp, high-info, fills a real closed-axis gap, identity-init-able, cheap. Routes to definition gate (round reset to 1).

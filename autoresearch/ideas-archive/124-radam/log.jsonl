@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:25:19Z","agent":"implement-button","idea":"124-radam","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:30:47Z","agent":"implement-button","idea":"124-radam","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"124-radam","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:45:54Z","agent":"runner","idea":"124-radam","from":"running","to":"done","round":1,"note":"NULL (tier-mismatch): trt=7.3169 vs ctrl 6.4272 (Δ=+0.89 wrong-sign, ~89× the 0.01 noise band); RAdam rectification ρ_t thrashes on 92-step horizon (val: 10.8 → 16 → 19 → 9 → 10 → 17 → 8 → 7.3); SMA needs ~2k steps to fill — re-evaluate at >=135M Phase-2 with 3-4k steps"}

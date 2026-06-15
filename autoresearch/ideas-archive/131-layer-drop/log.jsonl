@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:59:49Z","agent":"implement-button","idea":"131-layer-drop","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T13:07:59Z","agent":"implement-button","idea":"131-layer-drop","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"131-layer-drop","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T15:15:44Z","agent":"runner","idea":"131-layer-drop","from":"running","to":"done","round":1,"note":"NULL: trt=6.4138 vs ctrls 6.4272/6.4419 (Δ −0.0134 < 0.0147 ctrl-to-ctrl gap; two-ctrl WIN rule fails) at tiny1m3m; train_loss Δ −0.021 is opposite of 111-drop-path so per-batch gate granularity is informative; L=12 less favorable per Fan et al."}

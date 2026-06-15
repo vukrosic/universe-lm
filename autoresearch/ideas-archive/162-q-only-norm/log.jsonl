@@ -1,0 +1,28 @@
+{"ts":"2026-06-14T05:18:42Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-14T05:19:32Z","agent":"taste","idea":"162-q-only-norm","from":"implementing","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:20:05Z","agent":"taste","idea":"162-q-only-norm","from":"tasting","to":"needs-review","round":1,"note":"accept: sharp orthogonal Q-side ablation to 016's WIN; QK-norm family sparse; clean null still informative; transfer low (Cohere 35B+, RMSNorm 1B+)"}
+{"ts":"2026-06-14T05:22:29Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T05:27:14Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-plan","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-14T05:29:21Z","agent":"daemon","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-14T05:30:51Z","agent":"reset-button","idea":"162-q-only-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T05:32:36Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"needs-run","round":1,"note":"reclaimed: daemon smoke batch dropped (only 158-gau survived; ssh connection throttling)"}
+{"ts":"2026-06-14T05:34:22Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-run","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:34:22Z","agent":"code-impl","idea":"162-q-only-norm","from":"planning","to":"needs-run","round":1,"note":"plan+code done (Tiny1M3MQOnlyNormConfig, +192 params, CPU build-smoke 949,248 params)"}
+{"ts":"2026-06-14T05:42:17Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (CACHED path; baseline 6.4504 ± 0.0558)"}
+{"ts":"2026-06-14T05:43:49Z","agent":"reset-button","idea":"162-q-only-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T05:44:03Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"needs-recode","round":1,"note":"pre-queue bounce: build-smoke FAIL on box — Tiny1M3MQOnlyNormConfig not present in /root/universe-lm/configs/llm_config.py (box has stale configs). Implementer must commit + push local config additions before next attempt."}
+{"ts":"2026-06-14T05:44:19Z","agent":"implement-button","idea":"162-q-only-norm","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button (re-code fix)"}
+{"ts":"2026-06-14T05:44:56Z","agent":"done-button","idea":"162-q-only-norm","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
+{"ts":"2026-06-14T05:46:08Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-run","to":"recoding","round":1,"note":"claimed (r1 → r2 recode: box build-smoke bounced; local commit needed before next pull)"}
+{"ts":"2026-06-14T05:53:27Z","agent":"code-impl","idea":"162-q-only-norm","from":"recoding","to":"needs-run","round":2,"note":"recode r1→r2: local commit 41ca33e lands the lever; awaiting 'git push' so the box's git pull can pick it up (daemon's --ff-only + stale configs bounced the prior smoke)"}
+{"ts":"2026-06-14T05:58:10Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"needs-recode","round":2,"note":"stale-box: Tiny1M3MQOnlyNormConfig not present in /root/universe-lm/configs/llm_config.py (commit 41ca33e not pushed to origin; box on main@42ed363, working-tree edits only include 161)"}
+{"ts":"2026-06-14T05:58:11Z","agent":"auto-implement","idea":"162-q-only-norm","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-14T06:00:12Z","agent":"reviewer","idea":"162-q-only-norm","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}
+{"ts":"2026-06-14T06:00:51Z","agent":"reviewer","idea":"162-q-only-norm","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T06:04:17Z","agent":"code-impl","idea":"162-q-only-norm","from":"needs-plan","to":"planning","round":1,"note":"claimed (r3 fresh pass after r2 reviewer re-approval)"}
+{"ts":"2026-06-14T06:04:43Z","agent":"code-impl","idea":"162-q-only-norm","from":"planning","to":"needs-run","round":1,"note":"plan+code done (r3 fresh pass; plan refreshed with self-check §5; lever unchanged from commit 41ca33e; CPU build-smoke +192 params verified in r2; outstanding precondition: human-only git push)"}
+{"ts":"2026-06-14T06:15:53Z","agent":"runner","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux (MEASURE: 3 ctrls + 4 trt)"}
+{"ts":"2026-06-14T06:20:21Z","agent":"reset-button","idea":"162-q-only-norm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T06:42:28Z","agent":"run-button","idea":"162-q-only-norm","from":"needs-run","to":"running","round":1,"note":"claimed by Run-next"}
+{"ts":"2026-06-14T06:58:25Z","agent":"runner","idea":"162-q-only-norm","from":"running","to":"done","round":1,"note":"NULL: trt=6.4303 vs fresh baseline mean=6.4346 ±0.0458 (Δ=-0.0043 inside band; pass bar -0.005 missed by 0.0007)"}
+{"ts":"2026-06-14T07:02:41Z","agent":"runner","idea":"162-q-only-norm","from":"done","to":"done","round":1,"note":"NULL: trt=6.4303 vs cached mean=6.4346±0.0458 (Δ=-0.0043 inside band, plan NULL)"}

@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:00:56Z","agent":"implement-button","idea":"119-sam","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:07:23Z","agent":"implement-button","idea":"119-sam","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"119-sam","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:33:38Z","agent":"runner","idea":"119-sam","from":"running","to":"done","round":1,"note":"NULL: trt=6.4356 vs ctrl 6.4272 (Δ=+0.0084 inside |Δ|<0.01 noise band, wrong sign); SAM flat-minima benefit needs longer horizon to dominate — re-evaluate at >=135M Phase-2 with 3-4k steps"}

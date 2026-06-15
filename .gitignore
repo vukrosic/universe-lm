@@ -241,6 +241,8 @@ logs_debug/
 # For now, following user request strictly to ignore json
 *.json
 !benchmark_comparison_results.json
+# Durable per-box baseline cache — version-controlled cross-run state (see autoresearch/BASELINE-CACHE-DESIGN.md)
+!autoresearch/baseline-cache.json
 # Keep all JSON files in baselines folder
 !baselines/*.json
 !baselines/**/*.json
@@ -306,3 +308,6 @@ scratch/
 # local eval harness (vendored src + venv, do not commit)
 .lm-eval-src/
 .venv-lm-eval/
+
+# transient per-experiment stubs — delivered to the box by scp, never committed
+_arq_*.py

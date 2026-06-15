@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T11:53:56Z","agent":"implement-button","idea":"117-soft-moe","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:00:30Z","agent":"implement-button","idea":"117-soft-moe","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:37Z","agent":"runner","idea":"117-soft-moe","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:31:10Z","agent":"runner","idea":"117-soft-moe","from":"running","to":"done","round":1,"note":"NULL: trt=6.5663 vs ctrl 6.4272 (Δ=+0.1391 wrong-sign, ~14× the 0.01 noise band); Soft-MoE 4-expert router overhead dominates the FFN capacity benefit at d_model=64; FLOP-capacity mismatch — re-evaluate at >=135M Phase-2"}

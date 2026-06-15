@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:33:59Z","agent":"implement-button","idea":"126-adashift","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:39:27Z","agent":"implement-button","idea":"126-adashift","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"126-adashift","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:50:33Z","agent":"runner","idea":"126-adashift","from":"running","to":"done","round":1,"note":"NULL: trt=6.9837 vs ctrl 6.4272 (Δ=+0.56 wrong-sign, ~56× the 0.01 noise band); AdaShift n=3 second-moment lookback is stale at 92-step tiny1m3m — val loss spiked from 10.81 to 11.92 in steps 25-50; re-evaluate at >=135M Phase-2 with larger effective batch and 3-4k steps"}

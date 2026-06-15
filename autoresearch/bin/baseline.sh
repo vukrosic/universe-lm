@@ -24,7 +24,14 @@
 #       prints "WIN <delta>" | "NULL <delta>" | "NO-BASELINE". WIN iff
 #       treatment < val_mean - noise_band (caller still applies the plan bar).
 #
-# Env: K (staleness guard, default 25).
+#   promote <results.json> <val> [band]
+#       PIN the baseline for the box class to <val> (the champion's measured
+#       loss) — no ctrl re-runs needed. Sets val_mean=<val>, pinned=true,
+#       commit=unknown so `check` always returns CACHED for it (the champion is
+#       the trusted baseline until the next record promotes a new one). This is
+#       how a winning run becomes the new baseline without re-measuring.
+#
+# Env: K (staleness guard, default 25). Pinned entries ignore K + commit.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -81,11 +88,34 @@ if cmd == "check":
     cur = head_commit()
     if entry is None:
         die(f"MEASURE {bk} no-entry-for-box ({raw})", 10)
+    # A pinned (champion) baseline is the trusted bar until the next record —
+    # it never re-measures on commit churn or staleness (see `promote`).
+    if entry.get("pinned"):
+        die(f"CACHED {entry['val_mean']} {entry['noise_band']} {bk}", 0)
     if entry.get("commit") not in (cur, "unknown"):
         die(f"MEASURE {bk} commit-changed ({entry.get('commit')}->{cur})", 10)
     if entry.get("runs_since_measure", 0) >= K:
         die(f"MEASURE {bk} stale (runs_since_measure>={K})", 10)
     die(f"CACHED {entry['val_mean']} {entry['noise_band']} {bk}", 0)
+
+elif cmd == "promote":
+    if len(args) < 2:
+        die("promote needs <results.json> <val> [band]", 6)
+    val = round(float(args[1]), 4)
+    band = round(float(args[2]), 4) if len(args) > 2 else (
+        entry.get("noise_band", 0.04) if entry else 0.04)
+    base = entry or {}
+    base.update({
+        "box_key": bk,
+        "gpu": inst.get("gpu"), "compute_cap": inst.get("compute_cap"),
+        "driver": inst.get("driver"), "commit": "unknown",
+        "val_mean": val, "noise_band": band, "pinned": True,
+        "measured_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "runs_since_measure": 0, "source_results": res_path,
+    })
+    c["boxes"][bk] = base
+    save_cache(c)
+    print(f"PROMOTED {bk} val_mean={val} band={band} pinned")
 
 elif cmd == "measure":
     vals = ctrl_vals(results)

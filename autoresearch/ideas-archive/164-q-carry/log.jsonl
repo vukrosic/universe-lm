@@ -1,0 +1,11 @@
+{"ts":"2026-06-14T05:20:05Z","agent":"taste","idea":"164-q-carry","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:21:32Z","agent":"taste","idea":"164-q-carry","from":"tasting","to":"needs-review","round":1,"note":"accept: dual-axis test for 021-V-carry WIN; either outcome is informative (cross-block residual mixing general vs V-specific)"}
+{"ts":"2026-06-14T05:27:37Z","agent":"reviewer","idea":"164-q-carry","from":"needs-review","to":"reviewing","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:28:05Z","agent":"reviewer","idea":"164-q-carry","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-14T05:29:04Z","agent":"code-impl","idea":"164-q-carry","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
+{"ts":"2026-06-14T05:39:41Z","agent":"code-impl","idea":"164-q-carry","from":"planning","to":"needs-run","round":1,"note":"plan+code done"}
+{"ts":"2026-06-14T05:58:12Z","agent":"runner","idea":"164-q-carry","from":"needs-run","to":"needs-recode","round":1,"note":"stale-box: Tiny1M3MQCarryConfig not present in /root/universe-lm/configs/llm_config.py (commit not pushed to origin; box on main@42ed363, working-tree has 161 only)"}
+{"ts":"2026-06-14T06:04:55Z","agent":"code-impl","idea":"164-q-carry","from":"needs-recode","to":"needs-run","round":2,"note":"wired MHA init (use_q_carry+alpha_q+_q_carry stash) + TransformerBlock forward kwarg + MinimalLLM stash/loop; build-smoke OK, step-0 bit-identical (diff=0.00), +12 params as expected"}
+{"ts":"2026-06-14T06:15:53Z","agent":"runner","idea":"164-q-carry","from":"needs-run","to":"running","round":2,"note":"claimed: queued in tmux (MEASURE: 3 ctrls + 4 trt)"}
+{"ts":"2026-06-14T06:20:21Z","agent":"reset-button","idea":"164-q-carry","from":"running","to":"needs-run","round":2,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-14T07:02:41Z","agent":"runner","idea":"164-q-carry","from":"needs-run","to":"done","round":2,"note":"NULL: trt=6.4706 vs cached mean=6.4346±0.0458 (Δ=+0.0360 inside band, plan DRIFT wrong-sign)"}

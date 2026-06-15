@@ -543,6 +543,32 @@ class LLMConfig:
     # init = no-op at step 0. 1-D parameter of size vocab_size, routes to AdamW.
     # Logit op — flows into eval CE legitimately. Re-learns token frequency.
     use_vocab_bias: bool = False
+    # 184 — Learned Logit Scale (CLIP-style, Radford et al. 2021,
+    # arXiv:2103.00020). Single learned scalar `logit_scale_param`
+    # applied as `logits = logits * exp(logit_scale_param)`. Init 0 ⇒
+    # `exp(0) = 1.0` exactly in IEEE 754 ⇒ logits unchanged ⇒ step-0
+    # byte-identical to baseline. The exp-parameterization guarantees
+    # positivity without an explicit clamp. 1 scalar param, routes to
+    # AdamW. Default off → baseline path bit-identical. See
+    # `autoresearch/ideas/184-logit-scale/idea.md`.
+    use_logit_scale: bool = False
+    # 183 — Pre-LM-Head RMSNorm (Gemma 2 §2, LLaMA 3 §3.1, Qwen 2.5
+    # §2.3, OLMo 2 §2.2: a final RMSNorm right before the tied LM
+    # head). When on, the model builds an `nn.RMSNorm(d_model)` plus
+    # a scalar gate `pre_head_scale = nn.Parameter(torch.zeros(()))`
+    # and applies `x = (1 − scale) · x + scale · RMSNorm(x)` between
+    # `output_dropout` and `lm_head`. Init `scale = 0` ⇒ the mix is
+    # exactly `x` at step 0 (byte-identical to the no-flag baseline,
+    # including the dropout interaction — the dropout divides by
+    # `(1−p)` in expectation, and the gate is a strict no-op on
+    # both the forward and the backward graph). The optimizer grows
+    # `scale` toward `1` to engage the RMSNorm during training.
+    # Cost: 1 scalar (AdamW) + `d_model` gain weights (Muon) — 65
+    # extra params at tiny1m3m (~+0.007%, negligible). Default off
+    # ⇒ no module built, no parameter registered, baseline forward
+    # path byte-identical to the champion. See
+    # `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+    use_pre_lm_head_rmsnorm: bool = False
     # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
     # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When on,
     # replace the single output softmax with `n_mos_components` parallel
@@ -2384,6 +2410,73 @@ class Tiny1M3MAlibiConfig(Tiny1M3MConfig):
     mechanism, lever-mode pin, and zero-init rationale.
     """
     use_alibi_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MLogitScaleConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M stacked on the 175-alibi champion with a learned global
+    logit temperature (idea 184, CLIP-style, Radford et al. 2021,
+    arXiv:2103.00020). Subclasses `Tiny1M3MAlibiConfig` so the lever
+    stacks on top of the current champion.
+
+    Adds one learnable scalar `logit_scale_param` (init 0). The
+    forward applies `logits = logits * exp(logit_scale_param)`. Init
+    0 ⇒ `exp(0) = 1.0` exactly ⇒ `logits * 1.0 = logits` exactly ⇒
+    **byte-identical to the 175-alibi champion at step 0**
+    (max-abs-diff = 0.0). The exp-parameterization guarantees
+    positivity without an explicit clamp.
+
+    Cost: 1 scalar (+0.0001% of 0.94M). 1-D parameter, routes to
+    AdamW under the existing rule.
+
+    Distinct from the existing `use_output_temp` (OH4) lever:
+    `use_output_temp` divides by τ (τ=1 init), this multiplies by
+    `exp(s)` (s=0 init). Mathematically equivalent parameterizations
+    of a learned temperature, but distinct flags / distinct
+    parameter shapes (0-D vs 1-D) / distinct init semantics
+    (mult-by-1 vs div-by-1). The two flags are independent and can
+    be composed.
+
+    A/B vs the 175-alibi champion (val 6.2403, seed 42). Expected
+    Δval ∈ [−0.01, +0.005] (per 167-logit-zloss null on a related
+    loss-shape lever at this tier, the prior on null is high).
+    WIN ≤ ctrl − 0.005. NULL |Δ| < 0.01. DRIFT > ctrl + 0.01.
+    """
+    use_logit_scale: bool = True
+
+
+@dataclass
+class Tiny1M3MPreLMHeadRMSNormConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with a pre-LM-Head RMSNorm (Gemma 2 / LLaMA 3 / Qwen
+    2.5 / OLMo 2 final-norm pattern).
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2403,
+    band 0.04). Stacks one `nn.RMSNorm(d_model)` plus a scalar gate
+    `pre_head_scale` between the final `output_dropout` and the
+    `lm_head`. The mix `x = (1 − scale) · x + scale · RMSNorm(x)`
+    is byte-identical to the no-flag champion at step 0 because
+    `scale = 0` at init (gated ReZero-style — same trick 130/144/175
+    use to keep step-0 bit-equality with the baseline). The
+    optimizer then grows `scale` toward `1` to engage the RMSNorm.
+
+    Architecture: 1 scalar (AdamW) + `d_model` gain weights (Muon) =
+    65 extra params at tiny1m3m (~+0.007% of 0.94M). Placed
+    *output-side* (after the residual stream, just before the LM
+    head) — distinct from 159-emb-layernorm (input-side LN, DRIFT
+    on the embedding distribution at 0.94M); 183 normalizes the
+    distribution the LM head reads from, which the head's tied
+    weight matrix then rescales by its own magnitude. The DRIFT
+    pattern from 159 (rescaling the input distribution the rest
+    of the network has to re-fit) doesn't apply on the output
+    side.
+
+    Transfer-risk: low. Validated at 0.5B-405B across four frontier
+    families (Gemma 2, LLaMA 3, Qwen 2.5, OLMo 2) per the idea spec.
+    Mechanism is scale-free (a single RMSNorm at a fixed
+    architectural location). See
+    `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+    """
+    use_pre_lm_head_rmsnorm: bool = True
 
 
 @dataclass

@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T12:37:23Z","agent":"implement-button","idea":"127-grad-centralization","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T12:51:10Z","agent":"implement-button","idea":"127-grad-centralization","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"127-grad-centralization","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T14:52:43Z","agent":"runner","idea":"127-grad-centralization","from":"running","to":"done","round":1,"note":"NULL: trt=6.4969 vs ctrl 6.4272 (Δ=+0.07 wrong-sign, ~7× the 0.01 noise band); Gradient Centralization re-centering hurts transformer FFN linear layers (no filter structure) — adds noise without the CNN-style gain; closed for LM pipeline; could re-test at CNN tier if added"}

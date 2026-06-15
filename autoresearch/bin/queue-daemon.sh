@@ -29,14 +29,73 @@ IDEAS="$ROOT/autoresearch/ideas"
 FLIP="$ROOT/autoresearch/bin/flip.sh"
 BASELINE="$ROOT/autoresearch/bin/baseline.sh"
 BOX_JSON="$ROOT/autoresearch/remote-box.json"
+CONFIG_JSON="$ROOT/autoresearch/config.json"   # repo-specifics (the general tool's only coupling)
 STATE="$ROOT/autoresearch/daemon-state.json"
 CLOSED="$ROOT/autoresearch/closed.md"
+CHAMPION_JSON="$ROOT/autoresearch/champion.json"  # the live baseline experiments stack on
 
+# Repo-specific knobs. Defaults below are overridden by the `drain` block of
+# autoresearch/config.json (see load_config) so this daemon is repo-agnostic —
+# the SAME tool drains any repo's experiments; only config.json changes.
 REMOTE_TMUX="arq"
 CTRL_CONFIG="configs.llm_config.Tiny1M3MConfig"
 DATASET="processed_data/pretrain_1B"
+# {config}/{seed}/{dataset} are substituted per run; this is the baseline control.
+CTRL_CMD='python train_llm.py --config_class {config} --seed {seed} --dataset_path {dataset} --warmup false'
 STALE_MIN="${STALE_MIN:-20}"     # a `running` idea older than this with no live arq = dead
 DEFAULT_TIMEOUT="${JOB_TIMEOUT:-12m}"
+
+# Pull repo-specifics out of config.json's `drain` block (all optional; the
+# defaults above are the fallback). Keeps the daemon free of any one repo's
+# model/dataset/config names.
+# Build-smoke knobs passed through to _box_smoke.py on the box (defaults match
+# the standalone script's own defaults).
+SMOKE_TRAINER="train_llm"
+SMOKE_MODEL_IMPORT="from models.llm import MinimalLLM"
+SMOKE_MODEL_CTOR="MinimalLLM"
+load_config() {
+  [ -f "$CONFIG_JSON" ] || return 0
+  local vals rt bc dp cc st si sc
+  vals="$(python3 - "$CONFIG_JSON" <<'PY' 2>/dev/null || true
+import json, sys
+try: d = (json.load(open(sys.argv[1])).get("drain") or {})
+except Exception: d = {}
+s = (d.get("smoke") or {})
+print(d.get("remote_tmux",""));   print(d.get("baseline_config",""))
+print(d.get("dataset_path",""));  print(d.get("ctrl_command",""))
+print(s.get("trainer",""));       print(s.get("model_import",""))
+print(s.get("model_ctor",""))
+PY
+)"
+  { read -r rt; read -r bc; read -r dp; read -r cc; read -r st; read -r si; read -r sc; } <<<"$vals"
+  [ -n "$rt" ] && REMOTE_TMUX="$rt"
+  [ -n "$bc" ] && CTRL_CONFIG="$bc"
+  [ -n "$dp" ] && DATASET="$dp"
+  [ -n "$cc" ] && CTRL_CMD="$cc"
+  [ -n "$st" ] && SMOKE_TRAINER="$st"
+  [ -n "$si" ] && SMOKE_MODEL_IMPORT="$si"
+  [ -n "$sc" ] && SMOKE_MODEL_CTOR="$sc"
+}
+load_config
+
+# ── champion (the live, stacked baseline) ────────────────────────────────────
+# champion.json names the current best architecture. Every new experiment is
+# judged against (and built on top of) it, and a new record promotes itself —
+# all without re-measuring a control every queue. Empty stub => bare base config.
+CHAMPION_STUB=""; CHAMPION_CLASS=""; CHAMPION_VAL=""
+load_champion() {
+  [ -f "$CHAMPION_JSON" ] || return 0
+  local vals
+  vals="$(python3 - "$CHAMPION_JSON" <<'PY' 2>/dev/null || true
+import json, sys
+try: d = json.load(open(sys.argv[1]))
+except Exception: d = {}
+print(d.get("stub", "")); print(d.get("config_class", "")); print(d.get("val", ""))
+PY
+)"
+  { read -r CHAMPION_STUB; read -r CHAMPION_CLASS; read -r CHAMPION_VAL; } <<<"$vals"
+}
+load_champion
 LOCK="/tmp/queue-daemon.lock"
 
 DRY=0; MODE="once"; LOOP_SECS=600
@@ -249,6 +308,67 @@ append_closed_null() {  # append_closed_null <idea> <delta>
     && mv "$CLOSED.tmp" "$CLOSED"
 }
 
+# A win is a record — append it to closed.md too, in the same shape the records
+# board parses (slug — WIN: trt=<val> … (Δ<delta>) … <date>). Without this, a
+# daemon-judged win flips to done but never reaches the record timeline.
+append_closed_win() {  # append_closed_win <idea> <val> <delta> <mean> <band>
+  local idea="$1" val="$2" delta="$3" mean="$4" band="$5" line marker
+  marker='<!-- reviewer/evidence step appends one line per close here -->'
+  line="- $idea — WIN: trt=$val vs baseline $mean±$band (Δ$delta) at tiny1m3m — $(date -u +%F)"
+  [ -f "$CLOSED" ] || return 0
+  grep -qF -- "$idea — WIN:" "$CLOSED" && return 0
+  awk -v m="$marker" -v l="$line" '{print} index($0,m)&&!d{print l; d=1}' "$CLOSED" > "$CLOSED.tmp" \
+    && mv "$CLOSED.tmp" "$CLOSED"
+}
+
+# Locate an idea's runnable stub (run.json arq_file, else _arq_<idea>.py at root).
+champion_stub_for() {  # champion_stub_for <idea>
+  local idea="$1" arq
+  arq="$(python3 -c "import json;print(json.load(open('$IDEAS/$idea/run.json')).get('arq_file',''))" 2>/dev/null)"
+  [ -n "$arq" ] && [ -f "$ROOT/$arq" ] && { echo "$arq"; return 0; }
+  [ -f "$ROOT/_arq_${idea}.py" ] && { echo "_arq_${idea}.py"; return 0; }
+  return 1
+}
+
+# A new record promotes ITSELF to champion: it becomes the baseline the next
+# batch is judged against and stacked on. Fully deterministic — no LLM, and no
+# re-measure (the winning run already measured the new baseline; we just pin it).
+promote_champion() {  # promote_champion <idea> <val> <rdir>
+  local idea="$1" val="$2" rdir="$3" stub cls
+  stub="$(champion_stub_for "$idea")" || { log "champion: no stub for $idea — promotion skipped"; return 0; }
+  cls="$(python3 - "$ROOT/$stub" <<'PY' 2>/dev/null || true
+import re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r'class\s+C\s*\(\s*([A-Za-z_][\w.]*)\s*\)', src)
+parent = m.group(1) if m else ""
+mod = ""
+if parent and '.' not in parent:
+    im = re.search(r'from\s+([\w.]+)\s+import\s+([^\n]+)', src)
+    if im and parent in [x.strip() for x in im.group(2).split(',')]:
+        mod = im.group(1)
+print(f"{mod}.{parent}" if mod else parent)
+PY
+)"
+  if [ "$DRY" = 1 ]; then log "DRY promote champion -> $idea ($val)"; return 0; fi
+  # Pin the new champion val as this box's baseline (no future ctrl runs).
+  "$BASELINE" promote "$rdir/results.json" "$val" >&2 2>/dev/null || true
+  # Rewrite champion.json: new stub/class/val + append to lineage.
+  python3 - "$CHAMPION_JSON" "$idea" "$stub" "$cls" "$val" <<'PY' 2>/dev/null || true
+import json, sys, datetime
+path, idea, stub, cls, val = sys.argv[1:6]
+val = float(val); today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+try: d = json.load(open(path))
+except Exception: d = {}
+lin = d.get("lineage", []); lin.append({"idea": idea, "config_class": cls, "val": val, "promoted": today})
+d.update({"stub": stub, "config_class": cls, "val": val,
+          "band": d.get("band", 0.04), "seed": d.get("seed", 42),
+          "lineage": lin, "updated": today})
+with open(path, "w") as f: json.dump(d, f, indent=2); f.write("\n")
+PY
+  CHAMPION_STUB="$stub"; CHAMPION_CLASS="$cls"; CHAMPION_VAL="$val"
+  log "NEW CHAMPION: $idea @ $val (${cls:-stub:$stub}) — next batch builds on it"
+}
+
 flip() {  # respects --dry-run
   if [ "$DRY" = 1 ]; then log "DRY flip $*"; return 0; fi
   "$FLIP" "$@"
@@ -330,11 +450,13 @@ finalize_one() {  # finalize_one <idea> <val> <rdir>
   case "$verdict" in
     WIN)
       write_evidence "$idea" WIN "$val" "$delta" "$mean" "$band" "$rdir"
-      flip "$idea" done daemon "WIN: trt=$val vs $mean±$band (Δ$delta)"
+      flip "$idea" done daemon "WIN: trt=$val vs champion ${CHAMPION_CLASS:-base} $mean±$band (Δ$delta)"
+      [ "$DRY" = 1 ] || append_closed_win "$idea" "$val" "$delta" "$mean" "$band"
+      promote_champion "$idea" "$val" "$rdir"
       log "$idea — WIN Δ$delta" ;;
     NULL)
       write_evidence "$idea" NULL "$val" "$delta" "$mean" "$band" "$rdir"
-      flip "$idea" done daemon "NULL: trt=$val inside $mean±$band (Δ$delta)"
+      flip "$idea" done daemon "NULL: trt=$val inside champion ${CHAMPION_CLASS:-base} $mean±$band (Δ$delta)"
       [ "$DRY" = 1 ] || append_closed_null "$idea" "$delta"
       log "$idea — NULL Δ$delta" ;;
     *)
@@ -378,9 +500,11 @@ sync_and_smoke() {
   # one batched scp: the smoke helper + every stub, all into the repo root
   SCP_MANY_TO "$ROOT/autoresearch/bin/_box_smoke.py" "${srcs[@]}" "$REMOTE_REPO/" 2>/dev/null \
     || log "batch scp warned (continuing; missing stubs will smoke-FAIL)"
-  # one ssh: smoke every stub remotely, one result line each: "SMOKE <arq> <msg>"
+  # one ssh: smoke every stub remotely, one result line each: "SMOKE <arq> <msg>".
+  # SMOKE_* tell _box_smoke.py the repo's trainer + model ctor (from config.json).
   local results
-  results="$(SSH "cd $REMOTE_REPO && export PATH=$REMOTE_VENV/bin:\$PATH TORCHDYNAMO_DISABLE=1
+  results="$(SSH "cd $REMOTE_REPO && export PATH=$REMOTE_VENV/bin:\$PATH TORCHDYNAMO_DISABLE=1 \
+    SMOKE_TRAINER='$SMOKE_TRAINER' SMOKE_MODEL_IMPORT='$SMOKE_MODEL_IMPORT' SMOKE_MODEL_CTOR='$SMOKE_MODEL_CTOR'
     for a in ${arqs[*]}; do echo \"SMOKE \$a \$(python _box_smoke.py \"\$a\" 2>&1 | tail -1)\"; done")"
 
   local i line msg
@@ -426,7 +550,17 @@ run () {
 }
 WRAP
     if [ "$mode" = "MEASURE" ]; then
-      local CTRL="python train_llm.py --config_class $CTRL_CONFIG --seed 42 --dataset_path $DATASET --warmup false"
+      local CTRL
+      if [ -n "$CHAMPION_STUB" ]; then
+        # The champion IS the baseline — measure it directly (self-contained stub,
+        # fixed seed) so the bar equals the champion's loss. Only fires when no
+        # pinned baseline exists yet (bootstrap); after that the cache is pinned
+        # and a winning run promotes itself, so controls stop running entirely.
+        CTRL="python $CHAMPION_STUB"
+      else
+        # CTRL_CMD is the repo's baseline-control command template from config.json.
+        CTRL="${CTRL_CMD//\{config\}/$CTRL_CONFIG}"; CTRL="${CTRL//\{seed\}/42}"; CTRL="${CTRL//\{dataset\}/$DATASET}"
+      fi
       echo "run ctrl  $CTRL"
       echo "run ctrl2 $CTRL"
       echo "run ctrl3 $CTRL"

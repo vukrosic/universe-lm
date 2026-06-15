@@ -1,1 +1,1 @@
-{"ts":"2026-06-14","idea":"154-rebased-attn","val":2.9628,"delta":null,"runningBest":2.9628,"improved":true,"note":"trt=2.9628 vs cached mean 6.4394±0.04 (Δ=-3.4766, record break; pass bar met) at tiny1m3m; rebased K/V before softmax is a strong locality-prior gain at 0.94M, worth re-baselining against the new best on the next queue"}
+{"ts":"2026-06-15","idea":"175-alibi-slopes","val":6.2403,"delta":-0.1585,"runningBest":6.2403,"improved":false,"note":"trt=6.2403 vs baseline 6.3988±0.04 (Δ-0.1585) at tiny1m3m"}

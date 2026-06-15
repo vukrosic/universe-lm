@@ -1311,6 +1311,35 @@ class MinimalLLM(nn.Module):
         self.use_vocab_bias = getattr(config, "use_vocab_bias", False)
         if self.use_vocab_bias:
             self.vocab_bias = nn.Parameter(torch.zeros(config.vocab_size))
+        # 184 — Learned Logit Scale (CLIP-style, Radford et al. 2021,
+        # arXiv:2103.00020). Single 0-D scalar `logit_scale_param`
+        # applied as `logits = logits * exp(logit_scale_param)`. Init 0
+        # ⇒ `exp(0) = 1.0` exactly in IEEE 754 ⇒ exact no-op at step 0.
+        # The exp-parameterization guarantees positivity without an
+        # explicit clamp. 1 scalar, routes to AdamW. Default off →
+        # baseline path bit-identical (no parameter created, no
+        # forward-graph branch). See
+        # `autoresearch/ideas/184-logit-scale/idea.md`.
+        self.use_logit_scale = getattr(config, "use_logit_scale", False)
+        if self.use_logit_scale:
+            self.logit_scale_param = nn.Parameter(torch.zeros(()))
+        # 183 — Pre-LM-Head RMSNorm (Gemma 2 / LLaMA 3 / Qwen 2.5
+        # / OLMo 2 final-norm pattern). When on, the model registers
+        # an `nn.RMSNorm(d_model)` (default `weight=1, bias=0` —
+        # `_init_weights` doesn't touch it since it's neither Linear
+        # nor Embedding) and a scalar gate `pre_head_scale = 0` init.
+        # Applied as `x = (1 − scale) · x + scale · RMSNorm(x)` between
+        # the final `output_dropout` and the `lm_head`. `scale = 0`
+        # at step 0 ⇒ the mix is exactly `x` ⇒ byte-identical to
+        # the no-flag champion. Default off ⇒ no module built, no
+        # parameter registered, baseline path bit-identical.
+        # See `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+        self.use_pre_lm_head_rmsnorm = getattr(
+            config, "use_pre_lm_head_rmsnorm", False
+        )
+        if self.use_pre_lm_head_rmsnorm:
+            self.pre_head_norm = nn.RMSNorm(config.d_model, eps=1e-6)
+            self.pre_head_scale = nn.Parameter(torch.zeros(()))
 
         # 144 — Mixture of Softmaxes (Yang, Chen, et al. 2017,
         # arXiv:1711.03953, "Breaking the Softmax Bottleneck"). When
@@ -1816,6 +1845,15 @@ class MinimalLLM(nn.Module):
         # x directly, bypassing the emb_proj reduction (the untied head is
         # full d_model → vocab, not r → vocab). See docs/research/output_head/plan.md
         # (Batch 3). Default off = tied (byte-identical to baseline).
+        # 183 — Pre-LM-Head RMSNorm: gated mix right before the LM
+        # head. `scale = 0` at init ⇒ the mix is exactly `x` ⇒
+        # byte-identical to the no-flag champion (the dropout noise
+        # scales uniformly, so the gate cancels identically in fp32
+        # on the forward and the backward graph). See
+        # `autoresearch/ideas/183-pre-lm-head-rmsnorm/idea.md`.
+        if self.use_pre_lm_head_rmsnorm:
+            scale = self.pre_head_scale
+            x = (1.0 - scale) * x + scale * self.pre_head_norm(x)
         if self.use_untied_head:
             logits = x @ self.lm_head.T
         elif self.emb_rank is None:
@@ -1844,6 +1882,13 @@ class MinimalLLM(nn.Module):
         # Reporting rule. See docs/research/output_head/plan.md (Batch 2).
         if self.use_vocab_bias:
             logits = logits + self.vocab_bias
+        # 184 — Learned Logit Scale: logits *= exp(logit_scale_param).
+        # Init 0 ⇒ exp(0) = 1.0 exactly ⇒ step-0 byte-identical to
+        # baseline. The exp-form keeps the multiplier strictly
+        # positive without a clamp. See
+        # `autoresearch/ideas/184-logit-scale/idea.md`.
+        if self.use_logit_scale:
+            logits = logits * self.logit_scale_param.exp()
 
         return logits
 

@@ -1,0 +1,4 @@
+{"ts":"2026-06-13T13:06:20Z","agent":"implement-button","idea":"132-born-again","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-13T13:16:09Z","agent":"implement-button","idea":"132-born-again","from":"implementing","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42"}
+{"ts":"2026-06-13T13:53:38Z","agent":"runner","idea":"132-born-again","from":"needs-run","to":"running","round":1,"note":"claimed: queued in tmux arq on vast-52674, 2026-06-13"}
+{"ts":"2026-06-13T15:06:46Z","agent":"runner","idea":"132-born-again","from":"running","to":"done","round":1,"note":"NULL: trt=6.4481 vs ctrl 6.4272 (Δ=+0.0209 wrong-sign, ~4× the 0.005 WIN bar; Born-Again EMA teacher too close to student at 92 steps)"}

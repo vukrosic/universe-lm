@@ -8,27 +8,40 @@
       "gpu": "NVIDIA GeForce RTX 3060",
       "compute_cap": "8.6",
       "driver": "580.159.03",
-      "commit": "2368d6c",
-      "n_measurements": 11,
+      "commit": "unknown",
+      "n_measurements": 3,
       "val_runs": [
-        6.4184,
-        6.4887,
-        6.4184,
-        6.4887,
-        6.4453,
-        6.4606,
-        6.4325,
-        6.4447,
-        6.4247,
-        6.4128,
-        6.4662
+        6.4112,
+        6.3934,
+        6.3919
       ],
-      "val_mean": 6.4455,
-      "val_std": 0.0262,
-      "noise_band": 0.0524,
-      "measured_at": "2026-06-14T09:00:17Z",
-      "runs_since_measure": 1,
-      "source_results": "remote-results/2026-06-14-vast-tiny1m3m/results.json"
+      "val_mean": 6.2403,
+      "val_std": 0.0088,
+      "noise_band": 0.04,
+      "measured_at": "2026-06-15T07:04:48Z",
+      "runs_since_measure": 0,
+      "source_results": "../remote-results/2026-06-14-vast-tiny1m3m/results.json",
+      "pinned": true
+    },
+    "619cf8059d37": {
+      "box_key": "619cf8059d37",
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "compute_cap": "",
+      "driver": "580.159.03",
+      "commit": "unknown",
+      "n_measurements": 3,
+      "val_runs": [
+        6.4112,
+        6.3934,
+        6.3919
+      ],
+      "val_mean": 6.2403,
+      "val_std": 0.0088,
+      "noise_band": 0.04,
+      "measured_at": "2026-06-15T07:04:48Z",
+      "runs_since_measure": 0,
+      "source_results": "../remote-results/2026-06-15-vast-tiny1m3m/results.json",
+      "pinned": true
     }
   }
 }
