@@ -1335,6 +1335,7 @@ class MultiHeadAttention(nn.Module):
         q_norm_type: str = "rmsnorm",
         use_alibi_bias: bool = False,
         use_poly_alibi: bool = False,
+        use_kerple_log: bool = False,
         use_q_temp_token: bool = False,
         use_cosine_attn: bool = False,
         use_qk_bilinear: bool = False,
@@ -5235,7 +5236,8 @@ class MultiHeadAttention(nn.Module):
             attn_w = F.dropout(attn_w, p=self.dropout if self.training else 0.0)
             attn_output = torch.matmul(attn_w, V)
         elif (
-            self.use_alibi_bias or self.use_poly_alibi or self.use_cosine_attn
+            self.use_alibi_bias or self.use_poly_alibi or self.use_kerple_log
+            or self.use_cosine_attn
             or self.use_qk_bilinear or self.use_talking_heads_q
             or self.use_decoupled_content_pos or self.use_antisym_qk
             or self.use_q_feature_map or self.use_per_head_rope_base
@@ -6669,6 +6671,7 @@ class TransformerBlock(nn.Module):
         q_norm_type: str = "rmsnorm",
         use_alibi_bias: bool = False,
         use_poly_alibi: bool = False,
+        use_kerple_log: bool = False,
         use_q_temp_token: bool = False,
         use_cosine_attn: bool = False,
         use_qk_bilinear: bool = False,
@@ -7358,6 +7361,7 @@ class TransformerBlock(nn.Module):
             q_norm_type=q_norm_type,
             use_alibi_bias=use_alibi_bias,
             use_poly_alibi=use_poly_alibi,
+            use_kerple_log=use_kerple_log,
             use_q_temp_token=use_q_temp_token,
             use_cosine_attn=use_cosine_attn,
             use_qk_bilinear=use_qk_bilinear,

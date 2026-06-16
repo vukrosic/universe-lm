@@ -874,6 +874,7 @@ class MinimalLLM(nn.Module):
         self.q_norm_type = getattr(config, "q_norm_type", self.qk_norm_type)
         self.use_alibi_bias = getattr(config, "use_alibi_bias", False)
         self.use_poly_alibi = getattr(config, "use_poly_alibi", False)
+        self.use_kerple_log = getattr(config, "use_kerple_log", False)
         self.use_q_temp_token = getattr(config, "use_q_temp_token", False)
         self.use_cosine_attn = getattr(config, "use_cosine_attn", False)
         self.use_qk_bilinear = getattr(config, "use_qk_bilinear", False)
@@ -1329,6 +1330,7 @@ class MinimalLLM(nn.Module):
                         q_norm_type=self.q_norm_type,
                         use_alibi_bias=self.use_alibi_bias,
                         use_poly_alibi=self.use_poly_alibi,
+                        use_kerple_log=self.use_kerple_log,
                         use_q_temp_token=self.use_q_temp_token,
                         use_cosine_attn=self.use_cosine_attn,
                         use_qk_bilinear=self.use_qk_bilinear,
@@ -1829,6 +1831,7 @@ class MinimalLLM(nn.Module):
                         q_norm_type=self.q_norm_type,
                         use_alibi_bias=self.use_alibi_bias,
                         use_poly_alibi=self.use_poly_alibi,
+                        use_kerple_log=self.use_kerple_log,
                         use_q_temp_token=self.use_q_temp_token,
                         use_cosine_attn=self.use_cosine_attn,
                         use_qk_bilinear=self.use_qk_bilinear,

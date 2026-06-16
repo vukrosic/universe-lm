@@ -1793,6 +1793,9 @@ class LLMConfig:
     # per-head superset of Q1 (c_h=0 recovers linear alibi). See
     # Tiny1M3MPolyAlibiConfig and models/layers.py poly-alibi branch.
     use_poly_alibi: bool = False
+    # 231 Kerple log-distance ALiBi `scores -= m_h·log(1 + r_h·d)` — a concave
+    # per-head distance kernel (Chi et al. 2022). See Tiny1M3MKerpleLogConfig.
+    use_kerple_log: bool = False
     # Q2 Token-conditioned per-head temperature `Q *= (1+tanh(x·w_h))`.
     use_q_temp_token: bool = False
     # Q3 Cosine attention (L2-normalize Q,K; learnable per-head τ).
@@ -3389,6 +3392,36 @@ class Tiny1M3MPolyAlibiConfig(Tiny1M3MAlibiConfig):
     """
     use_alibi_bias: bool = False
     use_poly_alibi: bool = True
+
+
+@dataclass
+class Tiny1M3MKerpleLogConfig(Tiny1M3MAlibiConfig):
+    """231 — Kerple log-distance ALiBi (Chi, Fan, Rudnicky, Ramadge 2022,
+    arXiv:2205.09921). Replaces the champion's LINEAR distance bias with a
+    per-head CONCAVE log kernel: `scores -= m_h · log(1 + r_h · d)`,
+    `d = (i−j) ≥ 0`, `r_h = softplus(raw)`.
+
+    Subclasses `Tiny1M3MAlibiConfig` but turns OFF `use_alibi_bias` (the
+    kerple branch carries its own per-head slope `m_h`) and turns ON
+    `use_kerple_log`. `m_h = zeros(n_heads)` ⇒ bias = 0 at init ⇒
+    **byte-identical to the champion/base at step 0**; `r_h` inits to
+    softplus(0) ≈ 0.693.
+
+    Distinct from 230-poly-alibi (which adds a CONVEX quadratic term — a
+    superset of linear). Kerple's log is CONCAVE: it penalizes far tokens
+    far more *gently* than linear alibi, so distant context decays slower.
+    230 (Δ−0.0111, right-direction NULL) showed extra curvature nudges val
+    down; 231 tests the *opposite* curvature sign. Together they bracket
+    whether the optimal tiny1m3m distance decay is sharper or gentler than
+    linear. Like alibi, `m_h` is high-leverage and grows fast in 92 steps
+    (the win property the zero-init matrix levers lacked).
+
+    A/B vs the champion `Tiny1M3MAlibiConfig` (val 6.2539, band 0.04).
+    PASS/WIN: val < 6.2003. NULL band |Δ| < 0.04.
+    See `autoresearch/ideas/231-kerple-log-alibi/idea.md`.
+    """
+    use_alibi_bias: bool = False
+    use_kerple_log: bool = True
 
 
 @dataclass
