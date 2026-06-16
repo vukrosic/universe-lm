@@ -1,8 +1,8 @@
 ---
 id: 197-tied-wo-across-blocks
-status: implementing
+status: needs-run
 round: 1
-updated: 2026-06-16T00:30:57Z
+updated: 2026-06-16T00:32:43Z
 transfer-risk: med
 plain: Force every attention block to use the same output projection matrix W_O (init at the baseline's W_O so step-0 is byte-identical), like tying the final step of attention across depth — a cheap regularizer on what each block is allowed to write back to the residual stream.
 ---
