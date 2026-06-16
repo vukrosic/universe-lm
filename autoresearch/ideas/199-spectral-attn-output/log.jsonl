@@ -17,3 +17,4 @@
 {"ts":"2026-06-15T16:50:32Z","agent":"reset-button","idea":"199-spectral-attn-output","from":"needs-recode","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-15T16:56:08Z","agent":"daemon","idea":"199-spectral-attn-output","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:56:30Z","agent":"daemon","idea":"199-spectral-attn-output","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
+{"ts":"2026-06-16T00:33:19Z","agent":"implement-button","idea":"199-spectral-attn-output","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}

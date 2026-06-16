@@ -21,3 +21,4 @@
 {"ts":"2026-06-15T16:52:23Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
 {"ts":"2026-06-16T00:30:57Z","agent":"implement-button","idea":"197-tied-wo-across-blocks","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-16T00:32:43Z","agent":"done-button","idea":"197-tied-wo-across-blocks","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
+{"ts":"2026-06-16T00:33:11Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
