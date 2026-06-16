@@ -304,6 +304,40 @@ class LLMConfig:
     # taken, baseline path bit-identical. See
     # `autoresearch/ideas/191-token-attn-gain/idea.md`.
     use_token_attn_gain: bool = False
+    # 203 — Pre-W_O Squeeze-Excitation channel attention (Hu et al.
+    # "Squeeze-and-Excitation Networks", TPAMI 2019, arXiv:1709.01507).
+    # Per-token channel reweighting on the post-merge attention output
+    # via a tiny bottleneck MLP: `se_w = sigmoid(W_2 · gelu(W_1 · x_t))`,
+    # `W_1 ∈ R^{d_model × d_model/r}`, `W_2 ∈ R^{d_model/r × d_model}`
+    # (default `r=4` ⇒ 64×16 + 16×64 = 2048 params/block). Same W_1,
+    # W_2 applied to every token/position (no T-axis pooling — the
+    # original SE-Net CNN pattern pools over the spatial axis, but
+    # here the lever is the per-token content-dependent cell, not
+    # the original CNN cell). Output
+    # `attn_out_post = (1 − γ) · attn_out + γ · (attn_out ⊙ se_w)`
+    # with `γ = sigmoid(se_gamma_raw)`, init `se_alpha_init=-10.0`
+    # ⇒ `sigmoid(-10) ≈ 4.54e-5` ⇒ silent at step 0 (bit-identical
+    # to no-flag baseline within fp32 noise of one extra multiply-
+    # add — the spec's bit-identity bar is `max-abs-diff(attn_out_post,
+    # attn_out) < 1e-5`). The internal `se_w` at step 0 is ~0.5 per
+    # channel (sigmoid of Kaiming-init), but the γ-gate silences
+    # the whole branch regardless. Applied at the same post-merge /
+    # pre-W_O site as 191 (per-token scalar gain), 163 (v_mix_conv),
+    # 168 (av_carry), 201 (gmlp_sgu) — composes additively with
+    # the residual stream after the γ-blend. The 1-D `se_gamma_raw`
+    # scalar is routed to Muon per the spec (1-D gain → Muon,
+    # mirrors 021/207 reviewer precedent). Default off → no Parameter
+    # registered, no `nn.Linear` built, no branch taken, baseline
+    # path bit-identical. Cost: 2 × d_model × d_model/r per block ×
+    # 12 blocks = 24,576 params (+2.6% of 0.94M) plus 12 γ scalars
+    # (negligible). Distinct from 142 (per-channel static gain),
+    # 160 (per-head gain), 181 (cross-head RMSNorm), 191 (per-token
+    # scalar gain) — 203 is the *per-token channel vector* (content-
+    # dependent channel reweighting). See
+    # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+    use_se_pre_wo: bool = False
+    se_reduction_ratio: int = 4
+    se_alpha_init: float = -10.0
     # #107 Exclusive self-attn: subtract the component of the attention
     # output that lies along the current token's value vector. Zero-init
     # per-head coefficient → step-0 is baseline; default off keeps the
@@ -1281,6 +1315,33 @@ class LLMConfig:
     use_lowrank_wv: bool = False
     wv_rank: int = 8
     wv_lowrank_alpha_init: float = -10.0
+    # 199 — W_Q Low-Rank Residual Correction (LoRA-style trained-
+    # from-scratch low-rank factorization on the query projection,
+    # Hu et al. 2021 arXiv:2106.09685). Replace W_Q with
+    #   `W_Q_eff = W_Q + σ(α) · (W_Q_A @ W_Q_B)`
+    # where `W_Q_A ∈ R^{d_model × r}`, `W_Q_B ∈ R^{r × d_model}`
+    # (`r = wq_rank`, default 16), and `α` is a 0-dim learnable
+    # scalar (init `wq_lowrank_alpha_init`, default −10 ⇒
+    # `σ(α) ≈ 4.5e-5` at step 0). `W_Q_A` is normal-init std=0.02
+    # (matches the existing `qkvo_proj` init); `W_Q_B` is
+    # **zero-init** so the rank-r correction is exactly 0 at
+    # step 0 ⇒ `W_Q_eff == W_Q` bit-identical at step 0. As
+    # training proceeds, the optimizer can grow `W_Q_B` and `α`,
+    # activating a learnable low-rank correction on the Q
+    # projection. Completes the rank-residual sub-block family
+    # with 207 (W_O) and 194-r2 (W_V). W_Q is the only d_model ×
+    # d_model attention sub-block unowned in the active queue;
+    # the 162 (Q-only norm, null) and 165 (K-only norm, null)
+    # priors do NOT bind this lever because **norm ≠ rank** —
+    # norm and rank are orthogonal in mechanism space (a
+    # normalized W_Q can still be low-rank, and vice versa).
+    # Default off → no Parameter registered, no branch taken,
+    # baseline path bit-identical. See
+    # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+    # `plan.md`.
+    use_lowrank_wq: bool = False
+    wq_rank: int = 16
+    wq_lowrank_alpha_init: float = -10.0
     # 199 — Spectral-Norm-Bounded W_O Projection (per-block
     # learnable Lipschitz cap on the attention output projection,
     # Miyato et al. 2018 "Spectral Normalization for GANs" ICLR
@@ -3440,6 +3501,78 @@ class Tiny1M3MLowrankWVConfig(Tiny1M3MAlibiConfig):
     See `autoresearch/ideas/194-lowrank-ffn/idea.md` and `plan.md`.
     """
     use_lowrank_wv: bool = True
+
+
+@dataclass
+class Tiny1M3MLowRankWQConfig(Tiny1M3MConfig):
+    """199 — Tiny1M3M with a learnable rank-r residual correction
+    on W_Q (LoRA-style factorization, Hu et al. 2021
+    arXiv:2106.09685, trained from scratch — distinct from the
+    LoRA *adaptation* setting where the base W_Q is frozen).
+
+    A/B vs the plain tiny1m3m baseline (`Tiny1M3MConfig`, val
+    6.40 ± 0.04 cached for this box, see
+    `autoresearch/baseline-cache.json`). Replaces the per-block
+    W_Q slot with
+        `W_Q_eff = W_Q + σ(α) · (W_Q_A @ W_Q_B)`
+    where `W_Q_A ∈ R^{d_model × r}` is normal-init std=0.02
+    (matches the existing `qkvo_proj` Q-slice init), `W_Q_B ∈
+    R^{r × d_model}` is zero-init, and `α` is a per-MHA 0-dim
+    learnable scalar (init `wq_lowrank_alpha_init = -10.0` ⇒
+    `σ(−10) ≈ 4.54e-5`). At step 0 `W_Q_B = 0` ⇒
+    `W_Q_A @ W_Q_B = 0` exactly ⇒ `W_Q_eff == W_Q` byte-identical
+    to the no-flag baseline (max-abs-diff = 0.0 across the full
+    forward, no parameter modified). The σ(α) gate is a soft
+    on/off; the dominant silence comes from `W_Q_B = 0`, not from
+    `σ(α)` being tiny.
+
+    The `α` scalar is a free parameter of each MHA
+    (`nn.Parameter(torch.full((), wq_lowrank_alpha_init))`);
+    `α = σ(α_raw)` is computed inside `MHA.forward()` via
+    `torch.sigmoid(self.wq_lowrank_alpha)`. Standard AdamW on
+    `α_raw` and on `W_Q_A` / `W_Q_B` is fine; no special
+    optimizer, no LR warmup, no α-schedule. `r = wq_rank` is
+    fixed at 16 for this run (25% of d_model=64) — r=16 absolute
+    is a meaningful prior at tiny1m3m; the relative-rank
+    framing for 135M (d_model≈768, equivalent r ≈ 16·√(768/64)
+    ≈ 56) is a separate scale-up question, not in this slot.
+
+    Complementary to 207-W_O_LowRank (same mechanism, W_O) and
+    194-W_V_LowRank (same mechanism, W_V) — completing the
+    rank-residual sub-block family across {W_Q, W_V, W_O}. W_Q
+    is the only d_model × d_model attention sub-block unowned
+    in the active queue (162/165 single-side norm nulls are
+    orthogonal axes: norm ≠ rank). Distinct from
+    016-qk-norm (joint QK magnitude, WIN), 162-q-only-norm
+    (single-side magnitude, null), 165-k-only-norm
+    (single-side magnitude, null), 164-q-carry (cross-block
+    graph mixing, null), 190-per-layer-qk-norm (magnitude
+    scalar, in queue), 200-rope-phase-offset-per-layer
+    (K-rotation, in queue), 197-tied-wo (sharing axis, in
+    queue), 199-spectral-norm (Lipschitz axis, in queue).
+
+    Cost: +2,048 trainable params per block (W_Q_A 64×16 +
+    W_Q_B 16×64) + 1 scalar per block = 2,049 × 12 blocks =
+    **24,588 extra trainable params** (+2.6% of 0.94M). One
+    extra matmul of shape `[d_model, wq_rank] @ [wq_rank,
+    d_model]` per block per forward (~65K mul-adds at
+    d_model=64) — sub-noise compute. Optimizer state +196 KB
+    (AdamW: 2 momentum buffers per parameter). Sub-noise on
+    every axis.
+
+    NULL band |Δ| < 0.01. DRIFT > +0.01. PASS ≤ −0.01. The
+    baseline cache (val 6.2403 ± 0.04) is the active
+    reference. See
+    `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_lowrank_wq` default is properly
+    overridden (the dataclass-inheritance pitfall documented
+    in `_arq_161-dyt-temp.py`).
+    """
+    use_lowrank_wq: bool = True
+    wq_rank: int = 16
+    wq_lowrank_alpha_init: float = -10.0
 
 
 @dataclass
@@ -8221,6 +8354,75 @@ class Tiny1M3MTokenAttnGainConfig(Tiny1M3MAlibiConfig):
     documented in `_arq_161-dyt-temp.py`).
     """
     use_token_attn_gain: bool = True
+
+
+@dataclass
+class Tiny1M3MSEPreWOConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with Pre-W_O Squeeze-Excitation channel attention
+    (203, Hu et al. "Squeeze-and-Excitation Networks", TPAMI 2019,
+    arXiv:1709.01507).
+
+    Subclasses the current champion `Tiny1M3MAlibiConfig` (val
+    6.4394, band 0.04) so the lever stacks on top of the
+    175-alibi win — the same stack-on pattern that 188 / 186 /
+    191 use. With `use_se_pre_wo=False` this class reduces to
+    the champion — step-0 forward is bit-identical to
+    `Tiny1M3MAlibiConfig`. With `use_se_pre_wo=True` (default),
+    each MHA allocates a tiny per-token channel-attention
+    bottleneck (W_1, W_2) plus a per-block `se_gamma_raw` scalar,
+    and applies at the post-merge / pre-W_O site:
+
+      `se_w   = sigmoid(W_2 · gelu(W_1 · attn_out))`     [B,T,d_model]
+      `se_br  = attn_out ⊙ se_w`                        [B,T,d_model]
+      `γ      = sigmoid(se_gamma_raw)`                  []
+      `attn_out_post = (1 − γ)·attn_out + γ·se_br`       [B,T,d_model]
+      `out    = W_O(attn_out_post)`                     [B,T,d_model]
+
+    Same W_1, W_2 applied to every token/position (no T-axis
+    pooling — the original SE-Net CNN pattern pools over the
+    spatial axis, but here the lever is the per-token content-
+    dependent cell, not the original CNN cell). With
+    `r=4` (default): `W_1 ∈ R^{64×16}`, `W_2 ∈ R^{16×64}` ⇒
+    2048 params/block × 12 blocks = 24,576 params (+2.6% of
+    0.94M), plus 12 γ scalars (negligible). At init γ ≈ 4.5e-5
+    ⇒ silent at step 0 (bit-identical to champion within fp32
+    noise of one extra multiply-add; the spec's bit-identity
+    bar is `max-abs-diff(attn_out_post, attn_out) < 1e-5`).
+    The internal `se_w` is ~0.5 per channel at step 0 (sigmoid
+    of Kaiming-init) but the γ-gate silences the whole branch.
+
+    Distinct from the closed gain family:
+      - 142-layer-scale (closed null): per-channel diagonal
+        `γ ∈ R^{d_model}` static gain on the residual stream.
+        203 is per-token *channel vector* (content-dependent
+        reweighting) — different placement, different shape,
+        different axis.
+      - 160-rms-gain-per-head (closed null): per-head scalar
+        `g_h ∈ R^H` post-AV. 203 is per-token, per-channel —
+        orthogonal axes.
+      - 181-cross-head-rmsnorm (closed null): cross-head
+        coupling on the [B, H, T, d_k] axis. 203 is per-token,
+        per-channel on the [B, T, d_model] axis.
+      - 191-token-attn-gain (needs-taste): per-token *scalar*
+        on the attention output. 203 is per-token *channel
+        vector* (broader — 64× the DOF per token per block).
+
+    Param cost: 2 × d_model × d_model/r per block × 12 blocks
+    = 24,576 scalars (+2.6% of 0.94M). NULL band |Δ| < 0.01
+    expected per the 142 / 160 / 181 / 191 gain-family null
+    pattern (W_O downstream absorbs the per-token channel
+    reweighting). PASS ≤ 6.4194. DRIFT > 6.4794. Sub-noise is
+    INCONCLUSIVE on one seed per the one-seed-only rule. See
+    `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md` /
+    `plan.md`.
+
+    @dataclass-decorated so `use_se_pre_wo` default is properly
+    overridden (the dataclass-inheritance pitfall documented
+    in `_arq_161-dyt-temp.py`).
+    """
+    use_se_pre_wo: bool = True
+    se_reduction_ratio: int = 4
+    se_alpha_init: float = -10.0
 
 
 @dataclass

@@ -874,6 +874,29 @@ class MultiHeadAttention(nn.Module):
         # baseline path bit-identical. See
         # `autoresearch/ideas/191-token-attn-gain/idea.md`.
         use_token_attn_gain: bool = False,
+        # 203 — Pre-W_O Squeeze-Excitation channel attention (Hu et
+        # al. TPAMI 2019, arXiv:1709.01507). Per-token channel
+        # reweighting on the post-merge attention output via a tiny
+        # bottleneck MLP. W_1: d_model → d_model/r, W_2:
+        # d_model/r → d_model, plus a per-block `se_gamma_raw`
+        # scalar (init `se_alpha_init=-10.0` ⇒ sigmoid ≈ 4.5e-5
+        # ⇒ silent at step 0). The branch is gated on
+        # `self.se_W1 is not None` (set only when the flag is on)
+        # so the default-off path is bit-identical to the no-flag
+        # baseline (no Parameter registered, no `nn.Linear` built,
+        # no forward branch taken). The 1-D `se_gamma_raw` scalar
+        # is routed to Muon per the spec (1-D gain → Muon, mirrors
+        # 021/207 reviewer precedent) — see the explicit
+        # `'se_gamma' in name` branch in `training/trainer.py`.
+        # Distinct from 142 (per-channel static gain), 160
+        # (per-head gain), 181 (cross-head RMSNorm), 191
+        # (per-token *scalar* gain) — 203 is the *per-token
+        # channel vector* (content-dependent channel reweighting).
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+        use_se_pre_wo: bool = False,
+        se_reduction_ratio: int = 4,
+        se_alpha_init: float = -10.0,
         use_value_embed: bool = False,
         value_embed_rank: int | None = None,
         use_query_embed: bool = False,
@@ -1429,6 +1452,27 @@ class MultiHeadAttention(nn.Module):
         use_lowrank_wv: bool = False,
         wv_rank: int = 8,
         wv_lowrank_alpha_init: float = -10.0,
+        # 199 — W_Q Low-Rank Residual Correction (LoRA-style
+        # trained-from-scratch low-rank factorization on the query
+        # projection). Replace W_Q with
+        #   `W_Q_eff = W_Q + σ(α) · (W_Q_A @ W_Q_B)`
+        # where `W_Q_A ∈ R^{d_model × r}`, `W_Q_B ∈ R^{r × d_model}`
+        # (`r = wq_rank`, default 16), and `α` is a 0-dim learnable
+        # scalar (init `wq_lowrank_alpha_init`, default −10 ⇒
+        # `σ(α) ≈ 4.5e-5` at step 0). `W_Q_A` is normal-init std=0.02
+        # (matches the existing `qkvo_proj` init); `W_Q_B` is
+        # **zero-init** so the rank-r correction is exactly 0 at
+        # step 0 ⇒ `W_Q_eff == W_Q` bit-identical to the no-flag
+        # baseline. Complementary to 207-W_O-LowRank (same
+        # mechanism, different sub-block) and 194-W_V-LowRank —
+        # completing the rank-residual sub-block family across
+        # {W_Q, W_V, W_O}. Default off → no Parameter registered,
+        # no branch taken, baseline path bit-identical. See
+        # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+        # `plan.md`.
+        use_lowrank_wq: bool = False,
+        wq_rank: int = 16,
+        wq_lowrank_alpha_init: float = -10.0,
         # 199 — Spectral-Norm-Bounded W_O Projection (per-block
         # learnable Lipschitz cap on the attention output
         # projection, Miyato et al. 2018 "Spectral Normalization
@@ -2723,6 +2767,33 @@ class MultiHeadAttention(nn.Module):
             )
         else:
             self.token_attn_gain = None
+        # 203 — Pre-W_O Squeeze-Excitation channel attention. Per-
+        # token channel reweighting via a tiny bottleneck MLP
+        # (`se_W1: d_model → d_model/r`, `se_W2: d_model/r → d_model`)
+        # plus a per-block `se_gamma_raw` scalar (init
+        # `se_alpha_init=-10.0` ⇒ `sigmoid(-10) ≈ 4.54e-5` ⇒
+        # silent at step 0). Same W_1, W_2 applied to every token/
+        # position (no T-axis pooling — the lever is the per-token
+        # content-dependent cell, not the original CNN cell). Cost:
+        # 2 × d_model × d_model/r params/block (2048 at r=4,
+        # d_model=64) plus 1 γ scalar. Default off → all three
+        # attributes are `None` so the forward `if` guard short-
+        # circuits; baseline path bit-identical. See
+        # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+        self.use_se_pre_wo = use_se_pre_wo
+        self.se_reduction_ratio = max(1, int(se_reduction_ratio))
+        self.se_alpha_init = float(se_alpha_init)
+        if self.use_se_pre_wo:
+            se_inner = max(1, self.d_model // self.se_reduction_ratio)
+            self.se_W1 = nn.Linear(self.d_model, se_inner, bias=False)
+            self.se_W2 = nn.Linear(se_inner, self.d_model, bias=False)
+            self.se_gamma_raw = nn.Parameter(
+                torch.tensor(self.se_alpha_init)
+            )
+        else:
+            self.se_W1 = None
+            self.se_W2 = None
+            self.se_gamma_raw = None
         # #107 Exclusive self-attn: subtract the projection of the head
         # output onto its current-token value vector. Per-head scalar gate
         # is zero-init so step 0 is the baseline graph.
@@ -3248,6 +3319,63 @@ class MultiHeadAttention(nn.Module):
             self.W_V_shared = None
             self.mqa_gate_k = None
             self.mqa_gate_v = None
+
+        # 202 — V-Only Soft-Blend Probe. Per-group V projection
+        # (G = n_heads // v_group_size groups) plus a per-head
+        # sigmoid gate `v_group_alpha ∈ R^H` init to `-25.0` so
+        # `σ(α) ≈ 1.4e-11` (below fp32 precision) and the blend is
+        # numerically 0 at step 0. `W_V_group` is a single Parameter
+        # of shape `[G·d_k, d_model]` so the per-group projection is
+        # one F.linear matmul (matches the 178-mqa-gated single-
+        # matmul pattern for shared K, V). Init copies the in-group
+        # elementwise mean of the per-head W_V weights from
+        # `qkvo_proj`: at tiny1m3m each group contains exactly one
+        # KV head (n_kv_heads=2, G=2), so the "in-group mean"
+        # collapses to the per-KV-head W_V slice. This zero-cost
+        # identity init keeps the `qkvo_proj` random init aligned
+        # with the no-flag baseline (no extra RNG consumption —
+        # the in-place slice view is RNG-free, same pattern as
+        # 178's zero-init shared K, V and the closed 021 / 164
+        # cross-block detach contracts). Default off ⇒ no Parameter
+        # registered, no branch taken, baseline path bit-identical.
+        # See `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+        self.use_grouped_v = use_grouped_v
+        self.v_group_size = v_group_size
+        if use_grouped_v:
+            assert self.n_heads % v_group_size == 0, (
+                f"use_grouped_v requires n_heads ({self.n_heads}) "
+                f"to be divisible by v_group_size ({v_group_size})"
+            )
+            num_groups = self.n_heads // v_group_size
+            # Single Parameter [G·d_k, d_model] for one F.linear matmul.
+            # In-group W_V mean: qkvo_proj's V slice is per-KV-head
+            # (shape [n_kv_heads·d_k, d_model] = [kv_size, d_model]),
+            # reshape to [n_kv_heads, d_k, d_model], pick the in-group
+            # KV-head slice for each group, mean across the in-group
+            # heads (single KV head here ⇒ mean = the slice itself).
+            v_slice = self.qkvo_proj[
+                self.q_size + self.kv_size : self.q_size + 2 * self.kv_size
+            ]  # [n_kv_heads · d_k, d_model]
+            v_slice = v_slice.reshape(self.n_kv_heads, self.d_k, d_model)
+            w_v_group = torch.empty(num_groups, self.d_k, d_model)
+            kv_per_group = self.n_kv_heads // num_groups
+            for g in range(num_groups):
+                kv_lo = g * kv_per_group
+                kv_hi = (g + 1) * kv_per_group
+                w_v_group[g] = v_slice[kv_lo:kv_hi].mean(dim=0)
+            self.W_V_group = nn.Parameter(
+                w_v_group.reshape(num_groups * self.d_k, d_model)
+            )
+            # Per-head sigmoid gate, init -25 so σ(α) ≈ 1.4e-11.
+            self.v_group_alpha = nn.Parameter(
+                torch.full((self.n_heads,), -25.0)
+            )
+        else:
+            # Stubs so attribute lookups are always valid even when
+            # the flag is off. `forward()` never references these
+            # when `use_grouped_v=False` so they can be anything.
+            self.W_V_group = None
+            self.v_group_alpha = None
 
         # 182 — Per-head learnable attention window. One scalar
         # `w_h ∈ R^H` per MHA maps (via sigmoid) to a window
@@ -4294,6 +4422,43 @@ class MultiHeadAttention(nn.Module):
             K = torch.repeat_interleave(K, self.num_key_value_groups, dim=2)
             if not self.use_mega:
                 V = torch.repeat_interleave(V, self.num_key_value_groups, dim=2)
+        # 202 — V-Only Soft-Blend Probe. Blend the per-head V
+        # with the per-group V via `V_h_eff = (1 − σ(α_h)) · V_h
+        # + σ(α_h) · V_group_g(x)`. Site is POST the GQA
+        # repeat_interleave so V is in `[B, T, n_heads, d_k]`
+        # (the standard layout) and the per-head σ(α_h) gate
+        # broadcasts cleanly. V_group is computed by stacking
+        # the G group V projection weights and doing one F.linear
+        # on `x` to get `[B, T, G*d_k]`, then reshaping to
+        # `[B, T, G, d_k]` and repeat_interleave by v_group_size
+        # to expand to `[B, T, n_heads, d_k]`. Init
+        # `v_group_alpha = -25.0` ⇒ `σ(α) ≈ 1.4e-11` (below fp32
+        # precision) ⇒ V_h_eff = V_h_local exactly at step 0
+        # ⇒ baseline path is bit-identical when the flag is on
+        # and v_group_alpha is at its init value. K is never
+        # touched, so the K-axis is the held-out implicit
+        # control. The σ(α) trajectory (not val loss) is the
+        # deciding metric. See
+        # `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+        if self.use_grouped_v:
+            G = self.n_heads // self.v_group_size
+            # self.W_V_group is a single Parameter of shape
+            # [G·d_k, d_model] (allocated in __init__ as the
+            # concatenated in-group-mean of the per-KV-head W_V
+            # slices from `qkvo_proj`). One F.linear matmul
+            # produces [B, T, G·d_k], which we reshape to
+            # [B, T, G, d_k] and broadcast to [B, T, n_heads, d_k]
+            # via per-group repeat_interleave by v_group_size.
+            V_group = F.linear(x, self.W_V_group).reshape(
+                batch_size, seq_len, G, self.d_k
+            )  # [B, T, G, d_k]
+            V_group_per_head = torch.repeat_interleave(
+                V_group, self.v_group_size, dim=2
+            )  # [B, T, n_heads, d_k]
+            alpha = torch.sigmoid(self.v_group_alpha).view(
+                1, 1, self.n_heads, 1
+            )  # [1, 1, H, 1] for broadcast over [B, T, H, d_k]
+            V = (1.0 - alpha) * V + alpha * V_group_per_head
         # 185 — Static per-head learned K-rotation. Applied AFTER the
         # GQA repeat_interleave so K is in `[B, T, n_heads, d_k]` and
         # the per-head rotation angle broadcasts cleanly to the
@@ -5636,6 +5801,41 @@ class MultiHeadAttention(nn.Module):
                 )
             )
 
+        # 203 — Pre-W_O Squeeze-Excitation channel attention (Hu
+        # et al. TPAMI 2019, arXiv:1709.01507). Per-token channel
+        # reweighting on the post-merge attention output via a
+        # tiny bottleneck MLP, blended onto the residual stream
+        # by a per-block γ-gate (init `se_alpha_init=-10.0` ⇒
+        # `sigmoid(-10) ≈ 4.54e-5` ⇒ silent at step 0). Sits
+        # AFTER the 191 (per-token scalar gain) site and BEFORE
+        # the 163 (v_mix_conv) site, alongside the other post-
+        # merge / pre-W_O levers — composes additively with the
+        # residual stream after the γ-blend. Same W_1, W_2
+        # applied to every token/position (no T-axis pooling —
+        # the original SE-Net CNN pattern pools over the spatial
+        # axis, but here the lever is the per-token content-
+        # dependent cell, not the original CNN cell). At init
+        # γ ≈ 4.5e-5 ⇒ the blend's contribution to
+        # `attn_out_post` is at the fp32 floor regardless of
+        # what `se_w` is. As γ grows during training, the
+        # SE branch is *added* to the residual via the
+        # γ-weighted blend. The internal `se_w` at step 0 is
+        # ~0.5 per channel (sigmoid of Kaiming-init), but the
+        # γ-gate silences the whole branch. Distinct from 142
+        # (per-channel static gain), 160 (per-head gain), 181
+        # (cross-head RMSNorm), 191 (per-token scalar gain) —
+        # 203 is the *per-token channel vector* (content-
+        # dependent channel reweighting). Default off → no
+        # Parameter registered, no `nn.Linear` built, no branch
+        # taken, baseline path bit-identical. See
+        # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+        if self.se_W1 is not None:
+            se_inner = F.gelu(self.se_W1(attn_output))   # [B, T, d_model/r]
+            se_w = torch.sigmoid(self.se_W2(se_inner))    # [B, T, d_model]
+            se_branch = attn_output * se_w                # [B, T, d_model]
+            gamma = torch.sigmoid(self.se_gamma_raw)      # []
+            attn_output = (1.0 - gamma) * attn_output + gamma * se_branch
+
         # 163 — Post-Attention V-Mix Depthwise Convolution. Apply a
         # symmetric depthwise Conv1d over the time axis on the
         # post-attention tensor `[B, T, d_model]` BEFORE the W_O
@@ -5978,6 +6178,18 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/180-qk-logit-conv/idea.md`.
         use_logit_conv: bool = False,
         logit_conv_kernel_size: int = 3,
+        # 202 — V-Only Soft-Blend Probe pass-through to the inner
+        # MHA. Per-head `sigmoid(α_h)` blends per-head V with
+        # per-group-shared V; K is untouched (K-axis is the
+        # held-out implicit control). Init `α = -25.0` ⇒
+        # `σ(α) ≈ 1.4e-11` ⇒ V_h_eff = V_h_local exactly in fp32
+        # at step 0 ⇒ baseline path bit-identical. Default off →
+        # baseline path bit-identical. See
+        # `MultiHeadAttention.use_grouped_v` for the full
+        # mechanism and `autoresearch/ideas/202-grouped-value-
+        # projection/idea.md`.
+        use_grouped_v: bool = False,
+        v_group_size: int = 2,
         # 179 — Anti-Causal Sub-Heads. Pass-through to the inner
         # MHA. Per-head learnable scalar `γ_h` attenuates the
         # upper-triangle fill by `(1 − γ_h)`. Init `-10` ⇒
@@ -6004,6 +6216,14 @@ class TransformerBlock(nn.Module):
         # bit-identical. See
         # `autoresearch/ideas/191-token-attn-gain/idea.md`.
         use_token_attn_gain: bool = False,
+        # 203 — Pre-W_O Squeeze-Excitation channel attention pass-
+        # through to the inner MHA. See
+        # `MultiHeadAttention.use_se_pre_wo` for the mechanism.
+        # Default off → baseline path bit-identical. See
+        # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+        use_se_pre_wo: bool = False,
+        se_reduction_ratio: int = 4,
+        se_alpha_init: float = -10.0,
         # 147 — DropKey (Xu et al. 2022, arXiv:2207.01058). Per-head,
         # per-token Bernoulli mask on K during training. Pass-through
         # to the inner MHA. See `autoresearch/ideas/147-dropkey/idea.md`.
@@ -6721,6 +6941,14 @@ class TransformerBlock(nn.Module):
             # 180 — Pre-softmax 1D causal conv pass-through.
             use_logit_conv=use_logit_conv,
             logit_conv_kernel_size=logit_conv_kernel_size,
+            # 202 — V-Only Soft-Blend Probe pass-through. See
+            # `MultiHeadAttention.use_grouped_v` for the
+            # mechanism. Default off → baseline path bit-
+            # identical. See
+            # `autoresearch/ideas/202-grouped-value-projection/
+            # idea.md`.
+            use_grouped_v=use_grouped_v,
+            v_group_size=v_group_size,
             # 179 — Anti-Causal Sub-Heads pass-through to the
             # inner MHA. Per-head learnable scalar `γ_h` controls
             # the per-head upper-triangle fill magnitude. Init
@@ -6745,6 +6973,14 @@ class TransformerBlock(nn.Module):
             # identical. See
             # `autoresearch/ideas/191-token-attn-gain/idea.md`.
             use_token_attn_gain=use_token_attn_gain,
+            # 203 — Pre-W_O Squeeze-Excitation channel attention
+            # pass-through to the inner MHA. See
+            # `MultiHeadAttention.use_se_pre_wo` for the mechanism.
+            # Default off → baseline path bit-identical. See
+            # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+            use_se_pre_wo=use_se_pre_wo,
+            se_reduction_ratio=se_reduction_ratio,
+            se_alpha_init=se_alpha_init,
             # 147 — DropKey: per-head Bernoulli gate on K during training.
             use_drop_key=use_drop_key,
             drop_key_rate=drop_key_rate,

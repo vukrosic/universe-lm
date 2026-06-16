@@ -398,6 +398,19 @@ class MinimalLLM(nn.Module):
         self.use_anti_causal_subheads = getattr(
             config, "use_anti_causal_subheads", False
         )
+        # 202 — V-Only Soft-Blend Probe. Per-head `sigmoid(α_h)`
+        # blends per-head V with per-group-shared V; K is
+        # untouched (K-axis is the held-out implicit control).
+        # Init `α = -25.0` ⇒ `σ(α) ≈ 1.4e-11` ⇒ V_h_eff =
+        # V_h_local exactly in fp32 at step 0 ⇒ baseline path
+        # bit-identical. See
+        # `autoresearch/ideas/202-grouped-value-projection/idea.md`.
+        self.use_grouped_v = getattr(
+            config, "use_grouped_v", False
+        )
+        self.v_group_size = getattr(
+            config, "v_group_size", 2
+        )
         # 174 — xPos exponential decay on RoPE (Sun et al. 2022).
         # When on, the block's MHA multiplies the rotated K by
         # `exp(-xpos_gamma · t)` (per-position decay), biasing
@@ -1053,6 +1066,16 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
                         use_anti_causal_subheads=self.use_anti_causal_subheads,
+                        # 202 — V-Only Soft-Blend Probe pass-through
+                        # to the block's MHA. Per-head `sigmoid(α_h)`
+                        # blends per-head V with per-group-shared V.
+                        # Init `α = -25.0` ⇒ V_h_eff = V_h_local in
+                        # fp32 at step 0 ⇒ baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/202-grouped-value-
+                        # projection/idea.md`.
+                        use_grouped_v=self.use_grouped_v,
+                        v_group_size=self.v_group_size,
                         # 166 — T5-RPE pass-through to the YOCO upper-
                         # half block. Default off → baseline path bit-
                         # identical. See
@@ -1401,6 +1424,15 @@ class MinimalLLM(nn.Module):
                         # baseline path bit-identical. See
                         # `autoresearch/ideas/191-token-attn-gain/idea.md`.
                         use_token_attn_gain=getattr(config, "use_token_attn_gain", False),
+                        # 203 — Pre-W_O Squeeze-Excitation channel
+                        # attention pass-through to the block → MHA.
+                        # See `MultiHeadAttention.use_se_pre_wo` for
+                        # the mechanism. Default off → baseline
+                        # path bit-identical. See
+                        # `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+                        use_se_pre_wo=getattr(config, "use_se_pre_wo", False),
+                        se_reduction_ratio=getattr(config, "se_reduction_ratio", 4),
+                        se_alpha_init=getattr(config, "se_alpha_init", -10.0),
                         # 147 — DropKey: per-head Bernoulli gate on K.
                         use_drop_key=self.use_drop_key,
                         drop_key_rate=self.drop_key_rate,
@@ -1495,6 +1527,16 @@ class MinimalLLM(nn.Module):
                         # identical. See
                         # `autoresearch/ideas/179-anti-causal-subheads/idea.md`.
                         use_anti_causal_subheads=self.use_anti_causal_subheads,
+                        # 202 — V-Only Soft-Blend Probe pass-through
+                        # to the block's MHA. Per-head `sigmoid(α_h)`
+                        # blends per-head V with per-group-shared V.
+                        # Init `α = -25.0` ⇒ V_h_eff = V_h_local in
+                        # fp32 at step 0 ⇒ baseline path bit-
+                        # identical. See
+                        # `autoresearch/ideas/202-grouped-value-
+                        # projection/idea.md`.
+                        use_grouped_v=self.use_grouped_v,
+                        v_group_size=self.v_group_size,
                         # 174 — xPos exponential decay on RoPE pass-
                         # through to the standard block. When on, the
                         # block's MHA multiplies the rotated K by
