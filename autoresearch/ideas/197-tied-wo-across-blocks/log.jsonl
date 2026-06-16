@@ -23,3 +23,6 @@
 {"ts":"2026-06-16T00:32:43Z","agent":"done-button","idea":"197-tied-wo-across-blocks","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
 {"ts":"2026-06-16T00:33:11Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-16T00:33:31Z","agent":"daemon","idea":"197-tied-wo-across-blocks","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: AttributeError: 'MinimalLLM' object has no attribute 'use_gau'"}
+{"ts":"2026-06-16T00:41:21Z","agent":"implement-button","idea":"197-tied-wo-across-blocks","from":"needs-recode","to":"needs-recode","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-16T00:41:24Z","agent":"implement-button","idea":"197-tied-wo-across-blocks","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-16T00:41:44Z","agent":"implement-button","idea":"197-tied-wo-across-blocks","from":"implementing","to":"needs-run","round":1,"note":"code ready; build-smoke clean: use_gau set before use_tied_wo check; param count 953164 (WIRED vs ctrl 949056); flag off path bit-identical"}

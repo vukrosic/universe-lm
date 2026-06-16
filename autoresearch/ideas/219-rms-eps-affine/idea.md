@@ -1,8 +1,8 @@
 ---
 id: 219-rms-eps-affine
-status: tasting
+status: needs-review
 round: 1
-updated: 2026-06-16T00:40:44Z
+updated: 2026-06-16T00:41:45Z
 transfer-risk: low
 plain: Make the small numerical-stability epsilon inside RMSNorm learnable, and add a learnable per-feature bias after the norm. At init both are at safe defaults, so the first step is identical, but the model can tune the regularization strength and add a post-norm shift it currently cannot.
 ---

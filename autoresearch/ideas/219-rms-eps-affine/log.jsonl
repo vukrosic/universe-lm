@@ -1,1 +1,2 @@
 {"ts":"2026-06-16T00:40:44Z","agent":"taste","idea":"219-rms-eps-affine","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-16T00:41:45Z","agent":"taste","idea":"219-rms-eps-affine","from":"tasting","to":"needs-review","round":1,"note":"accept: novel bias+eps interior axis; clean init; null still informative after heavy closed norm/attention-shape nulls at 0.94M"}

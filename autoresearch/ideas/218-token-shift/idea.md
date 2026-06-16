@@ -1,8 +1,8 @@
 ---
 id: 218-token-shift
-status: needs-taste
+status: tasting
 round: 1
-updated: 2026-06-16T12:00:00Z
+updated: 2026-06-16T00:41:45Z
 transfer-risk: low
 plain: Before attention scores are computed, mix each query and key with its left and right neighbors using a tiny depthwise convolution. The conv starts at zero so the first training step is identical, but the model can learn to add a small amount of local-context smoothing into Q and K.
 ---
