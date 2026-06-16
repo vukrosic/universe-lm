@@ -5,3 +5,4 @@
 {"ts":"2026-06-15T16:48:14Z","agent":"reviser","idea":"203-pre-wo-se-channel-attn","from":"revising","to":"needs-review","round":3,"note":"applied 4 findings: A (per-token mechanism, drop T pooling), B (## Pass bar with Δval ≤ -0.01 vs 4-ctrl mean 6.4394), C (step-0 max-abs-diff < 1e-5, internal se_weight ~0.5 not 1), D (γ_raw → Muon param group with routing options)"}
 {"ts":"2026-06-15T16:49:15Z","agent":"reviewer","idea":"203-pre-wo-se-channel-attn","from":"needs-review","to":"reviewing","round":3,"note":"claimed"}
 {"ts":"2026-06-15T16:50:01Z","agent":"reviewer","idea":"203-pre-wo-se-channel-attn","from":"reviewing","to":"needs-plan","round":1,"note":"verdict: approve"}
+{"ts":"2026-06-16T00:31:31Z","agent":"code-impl","idea":"203-pre-wo-se-channel-attn","from":"needs-plan","to":"planning","round":1,"note":"claimed"}
