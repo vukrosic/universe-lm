@@ -11,3 +11,4 @@
 {"ts":"2026-06-15T16:50:32Z","agent":"reset-button","idea":"197-output-residual-sqrt-2l","from":"needs-recode","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
 {"ts":"2026-06-15T16:56:07Z","agent":"daemon","idea":"197-output-residual-sqrt-2l","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:56:30Z","agent":"daemon","idea":"197-output-residual-sqrt-2l","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
+{"ts":"2026-06-16T00:35:30Z","agent":"implement-button","idea":"197-output-residual-sqrt-2l","from":"needs-recode","to":"needs-run","round":1,"note":"code ready; runnable at tiny1m3m seed 42; build-smoke OK locally (OFF/OFF bit-identical, deepnet_alpha=0.20412, use_deepnet_alpha=True)"}

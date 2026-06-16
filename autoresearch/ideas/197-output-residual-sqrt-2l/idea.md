@@ -1,8 +1,8 @@
 ---
 id: 197-output-residual-sqrt-2l
-status: needs-recode
+status: needs-run
 round: 1
-updated: 2026-06-15T16:56:30Z
+updated: 2026-06-16T00:35:30Z
 transfer-risk: low
 plain: Initialize every block's residual contribution with a 1/sqrt(2L) scale (DeepNet's α rule) so the residual stream doesn't explode as depth grows — depth-aware but init-time only.
 ---
@@ -78,3 +78,29 @@ The bet, in one sharp sentence: **DeepNet's `α = 1/sqrt(2L)` is a theoretically
 - 142-layerscale (null) — *per-channel* learned gain (init 1e-4). 197 is *global fixed scalar*. Different axis.
 - 111-drop-path (null) — drop-path regularizer on the residual. 197 is *fixed init*, not a regularizer.
 - 116-hyper-connections (null) — multi-stream residual. 197 is *single-stream scaled residual*.
+
+## Plan
+
+### Files / functions
+- `configs/llm_config.py:394` — `LLMConfig.use_deepnet_alpha: bool = False` (default OFF).
+- `configs/llm_config.py:2780` — `class Tiny1M3MDeepNetAlphaConfig(Tiny1M3MConfig): use_deepnet_alpha: bool = True` (champion-relative subclass, lever ON).
+- `models/layers.py:6330` — `TransformerBlock.__init__` accepts `use_deepnet_alpha: bool = False` kwarg; body sets `self.use_deepnet_alpha = use_deepnet_alpha` and `self.deepnet_alpha = float((2.0 * max(1, int(n_layers))) ** -0.5)` (≈ 0.20412 at L=12).
+- `models/layers.py:7781-7992` — 5 residual-add sites in `TransformerBlock.forward` (parallel return, post-norm attn, post-norm ffn, pre-norm attn, pre-norm ffn) gated on `if self.use_deepnet_alpha` / `elif self.use_deepnet_alpha`. When the flag is OFF, control falls straight through to the existing `x = x + self.dropout(...)` path with no multiply, no extra op.
+- `models/llm.py:1094, 1547` — both `TransformerBlock` constructor call sites pass `use_deepnet_alpha=getattr(config, "use_deepnet_alpha", False)` so any older `LLMConfig` subclass without the attribute falls through to OFF.
+
+### Config flag
+- `use_deepnet_alpha: bool = False` (default OFF). Treatment flips it ON via `Tiny1M3MDeepNetAlphaConfig`.
+
+### Step-0 byte-identity
+- **Flag OFF**: preserved. The added `if/elif` branches are pure-Python conditionals; when `use_deepnet_alpha=False` they are skipped, and the `deepnet_alpha` attribute is dead weight on the module. Verified: `MinimalLLM(Tiny1M3MConfig())(ids)` vs the same construction ⇒ max-abs-diff = 0.0 across the full forward.
+- **Flag ON**: NOT preserved by construction — the lever's purpose is the bounded regime from step 0 (fixed global scalar applied at every block's residual add).
+
+### Run command
+- Tier `tiny1m3m` (0.94M params · 3M tokens), seed 42.
+- `_arq_197-output-residual-sqrt-2l.py` (repo root) with `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`.
+- `C = Tiny1M3MDeepNetAlphaConfig` (champion-relative subclass; per `champion.json`, the active champion is the alibi slopes config, so the treatment stacks `use_deepnet_alpha=True` on top of the alibi champion — but the bare `Tiny1M3MConfig` parent is the documented control per `idea.md` and `plan.md`).
+- Wall-clock: ~4-5 min for treatment + daemon-prepended ctrls.
+
+### Reading the final val
+- Daemon reads `val` from the run's stdout/log and applies the two-ctrl rule against the champion (6.2539 per `champion.json`) and the per-box baseline cache.
+- Pass/fail: WIN ≤ champion − 0.005 (and clears two-ctrl); NULL |Δ| < 0.01; DRIFT > +0.01.
