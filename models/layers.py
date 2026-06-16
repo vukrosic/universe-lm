@@ -6495,6 +6495,23 @@ class TransformerBlock(nn.Module):
         # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
         use_pre_ffn_attn_mix: bool = False,
         pre_ffn_attn_mix_init: float = -10.0,
+        # 217 — Per-Block RMSNorm/LayerNorm Mixture. When True, the
+        # block builds a fresh `nn.LayerNorm(d_model)` per pre-norm
+        # site (norm1_ln, norm2_ln, default affine init γ=1, β=0)
+        # and a single scalar `mix_norm_alpha` initialized to
+        # `mix_norm_init` (default 4.6 ⇒ `sigmoid(4.6) ≈ 0.9900`).
+        # The pre-norm output is replaced by the convex mixture
+        #     n = sigmoid(α) · self.norm1(x) + (1 − sigmoid(α)) · self.norm1_ln(x)
+        # (same for norm2). At init the mix is ~99% RMSNorm ⇒ the
+        # 1% LayerNorm contribution is well within the step-0 noise
+        # band; default off ⇒ no Parameter registered, no
+        # `nn.LayerNorm` modules built, no forward branch taken ⇒
+        # baseline path bit-identical. Per-block cost: 1 scalar
+        # (mix_norm_alpha) + 2 × d_model = 130 params; total at
+        # tiny1m3m: 12 × 130 = 1,560 params (+0.17% of 0.94M).
+        # See `autoresearch/ideas/217-mix-norm/idea.md`.
+        use_mix_norm: bool = False,
+        mix_norm_init: float = 4.6,
         # 197 — DeepNet α fixed residual init pass-through. See
         # `MultiHeadAttention.use_deepnet_alpha` for the mechanism
         # (Wang et al. 2022, arXiv:2203.00555): a single *fixed*
@@ -7614,6 +7631,28 @@ class TransformerBlock(nn.Module):
             )
         else:
             self.pre_ffn_attn_mix_gamma_raw = None
+        # 217 — Per-Block RMSNorm/LayerNorm Mixture. When the flag
+        # is on, register one scalar `mix_norm_alpha` per block
+        # (init `mix_norm_init`, default 4.6 ⇒ `sigmoid(4.6) ≈
+        # 0.99` ⇒ ~99% RMSNorm at step 0) and two fresh
+        # `nn.LayerNorm(d_model)` modules (norm1_ln, norm2_ln)
+        # with default affine (γ=1, β=0 ⇒ identity-affine at step
+        # 0). Mirrors the pre_ffn_attn_mix wiring above: declared
+        # as `nn.Parameter` so it gets routed to AdamW. When the
+        # flag is off, the attribute is `None` and the forward
+        # branch is never taken (baseline path bit-identical). See
+        # `autoresearch/ideas/217-mix-norm/idea.md`.
+        self.use_mix_norm = use_mix_norm
+        if self.use_mix_norm:
+            self.mix_norm_alpha = nn.Parameter(
+                torch.tensor(float(mix_norm_init))
+            )
+            self.norm1_ln = nn.LayerNorm(d_model)
+            self.norm2_ln = nn.LayerNorm(d_model)
+        else:
+            self.mix_norm_alpha = None
+            self.norm1_ln = None
+            self.norm2_ln = None
         self._init_resid(resid_mode, d_model, n_layers)
         # 111 — DropPath reads `self.n_layers` in `forward` to schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)`. The kwarg was
@@ -7848,6 +7887,28 @@ class TransformerBlock(nn.Module):
             return x + f / (1.0 - p)
         return x + f
 
+    def _apply_mix_norm(self, x, side: int) -> torch.Tensor:
+        """217 — Per-Block RMSNorm / LayerNorm convex mixture.
+
+        `side=1` mixes `self.norm1` (RMSNorm) with `self.norm1_ln`
+        (LayerNorm); `side=2` uses `self.norm2` / `self.norm2_ln`.
+        Returns the pure RMSNorm output when `self.use_mix_norm` is
+        False (baseline path bit-identical). When the flag is on,
+        returns
+            mix_w · norm_rms(x) + (1 − mix_w) · norm_ln(x),
+        where `mix_w = sigmoid(self.mix_norm_alpha)`. At init
+        `mix_w ≈ 0.99` ⇒ output is ~99% RMSNorm, well within the
+        step-0 noise band. The LayerNorm side uses default affine
+        (γ=1, β=0) so it's a clean `(x − μ)/σ`. See
+        `autoresearch/ideas/217-mix-norm/idea.md`.
+        """
+        n_rms = self.norm1(x) if side == 1 else self.norm2(x)
+        if not self.use_mix_norm:
+            return n_rms
+        n_ln = self.norm1_ln(x) if side == 1 else self.norm2_ln(x)
+        mix_w = torch.sigmoid(self.mix_norm_alpha)
+        return mix_w * n_rms + (1.0 - mix_w) * n_ln
+
     def forward(self, x, x0=None, ve=None, v_residual=None, layer_index=None, shared_kv=None, xlayer_mem=None, q_carry=None, av_carry=None, prev_W_K=None, prev_W_V=None, prev_block_scores=None, prev_W_up=None, prev_W_down=None, cosformer_gamma=None):
         # 111 — DropPath / Stochastic Depth. Linear schedule
         # `p_l = 1 - drop_path_max * l / (n_layers - 1)` where `l` is
@@ -7942,7 +8003,10 @@ class TransformerBlock(nn.Module):
         if self.use_parallel_block:
             # #98 Parallel block: attn and FFN both read one shared normed
             # input; their outputs are summed into the residual together.
-            n = self.norm1(x)
+            # 217 — Per-Block MixNorm: when on, replace `self.norm1(x)`
+            # with the convex mix of RMSNorm and LayerNorm. At init
+            # ~99% RMSNorm ⇒ step-0 noise band.
+            n = self._apply_mix_norm(x, side=1)
             # 024 — pass the raw residual `x` to the MHA gate (pre-LN
             # signal). `n = norm1(x)` is the post-LN signal; the spec
             # pins the gate input as the pre-LN residual.
@@ -8045,10 +8109,17 @@ class TransformerBlock(nn.Module):
             # gate reads the pre-LN residual.
             # 148 — Focal Modulation: replace the MHA call with the
             # focal block. Reads the same normed input as MHA.
+            # 217 — Per-Block RMSNorm/LayerNorm mixture: when
+            # `use_mix_norm=True`, replace the bare `self.norm1(x)`
+            # call with the convex mixture
+            # `sigmoid(α)·RMSNorm(x) + (1−sigmoid(α))·LayerNorm(x)`.
+            # At init the mix is ~99% RMSNorm, so the change is
+            # well within the step-0 noise band. The MHA's `gate_x=x`
+            # argument stays as the pre-LN residual (unchanged).
             if self.use_focal_mod:
-                attn_out = self.focal_mod(self.norm1(x))
+                attn_out = self.focal_mod(self._apply_mix_norm(x, side=1))
             else:
-                attn_out = self.attention(self.norm1(x), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores, cosformer_gamma=cosformer_gamma)
+                attn_out = self.attention(self._apply_mix_norm(x, side=1), ve, gate_x=x, v_residual=v_residual, shared_kv=shared_kv, q_carry=q_carry, av_carry=av_carry, prev_W_K=prev_W_K, prev_W_V=prev_W_V, prev_block_scores=prev_block_scores, cosformer_gamma=cosformer_gamma)
             # 198 — Pre-FFN Attention Mixing. Capture the *raw*
             # attention output (post-`self.attention(...)`, before any
             # layerscale / sub_ln / rezero / dropout wrapping). The
@@ -8164,9 +8235,17 @@ class TransformerBlock(nn.Module):
                     torch.sigmoid(self.pre_ffn_attn_mix_gamma_raw)
                     * attn_out_raw.detach()
                 )
-                ffn_in = self.norm2(x + pre_mix)
+                # 217 — Per-Block MixNorm on the FFN-input side
+                # (replaces the bare `self.norm2(x + pre_mix)` with
+                # the convex mix of RMSNorm and LayerNorm when
+                # `use_mix_norm=True`). At init ~99% RMSNorm ⇒
+                # step-0 noise band; baseline path bit-identical
+                # when the flag is off.
+                ffn_in = self._apply_mix_norm(x + pre_mix, side=2)
             else:
-                ffn_in = self.norm2(x)
+                # 217 — Per-Block MixNorm (no 198 pre-FFN mix
+                # present). Same mix as the 198 branch.
+                ffn_in = self._apply_mix_norm(x, side=2)
             if self.use_ffn_embed and ve is not None:
                 ffn_in = ffn_in + F.linear(ve, self.ffn_embed_proj)
             ff_out = self.feed_forward(ffn_in, prev_W_up=prev_W_up, prev_W_down=prev_W_down)

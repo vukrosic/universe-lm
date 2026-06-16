@@ -504,6 +504,23 @@ class LLMConfig:
     # `autoresearch/ideas/198-pre-ffn-attnmix/idea.md`.
     use_pre_ffn_attn_mix: bool = False
     pre_ffn_attn_mix_init: float = -10.0
+    # 217 — Per-Block RMSNorm/LayerNorm Mixture. When True, each
+    # `TransformerBlock` builds a fresh `nn.LayerNorm(d_model)` per
+    # pre-norm site (norm1_ln, norm2_ln) and a single scalar
+    # `mix_norm_alpha` initialized to `mix_norm_init` (default 4.6,
+    # so `sigmoid(4.6) ≈ 0.99` ⇒ output is `0.99·RMSNorm(x) +
+    # 0.01·LayerNorm(x)` at step 0, ~1% deviation well within the
+    # step-0 noise band). Each block's `mix_norm_alpha` is a
+    # per-block learnable scalar; the optimizer can move each one
+    # independently over training. Default off ⇒ no Parameter
+    # registered, no LayerNorm modules built, no forward branch
+    # taken ⇒ baseline path bit-identical. Cost: 1 scalar × 12
+    # blocks = 12 scalars (+0.0013% of 0.94M) + 12 × 2 =
+    # 24 LayerNorm modules (d_model=64 affine, ~3K params total,
+    # +0.32% of 0.94M). See
+    # `autoresearch/ideas/217-mix-norm/idea.md`.
+    use_mix_norm: bool = False
+    mix_norm_init: float = 4.6
     # 157 — Depthwise Conv inside FFN (ConvBERT/ConvNeXt-style, Jiang
     # et al. 2020 arXiv:2008.02496; Woo et al. 2020). When True, each
     # block builds a `ConvFFN(d_model, kernel=k)` that applies a
@@ -3331,6 +3348,45 @@ class Tiny1M3MAlibiConfig(Tiny1M3MConfig):
     mechanism, lever-mode pin, and zero-init rationale.
     """
     use_alibi_bias: bool = True
+
+
+@dataclass
+class Tiny1M3MMixNormConfig(Tiny1M3MAlibiConfig):
+    """Tiny1M3M with per-block RMSNorm / LayerNorm convex mixture
+    (217, Zhang & Sennrich 2019 + Ba et al. 2016), stacked on the
+    175-alibi-slopes champion.
+
+    Subclasses `Tiny1M3MAlibiConfig` (val 6.2539, the current
+    champion per `autoresearch/champion.json`). Each
+    `TransformerBlock` builds one extra scalar `mix_norm_alpha`
+    (init `mix_norm_init=4.6` ⇒ `sigmoid(4.6) ≈ 0.9900` ⇒ output is
+    `0.99·RMSNorm(x) + 0.01·LayerNorm(x)` at step 0) and two fresh
+    `nn.LayerNorm(d_model)` modules (norm1_ln, norm2_ln) with the
+    default affine init (γ=1, β=0 ⇒ `(x − μ)/σ`).
+
+    At step 0 the mix is ~99% RMSNorm (matching the existing
+    baseline) plus a ~1% LayerNorm contribution. The optimizer can
+    move each per-block scalar independently during training, so
+    blocks where the centering signal (mean subtraction) is
+    binding will pull `mix_norm_alpha` down toward LayerNorm and
+    blocks where it is not will keep it pinned at pure RMSNorm.
+    The lever complements 016-qk_norm on the *other* norm axis
+    (pre-softmax Q/K norm) — 217 sits on the pre-residual-stream
+    activation norm.
+
+    @dataclass-decorated so `use_mix_norm` default is properly
+    overridden (the dataclass-inheritance pitfall documented in
+    `_arq_161-dyt-temp.py`).
+
+    A/B vs the current champion `Tiny1M3MAlibiConfig` (val 6.2539,
+    band 0.04). PASS / WIN: val < 6.2139. NULL band |Δ| < 0.04.
+    DRIFT > 6.2939.
+
+    See `autoresearch/ideas/217-mix-norm/idea.md` for the full
+    mechanism and zero-init rationale.
+    """
+    use_mix_norm: bool = True
+    mix_norm_init: float = 4.6
 
 
 @dataclass
