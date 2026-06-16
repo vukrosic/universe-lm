@@ -13,3 +13,5 @@
 {"ts":"2026-06-16T00:31:38Z","agent":"implement-button","idea":"202-grouped-value-projection","from":"needs-recode","to":"implementing","round":1,"note":"claimed by implement button"}
 {"ts":"2026-06-16T00:33:08Z","agent":"done-button","idea":"202-grouped-value-projection","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
 {"ts":"2026-06-16T00:33:11Z","agent":"daemon","idea":"202-grouped-value-projection","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T00:36:05Z","agent":"daemon","idea":"202-grouped-value-projection","from":"running","to":"done","round":1,"note":"NULL: trt=6.4206 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2539±0.04 (Δ0.1667)"}
+{"ts":"2026-06-16T00:36:18Z","agent":"code-impl","idea":"202-grouped-value-projection","from":"done","to":"needs-run","round":2,"note":"recode: build-smoke fix verified locally (MinimalLLM(C()) constructs, +24,624 params, bit-identical forward at α=-25)"}

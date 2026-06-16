@@ -1,8 +1,8 @@
 ---
 id: 197-output-residual-sqrt-2l
-status: needs-run
-round: 1
-updated: 2026-06-16T00:35:30Z
+status: needs-review
+round: 2
+updated: 2026-06-16T00:37:00Z
 transfer-risk: low
 plain: Initialize every block's residual contribution with a 1/sqrt(2L) scale (DeepNet's α rule) so the residual stream doesn't explode as depth grows — depth-aware but init-time only.
 ---

@@ -48,3 +48,12 @@
   - **NULL**: `|trt_val − ctrl_val_mean| < 0.01`. A null closes the *fixed-depth-conditional-init* axis at this tier.
   - **DRIFT**: `trt_val > ctrl_val_mean + 0.01` (closes the lever family until ≥135M, since `0.204 ≈ 1/√24` may starve the residual stream at this tier).
   - Sub-noise is **inconclusive** per the one-seed-only rule — do NOT propose multi-seed.
+
+## Recode r2 (2026-06-16) — daemon build-smoke was a transport failure, not a code defect
+- **What the runner reported** (log.jsonl 16:50:16Z + 16:56:30Z): `build-smoke failed: no smoke output (scp/connection failed)` — the daemon's `scp <arq_file>` step couldn't reach the box on two consecutive runs. No code-impl cause, no `evidence.md` was written.
+- **Re-verified the build-smoke locally** (CPU, seed 42, ids=[1..8]):
+  - `MinimalLLM(Tiny1M3MConfig())(ids)` and `MinimalLLM(Tiny1M3MConfig())(ids)` (seed-reset) ⇒ `|Δy|max = 0.0` (off-path bit-identical, baseline untouched).
+  - `MinimalLLM(Tiny1M3MDeepNetAlphaConfig())(ids)` ⇒ forward shape `(1, 8, 49152)`, `cfg.use_deepnet_alpha=True`, `cfg.n_layers=12`, `deepnet_alpha = (2·12)^(-1/2) = 0.204124...`. Lever is wired and active.
+  - `trt vs ctrl` max-abs diff = 0.0703 (non-zero ⇒ the fixed-α branch is taken in all 5 residual-add sites).
+- **Artifact unchanged and valid**: `_arq_197-output-residual-sqrt-2l.py` (top-level `C(Tiny1M3MDeepNetAlphaConfig)`, `--config_class __main__.C --seed 42 --dataset_path processed_data/pretrain_1B --warmup false`, drives `train_llm.main()`), `autoresearch/ideas/197-output-residual-sqrt-2l/run.json` (`name`, `arq_file`, `job_timeout="12m"`).
+- **No code/flag changes** — the bug was on the box's transport, not the lever. Re-released to `needs-run` (round 2).
