@@ -2208,6 +2208,33 @@ class MinimalLLM(nn.Module):
                     if hasattr(ff, "gate_proj"):
                         nn.init.zeros_(ff.gate_proj.weight)
 
+        # 288/289 — DeepNet β init-downscaling. AFTER the global init, multiply
+        # the value + output slices of each block's fused `qkvo_proj` and both
+        # FFN projections by β. This is the init-side companion to the forward
+        # `use_deepnet_alpha` branch-scale (Wang 2022, Thm 1: α and β are a
+        # matched pair so the model update stays bounded; the champion ships
+        # only α). β <= 0 ⇒ canonical decoder gain (8L)^(-1/4); set explicitly
+        # to bracket strength. We touch ONLY V (`qkv_size-kv_size : qkv_size`)
+        # and O (`qkv_size :`) of qkvo_proj — Q and K are left at std=0.02 (β
+        # conditions what writes INTO the residual stream, not the attention
+        # scores). Default off → init path bit-identical to the champion.
+        if getattr(config, "use_deepnet_beta_init", False):
+            n_layers = max(1, len(self.transformer_blocks))
+            beta = getattr(config, "deepnet_beta", 0.0)
+            if beta is None or beta <= 0.0:
+                beta = (8.0 * n_layers) ** -0.25
+            with torch.no_grad():
+                for block in self.transformer_blocks:
+                    attn = block.attention
+                    qkv_size, kv_size = attn.qkv_size, attn.kv_size
+                    attn.qkvo_proj[qkv_size - kv_size:qkv_size].mul_(beta)  # V
+                    attn.qkvo_proj[qkv_size:].mul_(beta)                    # O
+                    ff = block.feed_forward
+                    if hasattr(ff, "up_proj"):
+                        ff.up_proj.weight.mul_(beta)
+                    if hasattr(ff, "down_proj"):
+                        ff.down_proj.weight.mul_(beta)
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)

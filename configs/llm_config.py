@@ -392,6 +392,23 @@ class LLMConfig:
     # off → baseline path bit-identical. See
     # `autoresearch/ideas/197-output-residual-sqrt-2l/idea.md`.
     use_deepnet_alpha: bool = False
+    # 288/289 — DeepNet β init-downscaling: the init-side companion to the
+    # forward `use_deepnet_alpha` branch-scale. Canonical DeepNet (Wang 2022,
+    # arXiv:2203.00555) couples the forward residual scale α with an *init*
+    # down-scaling β of the value + output + FFN projection weights so the
+    # model UPDATE is bounded at step 0 (Theorem 1). The champion implements
+    # ONLY α (the forward 0.204 branch-scale) — β is its untested other half.
+    # When on, AFTER `_init_weights` the V-slice + O-slice of every block's
+    # fused `qkvo_proj` and both FFN projections (`up_proj`/`down_proj`) are
+    # multiplied by β. `deepnet_beta <= 0` ⇒ canonical decoder gain
+    # β = (8·n_layers)^(-1/4) (≈0.319 at L=12); set it explicitly to bracket
+    # the strength (289 uses (2L)^(-1/2) ≈ 0.204, matched to the forward α).
+    # 0 new params (a pure init rescale). NOT step-0 byte-identical — it is an
+    # init-CONDITIONING lever (the family that binds at 0.94M/92 steps), not an
+    # identity-at-step-0 add. Default off → baseline init path untouched. See
+    # `autoresearch/ideas/288-deepnet-beta-init/idea.md`.
+    use_deepnet_beta_init: bool = False
+    deepnet_beta: float = 0.0
     # #29 value embeddings (speedrun records 55/63): inject the (factorized) token
     # embedding into attention V at every layer via a tiny per-layer projection,
     # zero-inited so step 0 == baseline. Reuses the existing rank-r table as the
