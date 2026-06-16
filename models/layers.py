@@ -2421,6 +2421,48 @@ class MultiHeadAttention(nn.Module):
             self.wv_a = None
             self.wv_b = None
             self.wv_lowrank_alpha = None
+        # 199 — W_Q Low-Rank Residual Correction. Two `nn.Parameter`
+        # matrices `wq_a ∈ R^{d_model × r}` (normal-init std=0.02,
+        # matches the existing `qkvo_proj` Q-slice init) and
+        # `wq_b ∈ R^{r × d_model}` (zero-init ⇒
+        # `wq_a @ wq_b == 0` exactly at step 0), plus one 0-dim
+        # learnable scalar `wq_lowrank_alpha` (init
+        # `wq_lowrank_alpha_init`, default −10 ⇒
+        # `sigmoid(-10) ≈ 4.5e-5`). The forward computes
+        #   `w_q_eff = w_q + σ(α) · (wq_a @ wq_b)`
+        # at the W_Q projection site (before the F.linear call)
+        # in the standard QKV-split path. At step 0 `wq_b = 0` ⇒
+        # `wq_a @ wq_b == 0` exactly ⇒ `w_q_eff == w_q`
+        # bit-identical to the no-flag baseline. Both `wq_a` and
+        # `wq_b` are constructed and registered ONLY when
+        # `use_lowrank_wq=True` (default off → no Parameter
+        # created, no branch taken, baseline path bit-identical).
+        # The `wq_lowrank_alpha` scalar is also gated — when the
+        # lever is off, no Parameter exists, so the forward gate
+        # `if self.use_lowrank_wq` short-circuits. Completes the
+        # rank-residual sub-block family with 207 (W_O) and 194-r2
+        # (W_V); W_Q is the only d_model × d_model attention
+        # sub-block unowned in the active queue. See
+        # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+        # `plan.md`.
+        self.use_lowrank_wq = use_lowrank_wq
+        self.wq_rank = int(wq_rank)
+        if self.use_lowrank_wq:
+            self.wq_a = nn.Parameter(
+                torch.empty(self.d_model, self.wq_rank)
+            )
+            with torch.no_grad():
+                torch.nn.init.normal_(self.wq_a, mean=0.0, std=0.02)
+            self.wq_b = nn.Parameter(
+                torch.zeros(self.wq_rank, self.d_model)
+            )
+            self.wq_lowrank_alpha = nn.Parameter(
+                torch.full((), float(wq_lowrank_alpha_init))
+            )
+        else:
+            self.wq_a = None
+            self.wq_b = None
+            self.wq_lowrank_alpha = None
         # 197 — Tied W_O Across Blocks. When on, store the
         # SAME per-model `W_O_shared` Parameter reference on every
         # MHA (NOT a copy — every block reads the same parameter,
@@ -4014,6 +4056,34 @@ class MultiHeadAttention(nn.Module):
             ]
             W_V_eff = W_V + alpha * (self.wv_a @ self.wv_b)
             V = F.linear(x, W_V_eff)
+
+        # 199 — W_Q Low-Rank Residual Correction. In the standard
+        # QKV-split path (no YOCO/shared-kv, no tied-QK, no MLA —
+        # those branches re-project Q via distinct matrices and
+        # skip this gate), recompute Q through a corrected W_Q:
+        #   `W_Q_eff = W_Q + σ(α) · (W_Q_A @ W_Q_B)`
+        #   `Q = F.linear(x, W_Q_eff)`
+        # At step 0 `W_Q_B = 0` ⇒ `W_Q_A @ W_Q_B = 0` exactly ⇒
+        # `W_Q_eff = W_Q` ⇒ `Q = F.linear(x, W_Q)` bit-identical
+        # to the no-flag baseline. Sits BEFORE any downstream Q-
+        # side lever (q_norm, RoPE, cross-block-K-share) so those
+        # branches read the rank-corrected Q. Composes with 207
+        # (W_O rank) and 194-r2 (W_V rank) — orthogonal axes
+        # (different projections in the QKV→O chain). Default
+        # off → branch never taken, baseline path bit-identical.
+        # See
+        # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+        # `plan.md`.
+        if (
+            self.use_lowrank_wq
+            and not self.use_shared_kv
+            and not self.use_tied_qk
+            and not self.use_mla
+        ):
+            alpha = torch.sigmoid(self.wq_lowrank_alpha)
+            W_Q = self.qkvo_proj[:self.q_size]
+            W_Q_eff = W_Q + alpha * (self.wq_a @ self.wq_b)
+            Q = F.linear(x, W_Q_eff)
 
         # 188 — Cross-Block K/V Projection Sharing. After the
         # standard QKV split, on layers l ≥ 1, recompute K and V
@@ -6265,6 +6335,21 @@ class TransformerBlock(nn.Module):
         use_lowrank_wv: bool = False,
         wv_rank: int = 8,
         wv_lowrank_alpha_init: float = -10.0,
+        # 199 — W_Q Low-Rank Residual Correction pass-through to
+        # the inner MHA. See `MultiHeadAttention.use_lowrank_wq` for
+        # the mechanism (`W_Q_eff = W_Q + σ(α) · (W_Q_A @ W_Q_B)`,
+        # with `W_Q_B` zero-init and `α` init −10 ⇒ step-0 bit-
+        # identical to baseline). `wq_rank` (default 16) sets the
+        # absolute rank of the correction; `wq_lowrank_alpha_init`
+        # (default −10) sets the soft-gate init. Default off → no
+        # Parameter registered, baseline path bit-identical.
+        # Completes the rank-residual sub-block family with 207
+        # (W_O) and 194-r2 (W_V). See
+        # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+        # `plan.md`.
+        use_lowrank_wq: bool = False,
+        wq_rank: int = 16,
+        wq_lowrank_alpha_init: float = -10.0,
         # 151 — RoV (Rotary Value Embeddings, gated). Pass-through to
         # the inner MHA. See `MultiHeadAttention.use_rov` for the
         # mechanism. Default off → baseline path bit-identical. See
@@ -7013,6 +7098,18 @@ class TransformerBlock(nn.Module):
             use_lowrank_wv=use_lowrank_wv,
             wv_rank=wv_rank,
             wv_lowrank_alpha_init=wv_lowrank_alpha_init,
+            # 199 — W_Q Low-Rank Residual Correction pass-through
+            # to the inner MHA. See
+            # `MultiHeadAttention.use_lowrank_wq` for the mechanism
+            # (rank-r residual correction
+            # `W_Q_eff = W_Q + σ(α)·(W_Q_A @ W_Q_B)`, W_Q_B zero-
+            # init ⇒ step-0 bit-identical). Default off → baseline
+            # path bit-identical. See
+            # `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+            # `plan.md`.
+            use_lowrank_wq=use_lowrank_wq,
+            wq_rank=wq_rank,
+            wq_lowrank_alpha_init=wq_lowrank_alpha_init,
             # 151 — RoV pass-through to the inner MHA. Default off
             # → baseline path bit-identical. See
             # `autoresearch/ideas/151-rov-gated/idea.md`.

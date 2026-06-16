@@ -306,6 +306,19 @@ class MinimalLLM(nn.Module):
         self.wv_lowrank_alpha_init = float(
             getattr(config, "wv_lowrank_alpha_init", -10.0)
         )
+        # 199 — W_Q Low-Rank Residual Correction. Learnable rank-r
+        # residual correction `W_Q_eff = W_Q + σ(α)·(W_Q_A @ W_Q_B)`
+        # with W_Q_B zero-init and α init −10 ⇒ step-0 bit-identical
+        # to baseline. Pass-through to each block's MHA. Default
+        # off → baseline path bit-identical. Completes the rank-
+        # residual sub-block family with 207 (W_O) and 194-r2 (W_V).
+        # See `autoresearch/ideas/199-attn-output-lowrank/idea.md` /
+        # `plan.md`.
+        self.use_lowrank_wq = getattr(config, "use_lowrank_wq", False)
+        self.wq_rank = int(getattr(config, "wq_rank", 16))
+        self.wq_lowrank_alpha_init = float(
+            getattr(config, "wq_lowrank_alpha_init", -10.0)
+        )
         # 199 — Spectral-Norm-Bounded W_O Projection. When on,
         # each block's MHA allocates one learnable scalar `γ_l`
         # (init 0) and a power-iteration Buffer `u_l` for
@@ -997,6 +1010,21 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wv=self.use_lowrank_wv,
                         wv_rank=self.wv_rank,
                         wv_lowrank_alpha_init=self.wv_lowrank_alpha_init,
+                        # 199 — W_Q Low-Rank Residual Correction
+                        # pass-through to the block. See
+                        # `MultiHeadAttention.use_lowrank_wq` for
+                        # the mechanism (rank-r residual correction
+                        # `W_Q_eff = W_Q + σ(α)·(W_Q_A @ W_Q_B)`, W_Q_B
+                        # zero-init ⇒ step-0 bit-identical). Default
+                        # off → baseline path bit-identical.
+                        # Completes the rank-residual sub-block
+                        # family with 207 (W_O) and 194-r2 (W_V).
+                        # See
+                        # `autoresearch/ideas/199-attn-output-lowrank/
+                        # idea.md` / `plan.md`.
+                        use_lowrank_wq=self.use_lowrank_wq,
+                        wq_rank=self.wq_rank,
+                        wq_lowrank_alpha_init=self.wq_lowrank_alpha_init,
                         # 199 — Spectral-Norm-Bounded W_O Projection
                         # pass-through to the MHA. Per-block
                         # learnable scalar `γ_l` (init 0) and
@@ -1465,6 +1493,21 @@ class MinimalLLM(nn.Module):
                         use_lowrank_wv=self.use_lowrank_wv,
                         wv_rank=self.wv_rank,
                         wv_lowrank_alpha_init=self.wv_lowrank_alpha_init,
+                        # 199 — W_Q Low-Rank Residual Correction
+                        # pass-through to the block. See
+                        # `MultiHeadAttention.use_lowrank_wq` for
+                        # the mechanism (rank-r residual correction
+                        # `W_Q_eff = W_Q + σ(α)·(W_Q_A @ W_Q_B)`, W_Q_B
+                        # zero-init ⇒ step-0 bit-identical). Default
+                        # off → baseline path bit-identical.
+                        # Completes the rank-residual sub-block
+                        # family with 207 (W_O) and 194-r2 (W_V).
+                        # See
+                        # `autoresearch/ideas/199-attn-output-lowrank/
+                        # idea.md` / `plan.md`.
+                        use_lowrank_wq=self.use_lowrank_wq,
+                        wq_rank=self.wq_rank,
+                        wq_lowrank_alpha_init=self.wq_lowrank_alpha_init,
                         # 199 — Spectral-Norm-Bounded W_O Projection
                         # pass-through to the MHA. Per-block
                         # learnable scalar `γ_l` (init 0) and
