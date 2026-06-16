@@ -20,3 +20,6 @@
 {"ts":"2026-06-15T17:02:23Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T17:02:58Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
 {"ts":"2026-06-15T17:03:43Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T00:30:29Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"running","to":"done","round":1,"note":"NULL: trt=6.4172 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2539±0.04 (Δ0.1633)"}
+{"ts":"2026-06-16T00:30:36Z","agent":"orchestrator","idea":"192-pre-rope-qk-rotation","from":"done","to":"needs-run","round":1,"note":"reclaimed: running 446m but box arq queue dead (drainer wedged)"}
+{"ts":"2026-06-16T00:30:39Z","agent":"daemon","idea":"192-pre-rope-qk-rotation","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
