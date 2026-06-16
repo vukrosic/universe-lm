@@ -3495,7 +3495,28 @@ class MultiHeadAttention(nn.Module):
         self.use_poly_alibi = use_poly_alibi
         if use_poly_alibi:
             self.poly_alibi_m = nn.Parameter(torch.zeros(self.n_heads))
-            self.poly_alibi_c = nn.Parameter(torch.zeros(self.n_heads))
+            # Curvature-INIT knob (2026-06-16): the slope-init win (ALIBI_SLOPE_INIT)
+            # warm-starts the LINEAR locality term; this is the quadratic analog.
+            # poly-alibi subtracts c_h·d²/L — a far-token-dominant convex penalty.
+            # Learning c_h from 0 may underfit the curvature prior in 92 steps just
+            # as the linear slope did. Warm-start c_h>0 (uniform per head) so the
+            # convex distance decay is present at step 0. Env-driven; DEFAULT
+            # (zeros) is byte-identical to the champion:
+            #   POLY_ALIBI_C_INIT=geometric|zero   POLY_ALIBI_C_SCALE=<float>
+            import os as _os
+            _cmode = _os.environ.get("POLY_ALIBI_C_INIT", "zero")
+            _cscale = float(_os.environ.get("POLY_ALIBI_C_SCALE", "1.0"))
+            if _cmode == "geometric":
+                _cratio = 2.0 ** (-8.0 / self.n_heads)
+                _cs = torch.tensor(
+                    [_cratio ** (h + 1) for h in range(self.n_heads)],
+                    dtype=torch.float32,
+                )
+                _cs = torch.full_like(_cs, float(_cs.mean()))  # uniform per head
+                _c_init = _cscale * _cs  # +ve ⇒ convex locality penalty at step 0
+            else:
+                _c_init = torch.zeros(self.n_heads)
+            self.poly_alibi_c = nn.Parameter(_c_init)
         # 231 Kerple log-distance ALiBi: scores -= m_h·log(1 + r_h·d), d=(i-j)≥0
         # (Chi et al. 2022, arXiv:2205.09921). A CONCAVE distance kernel (gentler
         # far-token penalty than linear alibi / convex 230). m_h init 0 ⇒ bias 0
