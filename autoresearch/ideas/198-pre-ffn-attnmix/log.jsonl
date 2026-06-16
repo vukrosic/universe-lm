@@ -13,3 +13,4 @@
 {"ts":"2026-06-15T16:56:08Z","agent":"daemon","idea":"198-pre-ffn-attnmix","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
 {"ts":"2026-06-15T16:56:30Z","agent":"daemon","idea":"198-pre-ffn-attnmix","from":"running","to":"needs-recode","round":2,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
 {"ts":"2026-06-15T16:56:37Z","agent":"auto-implement","idea":"198-pre-ffn-attnmix","from":"needs-recode","to":"needs-review","round":2,"note":"auto-fix gave up after 3 failed runs — needs a human"}
+{"ts":"2026-06-16T00:32:43Z","agent":"reviewer","idea":"198-pre-ffn-attnmix","from":"needs-review","to":"reviewing","round":2,"note":"claimed"}

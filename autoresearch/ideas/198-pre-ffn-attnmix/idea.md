@@ -1,8 +1,8 @@
 ---
 id: 198-pre-ffn-attnmix
-status: needs-review
+status: reviewing
 round: 2
-updated: 2026-06-15T16:56:37Z
+updated: 2026-06-16T00:32:43Z
 transfer-risk: med
 plain: Mix the attention output back into the FFN's input as a learned residual (init at 0 so step-0 is byte-identical), letting the FFN see what attention computed without disturbing the residual stream itself.
 ---
