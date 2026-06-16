@@ -3457,7 +3457,36 @@ class MultiHeadAttention(nn.Module):
         # m_h init 0 → step-0 == baseline.
         self.use_alibi_bias = use_alibi_bias
         if use_alibi_bias:
-            self.alibi_slope = nn.Parameter(torch.zeros(self.n_heads))
+            # Slope-INIT knob (alibi-deep-dive thread finding, 2026-06-16): learning
+            # the slopes from 0 underfits the locality prior at tiny1m3m/92 steps.
+            # Warm-starting at the classic geometric magnitudes, scaled up, with a
+            # UNIFORM per-head distribution won big on plain alibi (geo3uni 6.2181,
+            # Δ-0.040 vs learn-from-0; uniform > geometric > arith at scale ~3×).
+            # Env-driven so the DEFAULT (zeros, learnable) is byte-identical to the
+            # prior champion and every other run — only stubs that opt in are changed:
+            #   ALIBI_SLOPE_INIT=geometric|zero  ALIBI_SLOPE_DIST=geometric|uniform|arith
+            #   ALIBI_SLOPE_SCALE=<float>        ALIBI_SLOPE_LEARNABLE=0|1
+            import os as _os
+            _mode = _os.environ.get("ALIBI_SLOPE_INIT", "zero")
+            _scale = float(_os.environ.get("ALIBI_SLOPE_SCALE", "1.0"))
+            _learn = _os.environ.get("ALIBI_SLOPE_LEARNABLE", "1") != "0"
+            _dist = _os.environ.get("ALIBI_SLOPE_DIST", "geometric")
+            if _mode == "geometric":
+                _ratio = 2.0 ** (-8.0 / self.n_heads)
+                _slopes = torch.tensor(
+                    [_ratio ** (h + 1) for h in range(self.n_heads)],
+                    dtype=torch.float32,
+                )
+                if _dist == "uniform":
+                    _slopes = torch.full_like(_slopes, float(_slopes.mean()))
+                elif _dist == "arith":
+                    _slopes = torch.linspace(
+                        float(_slopes.max()), float(_slopes.min()), self.n_heads
+                    )
+                _init = -_scale * _slopes
+            else:
+                _init = torch.zeros(self.n_heads)
+            self.alibi_slope = nn.Parameter(_init, requires_grad=_learn)
         # 230 Polynomial-distance ALiBi: scores -= (m_h·d + c_h·d²/L), d=(i-j).
         # Strict superset of Q1 ALiBi (c_h=0 ⇒ the linear champion exactly).
         # m_h, c_h both init 0 ⇒ bias 0 ⇒ step-0 == baseline/alibi. The
