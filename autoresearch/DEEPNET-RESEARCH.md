@@ -120,6 +120,32 @@ Three reads, including an honest one that reshapes the bet:
    init-downscale targets the gradient/update bound, which this does not capture — a
    reason E3 (α vs α+β) could still move even though α's forward effect looks small.
 
+**E5 result — per-layer GRADIENT-norm uniformity at L=30 (the update-side, more
+revealing than the forward probe).** Random CE loss, one backward; spread=max/min,
+cv=std/mean of the per-block grad norms:
+
+| arm | grad spread (max/min) | cv (std/mean) |
+|---|---|---|
+| baseline   | 1.60 | **0.141** |
+| deepnet (α) | 1.04 | **0.011** |
+| deepnet_ab (α+β) | 1.09 | 0.020 |
+
+1. **DeepNet-α's primary effect is gradient uniformity, not forward bounding.** It
+   cuts per-layer grad-norm variation ~13× (cv 0.141→0.011) — a much larger effect
+   than on the forward residual (1.31×→1.01×, already mostly handled by RMSNorm).
+   Uniform per-layer updates = all depths learn at compatible rates. *This* is the
+   real mechanism at our scale.
+2. **β adds no extra flattening.** `deepnet_ab` cv (0.020) ≈ `deepnet` (0.011); β
+   only rescales the absolute grad magnitude ~10× (0.031→0.004), which an adaptive
+   optimizer absorbs. **Preview of E3: expect β to add little on top of α.**
+3. **The caveat that could sink the whole bet → Muon.** Our optimizer is Muon, which
+   already orthogonalizes/normalizes gradients *per weight matrix* — plausibly
+   supplying much of the same per-layer balancing deepnet provides. **If Muon +
+   RMSNorm already do deepnet's job, deepnet-α is largely redundant → small/null loss
+   delta (H2/H0).** This is now the leading prediction; E1's loss-delta arbitrates,
+   and a sharp follow-up (E6) would be deepnet-α under AdamW vs Muon — if deepnet
+   helps far more under AdamW, redundancy-with-Muon is confirmed.
+
 ## Decision rule
 
 DeepNet earns a 135M slot **iff** its fitted curve sits below baseline at the target N
