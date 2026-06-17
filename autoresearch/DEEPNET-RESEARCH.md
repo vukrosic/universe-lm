@@ -75,9 +75,15 @@ losses, baseline vs deepnet:
 |---|---|---|---|
 | 0     | 10.8063 | 10.8073 | +0.001 (≈identical at init) |
 | 10000 | 4.9784  | 4.9591  | **−0.019** |
-| 20000 | 3.9345  | (pending) | |
+| 20000 | 3.9345  | 3.9297  | **−0.005** |
 | 30000 | 4.4690  | (pending) | |
 | final | **4.3208** | (pending) | |
+
+**Gap is converging to ~0** (+0.001 → −0.019 → −0.005) — exactly the Muon-redundancy
+prediction (deepnet ≈ baseline). The ONE open question is the late trajectory: baseline
+*degraded* 3.93(20k)→4.47(30k)→4.32(final) under constant LR. deepnet is at 3.93@20k
+(~53% done); if it bounces the same way → full redundancy (even on stability); if it
+holds steadier → deepnet's residual value is *stability*, not a lower floor.
 
 Two observations (preliminary, 1 seed):
 1. **deepnet ≈ baseline at init** (+0.001) — matches the forward probe; α barely moves
