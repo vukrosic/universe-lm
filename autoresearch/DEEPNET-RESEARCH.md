@@ -76,14 +76,27 @@ losses, baseline vs deepnet:
 | 0     | 10.8063 | 10.8073 | +0.001 (≈identical at init) |
 | 10000 | 4.9784  | 4.9591  | **−0.019** |
 | 20000 | 3.9345  | 3.9297  | **−0.005** |
-| 30000 | 4.4690  | (pending) | |
-| final | **4.3208** | (pending) | |
+| 30000 | 4.4690  | 4.4676  | **−0.001** |
+| final | **4.3208** | (pending, ≈baseline) | |
 
-**Gap is converging to ~0** (+0.001 → −0.019 → −0.005) — exactly the Muon-redundancy
-prediction (deepnet ≈ baseline). The ONE open question is the late trajectory: baseline
-*degraded* 3.93(20k)→4.47(30k)→4.32(final) under constant LR. deepnet is at 3.93@20k
-(~53% done); if it bounces the same way → full redundancy (even on stability); if it
-holds steadier → deepnet's residual value is *stability*, not a lower floor.
+**RESOLVED — full redundancy on every axis.** deltas at every matched step: +0.001,
+−0.019, −0.005, −0.001 → deepnet ≈ baseline throughout. And the open stability question
+is answered: deepnet **bounces identically** (3.93@20k→4.47@30k, same as baseline) — it
+does NOT damp the late degradation. So deepnet-α adds **neither a lower floor nor late
+stability** — exactly the Muon-redundancy prediction. (Final point ≈ baseline 4.32; the
+ladder needs ≥3 rungs for the exponent, but the per-rung verdict at 8M is already clear:
+NULL within noise.)
+
+⚠️ **Ladder-hygiene finding (separate from deepnet, needs an operator call).** BOTH arms
+reach ~3.93 at step 20k then **degrade ~+0.4 to 4.3–4.47** by the end under the
+**constant LR** (no decay) — the logged endpoint (4.32) is ~0.4 *worse* than the
+achievable minimum (3.93). This inflates every ladder point and the release run would
+waste the same potential. **Strong recommendation: switch the ladder + release to a
+cosine LR decay** so runs converge instead of bouncing. Caveat: this invalidates the
+already-logged constant-LR points (8M baseline + deepnet) → they'd need re-running
+(cheap, ~50 min each). Not done unilaterally mid-sweep — flagged for the operator. NB
+the deepnet *conclusion* is robust to this: both arms bounce equally, so the comparison
+(NULL) holds regardless of schedule.
 
 Two observations (preliminary, 1 seed):
 1. **deepnet ≈ baseline at init** (+0.001) — matches the forward probe; α barely moves
