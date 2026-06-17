@@ -52,6 +52,41 @@ ARMS = {
 }
 
 
+def _block_norms(cfg, post_muon):
+    """Per-block update-norm profile. If post_muon, each 2-D weight's gradient is
+    orthogonalized by Muon's Newton-Schulz (zeropower_polar_express) first — i.e.
+    the ACTUAL per-matrix update Muon would take, which is ~norm-normalized
+    regardless of the raw gradient magnitude. Comparing raw vs post-Muon cv tests
+    whether Muon already supplies the per-layer balancing DeepNet-a provides."""
+    torch.manual_seed(SEED)
+    model = MinimalLLM(cfg).train()
+    vocab = getattr(cfg, "vocab_size", None) or 49152
+    ids = torch.randint(0, vocab, (BATCH, SEQ))
+    tgt = torch.randint(0, vocab, (BATCH, SEQ))
+    out = model(ids)
+    logits = out[0] if isinstance(out, (tuple, list)) else out
+    torch.nn.functional.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1)).backward()
+    if post_muon:
+        from optimizers.muon import zeropower_polar_express
+    norms = []
+    for blk in model.transformer_blocks:
+        sq = 0.0
+        for p in blk.parameters():
+            if p.grad is None:
+                continue
+            g = p.grad.detach().float()
+            if post_muon and g.ndim == 2:   # Muon targets 2-D weight matrices only
+                g = zeropower_polar_express(g, steps=5)
+            sq += float(g.pow(2).sum())
+        norms.append(sq ** 0.5)
+    return norms
+
+
+def _cv(xs):
+    m = sum(xs) / len(xs)
+    return (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5 / m if m else float("nan")
+
+
 def per_layer_grad_norm(cfg):
     """Forward a random batch + CE loss on random targets, backward, return the
     per-block total gradient norm. The PROFILE across layers (not the absolute
@@ -132,6 +167,31 @@ def main():
     print("more so deepnet_ab) flattens it vs baseline, that's the optimization-side")
     print("mechanism the forward-RMS probe can't see — and the reason E3 (alpha vs")
     print("alpha+beta) could move even though alpha's forward effect is mild.")
+
+    # --- THE decisive test: does Muon already supply deepnet's per-layer balancing? ---
+    print(f"\n=== Muon-redundancy test at L={Lg}: per-block update-norm cv, RAW grad vs POST-MUON ===")
+    print("If baseline's cv COLLAPSES toward deepnet's after Muon orthogonalization,")
+    print("Muon already balances per-layer updates -> DeepNet-a is largely redundant.\n")
+    print(f"{'arm':>10} | {'raw-grad cv':>12} | {'post-Muon cv':>13} | verdict")
+    print("-" * 64)
+    raw = {}
+    for arm in ("baseline", "deepnet"):
+        cfg = make_config(Lg, ARMS[arm])
+        craw = _cv(_block_norms(cfg, post_muon=False))
+        cmuon = _cv(_block_norms(cfg, post_muon=True))
+        raw[arm] = (craw, cmuon)
+        print(f"{arm:>10} | {craw:>12.3f} | {cmuon:>13.3f} |")
+    bc = raw["baseline"]; dc = raw["deepnet"]
+    print("-" * 64)
+    collapse = bc[0] / bc[1] if bc[1] else float("inf")
+    gap_raw = bc[0] - dc[0]
+    gap_muon = bc[1] - dc[1]
+    print(f"\nbaseline cv: raw {bc[0]:.3f} -> post-Muon {bc[1]:.3f} ({collapse:.1f}x flatter)")
+    print(f"baseline-vs-deepnet cv gap: raw {gap_raw:+.3f} -> post-Muon {gap_muon:+.3f}")
+    print("VERDICT: " + (
+        "Muon ERASES the gap -> DeepNet-a is redundant with Muon (supports H2/H0)."
+        if abs(gap_muon) < 0.5 * abs(gap_raw) or gap_muon < 0.02
+        else "gap SURVIVES Muon -> deepnet adds balancing Muon does not (supports H1)."))
 
 
 if __name__ == "__main__":

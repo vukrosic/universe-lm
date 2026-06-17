@@ -175,6 +175,30 @@ cv=std/mean of the per-block grad norms:
    and a sharp follow-up (E6) would be deepnet-α under AdamW vs Muon — if deepnet
    helps far more under AdamW, redundancy-with-Muon is confirmed.
 
+**E5 DECISIVE result — Muon already supplies deepnet's balancing (2026-06-17, no GPU
+needed).** Applied Muon's Newton-Schulz orthogonalization (`zeropower_polar_express`) to
+each 2-D weight's gradient — the actual per-matrix update Muon takes — and re-measured
+per-block update-norm cv at L=30:
+
+| arm | raw-grad cv | post-Muon update cv |
+|---|---|---|
+| baseline | 0.141 | **0.003** |
+| deepnet  | 0.011 | 0.002 |
+
+baseline's per-layer cv **collapses 50× (0.141→0.003)** under Muon; the baseline-vs-deepnet
+gap goes **+0.131 → +0.001**. **Muon erases the per-layer imbalance DeepNet-α exists to
+correct.** This is the mechanistic punchline: deepnet-α's main effect (gradient uniformity)
+is **redundant with Muon's per-matrix orthogonalization**. → **Prediction: deepnet ≈ baseline
+on the ladder** (H2/H0), confirmed in direction by the live early read (−0.019 @10k, within
+noise). Caveats: (i) Muon covers only the 2-D weights; embeddings/norms run on AdamW, where
+deepnet's (small) effect is NOT erased — a minor residual channel; (ii) this is the init
+gradient — training dynamics still get the final say via E1; (iii) it makes E6 almost moot
+for *prediction* (we already know the answer mechanistically), though E6 would still be a
+clean empirical confirmation. **Research takeaway for the release:** stop expecting
+optimization-stability levers (deepnet/rezero/layerscale) to be the scaling win — **Muon +
+RMSNorm already cover that regime**; the exponent-bender, if one exists, lives in the
+attention/long-context family (`LONG-CONTEXT-IDEAS.md`), which Muon does *not* substitute for.
+
 ## Decision rule
 
 DeepNet earns a 135M slot **iff** its fitted curve sits below baseline at the target N
