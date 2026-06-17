@@ -52,8 +52,24 @@ ARM_FLAGS = {
     "deepnet":  {"use_deepnet_alpha": True},     # DeepNet-a residual init (non-positional, long-context-safe)
     # Long-context-safe candidates (flags already wired) — uncomment to enable as arms:
     # "ropebase":  {"rope_base": 100_000.0},
-    # "qknorm":    {"use_qk_norm": True},
+    # "qknorm":    {"use_qk_norm_post_rope": True},
     # "diffattn":  {"use_diff_attn": True},
+}
+
+# Per-rung ENGINEERING (NOT architecture): memory-safe micro-batch + grad-accum
+# to fit the 12GB box. The logits tensor (micro_batch x seq_len 2048 x vocab
+# 49,152) dominates memory — at batch 8 that alone is ~3.2GB and OOMs the 3060 on
+# the backward. So the micro-batch is small and grad-accum keeps the EFFECTIVE
+# batch (8) and training dynamics constant across every rung and arm (RULE 0:
+# engineering re-tuned per tier, not the architecture axis). All arms at a rung
+# share these — only the structural ARM_FLAGS differ.
+EFFECTIVE_BATCH = 8
+RUNG_ENGINEERING = {
+    "Ladder8M155MConfig":   {"batch_size": 2, "gradient_accumulation_steps": 4},
+    "Ladder13M252MConfig":  {"batch_size": 2, "gradient_accumulation_steps": 4},
+    "Ladder23M469MConfig":  {"batch_size": 2, "gradient_accumulation_steps": 4},
+    "Ladder52M1042MConfig": {"batch_size": 1, "gradient_accumulation_steps": 8},
+    "Full135M2700MConfig":  {"batch_size": 1, "gradient_accumulation_steps": 8},
 }
 
 
@@ -110,7 +126,8 @@ def main():
     args = ap.parse_args()
 
     N, tokens = RUNGS[args.rung]
-    flags = ARM_FLAGS[args.arm]
+    # rung engineering (batch/accum) first, then the arm's structural levers on top
+    flags = {**RUNG_ENGINEERING.get(args.rung, {}), **ARM_FLAGS[args.arm]}
     C = build_config_class(args.rung, flags)
 
     if args.check:
