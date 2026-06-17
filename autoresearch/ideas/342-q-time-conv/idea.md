@@ -1,5 +1,5 @@
 ---
-status: running
+status: rejected
 ---
 # 342-q-time-conv
 

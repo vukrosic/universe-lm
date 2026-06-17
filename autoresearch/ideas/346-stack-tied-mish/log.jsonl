@@ -1,0 +1,2 @@
+{"ts":"2026-06-17T01:15:55Z","agent":"daemon","idea":"346-stack-tied-mish","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:30:43Z","agent":"daemon","idea":"346-stack-tied-mish","from":"running","to":"done","round":,"note":"NULL: trt=6.1656 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ-0.0064)"}

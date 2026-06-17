@@ -1,1 +1,2 @@
 {"ts":"2026-06-17T00:25:27Z","agent":"daemon","idea":"344-gmlp-sgu-tied-output","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:15:54Z","agent":"daemon","idea":"344-gmlp-sgu-tied-output","from":"running","to":"done","round":,"note":"NULL: trt=6.1834 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ0.0114)"}

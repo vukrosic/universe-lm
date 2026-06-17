@@ -1,5 +1,5 @@
 ---
-status: running
+status: rejected
 ---
 # 343-conv-ffn
 

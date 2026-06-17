@@ -1,0 +1,5 @@
+{"ts":"2026-06-17T01:39:08Z","agent":"daemon","idea":"348-cross-block-ffn-share","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:41:18Z","agent":"daemon","idea":"348-cross-block-ffn-share","from":"running","to":"needs-recode","round":,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
+{"ts":"2026-06-17T03:17:04Z","agent":"claude","idea":"348-cross-block-ffn-share","from":"needs-recode","to":"needs-run","round":,"note":"false-recode: box was unreachable (scp/connection failed), not a code error — local CPU build-smoke SMOKE_OK on all 5 at 9b48798; box back up"}
+{"ts":"2026-06-17T03:17:49Z","agent":"daemon","idea":"348-cross-block-ffn-share","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T03:32:59Z","agent":"daemon","idea":"348-cross-block-ffn-share","from":"running","to":"done","round":,"note":"NULL: trt=6.1706 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ-0.0014)"}

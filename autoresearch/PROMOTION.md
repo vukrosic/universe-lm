@@ -25,13 +25,20 @@ must be strict because it is sticky. Different stakes ⇒ different seed budgets
 
 ## The two stages
 
-### Stage 1 — SCREEN (1 seed, band 0.04) — unchanged
+### Stage 1 — SCREEN (1 seed, band 0.015) — LIVE
 Every idea runs once at **seed 42**, treatment-only, judged against the pinned
-champion val. The daemon's existing gate:
+champion val. The daemon's live gate (`finalize_one`, env `SCREEN_BAND`):
 
 ```
-candidate WIN  ⟺  trt_val < champion_val − 0.04
+candidate WIN  ⟺  trt_val < champion_val − 0.015
 ```
+
+> **Band history:** 0.04 (cross-box drift, far too deaf) → **0.02** (2026-06-16,
+> ~1σ within-session) → **0.015** (2026-06-17). The tier is saturated enough that
+> real gains are now ~0.01–0.015, so the screen band was tightened to surface
+> near-miss wins (347 stack-gmlp-mish at Δ−0.0195 read NULL under 0.02) rather than
+> swallow them. A lower screen band can only *offer* a candidate to the confirm — it
+> can never promote a fluke (Stage 2 does that), so sensitivity here is cheap.
 
 A result inside the band is **NULL / inconclusive** — logged to `closed.md`,
 never promoted, never "confirmed with more seeds." Most ideas end here. **Do not
@@ -50,29 +57,40 @@ promote off a Stage-1 result.**
 > each treatment paired against a same-session/same-box control + ≥3-seed median,
 > which collapses drift → a real ~0.01–0.015 band. Not yet wired into `finalize_one`.
 
-### Stage 2 — CONFIRM (3 seeds, band 0.02) — required before any promotion
+### Stage 2 — CONFIRM (3 seeds, band 0.001 + sign guard) — required before any promotion
 Only a Stage-1 candidate WIN enters Stage 2. Run **both** the challenger and the
-current champion at **3 seeds — `42, 123, 7`** (champion's 3-seed mean is
-measured once when it is first crowned and cached, so in steady state only the
-challenger's 2 extra seeds are new GPU).
+current champion at **3 seeds — `42, 123, 7`**, back-to-back in ONE session on ONE
+box (so only within-session noise is in play — the champion is RE-RUN fresh each
+confirm, never compared to its stale pinned val; the bar is drift-free).
 
 ```
-PROMOTE  ⟺  mean3(challenger) < mean3(champion) − 0.02
+PROMOTE  ⟺  mean3(challenger) < mean3(champion) − 0.001     (any real improvement)
+       AND  every one of the 3 seeds individually favors the challenger   (sign guard)
 ```
 
-- **0.02 ≈ 2·SEM** of a 3-seed mean (`σ/√3 ≈ 0.012`). Averaging 3 seeds shrinks
-  the noise window by √3 ≈ 1.73× vs the single-seed 0.04 — a smaller window, not
+- **Operator policy (2026-06-17): promote on *any* real 3-seed-mean improvement.**
+  The band is a tiny epsilon (0.001), NOT a noise window — the noise guard is
+  **sign-consistency**, not band width. Because the confirm is paired (same box,
+  same session, same seeds, champion re-run live), a wide band is no longer the
+  right instrument; the failure mode is a fluky-negative *mean*, which 3/3-seeds-
+  agree kills. For a true null, `mean3 < champ − 0.001` alone false-promotes ~37%
+  (≈0.3·SEM); requiring all 3 seeds right-sign drops that to (½)³ = **12.5%** while
+  still passing any genuine small gain. Enforced in `bin/confirm_paired.py`
+  (`all_negative` + `--band 0.001`).
+- *(historical)* The old **0.02 ≈ 2·SEM** band shrank the single-seed 0.04 by √3,
+  back when the confirm was treated as a wide-window test — superseded above.
   zero.
 - **Like-for-like only.** Never compare a 3-seed challenger mean to a 1-seed
   champion val. Both sides are 3-seed means at the same tier/box.
-- **Inside the band ⇒ do not promote.** `mean3(challenger) < mean3(champion)` but
-  within 0.02 is "promising, inconclusive": keep the champion, log it, move on.
-  (Optional stronger gate if you want extra safety on a marginal call: require
-  all 3 challenger seeds individually below the champion mean — sign-consistency.)
+- **Fails the sign guard ⇒ do not promote.** `mean3(challenger) < mean3(champion)`
+  by >0.001 but with a seed disagreeing (one seed favors the champion) is
+  "promising, inconclusive": keep the champion, log it, move on. The sign guard —
+  not a wide band — is now the noise floor (see Stage 2 above).
 
-On promotion: pin `mean3(challenger)` as the new champion val + its 3-seed std
-(set `band = max(0.02, 2·std3)`), append to `champion.json.lineage`, and the new
-champion becomes the Stage-1 bar for the next batch.
+On promotion: pin `mean3(challenger)` as the new champion val + its 3-seed std,
+append to `champion.json.lineage`, and the new champion becomes the Stage-1 bar
+for the next batch. (The pinned val only gates the 1-seed screen; every confirm
+re-runs the champion fresh, so an optimistically-low pin self-corrects.)
 
 ## What is NOT in scope (still hard rules)
 - Still **one tier** — `tiny1m3m`. 3 seeds means 3 runs of the *same* tier, not a
@@ -81,15 +99,16 @@ champion becomes the Stage-1 bar for the next batch.
   seed to break a tie." A sub-noise Stage-1 effect is inconclusive, full stop.
 - Three seeds is the **ceiling**, only for the promotion confirm. Not 5, not 10.
 
-## Implementation hook (for whoever wires this into the daemon)
-Today `finalize_one`/`promote_champion` in `queue-daemon.sh` promote directly off
-the Stage-1 verdict. To add Stage 2:
-1. On a Stage-1 candidate WIN, flip the idea to a new `needs-confirm` status
-   instead of auto-promoting; enqueue a 3-seed confirm run (seeds `42,123,7` — a
-   `run.json` `seeds` array, or 3 arq launches).
-2. Ensure the champion has a cached 3-seed mean (`baseline.sh` gains a
-   `measure3`/`pin3`); measure it once at crowning.
-3. Promote only if `mean3(chal) < mean3(champ) − max(0.02, 2·std3)`; else flip
-   `done` (NULL-confirmed) and log to `closed.md`.
-This is intentionally **not built yet** — there is no winner to confirm. Build it
-when the first Stage-1 candidate WIN appears.
+## Implementation (LIVE — wired 2026-06)
+The two-stage gate is built and running:
+1. **Stage-1 SCREEN** — `finalize_one` in `queue-daemon.sh` judges the 1-seed run
+   vs `champion.json` val at `SCREEN_BAND` (0.015). The lucky-seed guard flips a
+   SCREEN-WIN to **`needs-confirm`** instead of auto-promoting — nothing promotes
+   off Stage 1.
+2. **Stage-2 CONFIRM** — `bin/confirm_paired.py <idea> <flags>` runs both arms at
+   seeds `42,123,7` back-to-back on one box, judges
+   `mean3(chal) < mean3(champ) − 0.001` **AND** all-3-seeds-agree, writes
+   `confirm-paired.md`, and (with `--promote`) re-pins `champion.json`.
+
+Champion config_class re-pin is a deliberate step (env-driven champions like 296/323
+can't be expressed by a flag list alone — see the hand-rolled `_arq_confirm_*.py`).

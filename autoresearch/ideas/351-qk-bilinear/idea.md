@@ -1,5 +1,5 @@
 ---
-status: needs-run
+status: done
 ---
 # 351-qk-bilinear
 

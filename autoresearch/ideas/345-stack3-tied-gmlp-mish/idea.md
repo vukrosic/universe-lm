@@ -1,5 +1,5 @@
 ---
-status: needs-run
+status: done
 ---
 # 345-stack3-tied-gmlp-mish
 

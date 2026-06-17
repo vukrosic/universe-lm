@@ -29,6 +29,16 @@ The code-implementer never closes — if blocked it bounces the idea back to
 - 162-q-only-norm — null: trt=6.4303 vs fresh baseline 6.4346±0.0458 (Δ=-0.0043, inside band; pass bar -0.005 missed by 0.0007) at tiny1m3m; train_loss 6.4129 (between ctrls 6.3893/6.3782/6.4391), val_acc 0.1456 (between ctrls 0.1441/0.1448/0.1425); +192 params (+0.020%, 12 RMSNorm(d_k=16) weights × 12 blocks, no bias), Q-only RMSNorm pre-softmax leaves K raw; attribution insight: 016-qk-norm WIN was carried by K-side or symmetry, NOT Q-side (with 165-k-only-norm as orthogonal K-side ablation); closes the Q-side of the QK-norm-attribution axis at 0.94M — 2026-06-14
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 352-champion-layerscale — null: Δ=0.0499 at tiny1m3m (inside variance) — 2026-06-17
+- 351-qk-bilinear — null: Δ=0.0074 at tiny1m3m (inside variance) — 2026-06-17
+- 349-tied-wo-across-blocks — null: Δ=0.0105 at tiny1m3m (inside variance) — 2026-06-17
+- 348-cross-block-ffn-share — null: Δ=-0.0014 at tiny1m3m (inside variance) — 2026-06-17
+- 347-stack-gmlp-mish — null: Δ=-0.0195 at tiny1m3m (inside variance) — 2026-06-17
+- 346-stack-tied-mish — null: Δ=-0.0064 at tiny1m3m (inside variance) — 2026-06-17
+- 345-stack3-tied-gmlp-mish — null: Δ=-0.0154 at tiny1m3m (inside variance) — 2026-06-17
+- 344-gmlp-sgu-tied-output — null: Δ=0.0114 at tiny1m3m (inside variance) — 2026-06-17
+- 343-conv-ffn — LEAK (rejected): val=0.4388 implausibly below baseline 6.172 at tiny1m3m — likely broken causal mask / label leak, NOT a win — 2026-06-17
+- 342-q-time-conv — LEAK (rejected): val=0.4369 implausibly below baseline 6.172 at tiny1m3m — likely broken causal mask / label leak, NOT a win — 2026-06-17
 - 341-unet-skips — null: Δ=0.0080 at tiny1m3m (inside variance) — 2026-06-17
 - 340-short-conv — null: Δ=0.0061 at tiny1m3m (inside variance) — 2026-06-17
 - 339-v-mix-conv — LEAK (rejected): val=0.4224 implausibly below baseline 6.172 at tiny1m3m — likely broken causal mask / label leak, NOT a win — 2026-06-17

@@ -1,5 +1,5 @@
 ---
-status: needs-run
+status: done
 ---
 # 348-cross-block-ffn-share
 

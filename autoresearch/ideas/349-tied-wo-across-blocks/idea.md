@@ -1,5 +1,5 @@
 ---
-status: needs-run
+status: done
 ---
 # 349-tied-wo-across-blocks
 

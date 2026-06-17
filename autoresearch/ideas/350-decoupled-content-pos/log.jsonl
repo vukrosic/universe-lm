@@ -1,0 +1,5 @@
+{"ts":"2026-06-17T01:39:08Z","agent":"daemon","idea":"350-decoupled-content-pos","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:41:19Z","agent":"daemon","idea":"350-decoupled-content-pos","from":"running","to":"needs-recode","round":,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
+{"ts":"2026-06-17T03:17:04Z","agent":"claude","idea":"350-decoupled-content-pos","from":"needs-recode","to":"needs-run","round":,"note":"false-recode: box was unreachable (scp/connection failed), not a code error — local CPU build-smoke SMOKE_OK on all 5 at 9b48798; box back up"}
+{"ts":"2026-06-17T03:17:49Z","agent":"daemon","idea":"350-decoupled-content-pos","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T03:41:21Z","agent":"daemon","idea":"350-decoupled-content-pos","from":"running","to":"needs-recode","round":,"note":"run FAILED (FAIL): RuntimeError: use_decoupled_content_pos=True requires a shared DeBERTaRelativePositionBias module"}

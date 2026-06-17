@@ -12,11 +12,13 @@ autoresearch/ideas/208-value-residual-alibi/confirm-3seed.md):
   * 3 seeds (42/123/7) per arm, back-to-back in ONE session on ONE box
     => only within-session noise is in play (no cross-box drift)
   * paired verdict: CONFIRM iff trt 3-seed mean beats champion by > band
-    AND the paired mean delta is negative. band default 0.018 ~= 2*SEM of a
-    3-seed mean at this tier (within-session sigma ~0.015).
+    AND the paired mean delta is negative AND all 3 seeds individually favor
+    treatment (sign-consistency noise floor). band default 0.001 (operator policy
+    2026-06-17: promote on any real 3-seed-mean improvement; the paired same-box
+    same-session design + 3/3 sign agreement — not a wide band — guards noise).
 
 Usage:
-  confirm_paired.py <idea-slug> <flag1[,flag2,...]> [--band 0.018] [--promote]
+  confirm_paired.py <idea-slug> <flag1[,flag2,...]> [--band 0.001] [--promote]
   confirm_paired.py <idea-slug> --collect          # parse an already-finished run
 
 Box/champion config come from autoresearch/{remote-box.json,champion.json}.
@@ -199,7 +201,17 @@ def judge(idea, vals, band, promote):
     deltas = [vals[f"trt_{s}"] - vals[f"ctrl_{s}"] for s in SEEDS]
     cm, tm = st.mean(ctrl), st.mean(trt)
     dm, dsem = st.mean(deltas), st.stdev(deltas) / (3 ** 0.5)
-    confirmed = (dm < 0) and (tm < cm - band)
+    # Promote on ANY real 3-seed-mean improvement past a tiny epsilon band (0.001,
+    # operator policy 2026-06-17). The paired design makes this safe: `cm` is the
+    # champion RE-RUN fresh at the same 3 seeds in the same session, so the bar is
+    # drift-free (the pinned champion val only gates the cheap 1-seed screen, never
+    # this promote). The noise floor is sign-consistency, NOT a wide band: a 0.001
+    # win must hold across ALL 3 seeds (trt beats champion at each seed). For a true
+    # null the mean alone false-promotes ~37% (dm < -0.001 ~ 0.3 SEM); requiring
+    # 3/3 right-sign drops that to (0.5)^3 = 12.5% while still passing any genuine
+    # small gain. Drop `all_negative` to promote on the bare 3-seed average.
+    all_negative = all(d < 0 for d in deltas)
+    confirmed = (dm < 0) and (tm < cm - band) and all_negative
     lines = [
         f"# Paired 3-seed CONFIRM — {idea}",
         "",
@@ -210,6 +222,8 @@ def judge(idea, vals, band, promote):
         f"- ctrl 3-seed mean **{cm:.4f}** (median {st.median(ctrl):.4f})",
         f"- trt  3-seed mean **{tm:.4f}** (median {st.median(trt):.4f})",
         f"- paired Δ mean **{dm:+.4f} ± {dsem:.4f} SEM**, band {band}",
+        f"- sign-consistency: {sum(d < 0 for d in deltas)}/3 seeds favor treatment"
+        + ("" if all_negative else " — FAILS the all-3-seeds-agree guard"),
         "",
         f"## Verdict: {'CONFIRMED — promote' if confirmed else 'NOT CONFIRMED — stays null, champion unchanged'}",
     ]
@@ -238,7 +252,7 @@ def main():
                          "(e.g. use_deepnet_alpha). Both arms get these; only `flags` differ. "
                          "Defaults to champion.json's `flags` field. Pass this to test a lever's "
                          "MARGINAL gain over a flag-defined champion (avoids the bare-base control bug).")
-    ap.add_argument("--band", type=float, default=0.018)
+    ap.add_argument("--band", type=float, default=0.001)
     ap.add_argument("--collect", action="store_true", help="just parse a finished run")
     ap.add_argument("--promote", action="store_true")
     a = ap.parse_args()

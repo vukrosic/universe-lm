@@ -1,0 +1,2 @@
+{"ts":"2026-06-17T05:36:31Z","agent":"daemon","idea":"352-champion-layerscale","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T05:45:40Z","agent":"daemon","idea":"352-champion-layerscale","from":"running","to":"done","round":,"note":"NULL: trt=6.2219 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.015 (Δ0.0499)"}

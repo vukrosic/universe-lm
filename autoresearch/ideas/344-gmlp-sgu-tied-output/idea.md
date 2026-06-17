@@ -1,5 +1,5 @@
 ---
-status: running
+status: done
 ---
 # 344-gmlp-sgu-tied-output
 

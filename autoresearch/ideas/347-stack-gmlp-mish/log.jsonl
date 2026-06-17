@@ -1,0 +1,8 @@
+{"ts":"2026-06-17T01:15:55Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:39:07Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"running","to":"needs-run","round":,"note":"reclaimed: queue died (stale 29694339m)"}
+{"ts":"2026-06-17T01:39:08Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T01:41:18Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"running","to":"needs-recode","round":,"note":"build-smoke failed: no smoke output (scp/connection failed)"}
+{"ts":"2026-06-17T03:17:04Z","agent":"claude","idea":"347-stack-gmlp-mish","from":"needs-recode","to":"needs-run","round":,"note":"false-recode: box was unreachable (scp/connection failed), not a code error — local CPU build-smoke SMOKE_OK on all 5 at 9b48798; box back up"}
+{"ts":"2026-06-17T03:17:49Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T03:26:51Z","agent":"daemon","idea":"347-stack-gmlp-mish","from":"running","to":"done","round":,"note":"NULL: trt=6.1525 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ-0.0195)"}
+{"ts":"2026-06-17T04:16:05Z","agent":"claude","idea":"347-stack-gmlp-mish","from":"done","to":"needs-confirm","round":,"note":"screen-WIN under new 0.015 band (val 6.1525 < 6.172-0.015=6.157, Δ-0.0195); was NULL under old 0.02. Live candidate for the 0.001+sign-guard confirm policy"}
