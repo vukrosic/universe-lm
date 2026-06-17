@@ -68,6 +68,31 @@ baseline vs deepnet and **compare the exponents**, not just the endpoint losses.
 baseline vs deepnet at 8M/13M/23M (local) → 52M/135M (contributors). Fit and compare
 exponents with `scaling_fit.py`. **First read** on H1 vs H2. *In flight now.*
 
+**E1 live early read (8M rung, 2026-06-17 — deepnet still mid-run):** matched-step eval
+losses, baseline vs deepnet:
+
+| step | baseline | deepnet | Δ |
+|---|---|---|---|
+| 0     | 10.8063 | 10.8073 | +0.001 (≈identical at init) |
+| 10000 | 4.9784  | 4.9591  | **−0.019** |
+| 20000 | 3.9345  | (pending) | |
+| 30000 | 4.4690  | (pending) | |
+| final | **4.3208** | (pending) | |
+
+Two observations (preliminary, 1 seed):
+1. **deepnet ≈ baseline at init** (+0.001) — matches the forward probe; α barely moves
+   the step-0 forward. The −0.019 at 10k sits right at the 0.02 screen noise band → a
+   *small* effect, consistent with the H2/Muon-redundancy lean.
+2. **Baseline is unstable late-training**: 4.98(10k)→3.93(20k)→4.47(30k)→4.32(final) — it
+   *regresses* in the final third under the **constant LR** (no decay). Open question the
+   deepnet run will answer: does deepnet's gradient-uniformity make it **steadier** late?
+   If deepnet's final beats baseline mainly by *avoiding the late bounce* (not a lower
+   floor), then **deepnet's value is training stability, not a better minimum** — which
+   fits the gradient-uniformity mechanism exactly. ⚠️ Also flags a ladder-hygiene risk:
+   constant-LR late bounce adds noise to the fitted endpoints; consider a cosine decay
+   for cleaner scaling points once we've seen baseline+deepnet across all 3 local rungs
+   (would re-baseline, so decide deliberately — not mid-sweep).
+
 ### E2 — Depth-isolation (the clean mechanism test; run IF E1 is promising)
 The main ladder confounds **depth, width, and N** (each rung changes all three).
 DeepNet's claim is about **depth specifically**. So: hold **width fixed**
