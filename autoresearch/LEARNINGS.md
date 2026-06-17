@@ -169,8 +169,33 @@ Crisp, with the reason. (RULE 0 in `EXPERIMENT-DESIGN.md` codifies the big one.)
    causal mask), not a record. Real tiny1m3m floor is ~6.17. Auto-reject; build
    base and candidate the SAME way (most use_* flags are inert step-0 — a
    construction mismatch fabricates a 0.10+ artifact).
+10. **Optimization-stability levers are REDUNDANT WITH MUON** (deepnet-α, rezero,
+   layerscale, and the residual-damping family) — even at the release target's L=30.
+   DeepNet-α's only real effect is per-layer gradient uniformity (raw grad-norm cv
+   0.141→0.011), but Muon's per-matrix orthogonalization *already* supplies it: after
+   Muon, baseline's per-layer cv collapses 50× (0.141→0.003) and the deepnet gap goes
+   +0.131→+0.001. So Muon + RMSNorm cover the stability regime; the scaling win must be
+   a mechanism Muon does NOT substitute for (attention/long-context, not optimization).
+   Full study: `DEEPNET-RESEARCH.md`, memory `autoresearch-deepnet-muon-redundancy`.
 
 ---
+
+## 5. METHOD — pre-screen structural levers with cheap init-probes
+
+Before spending a (multi-hour) training run on a structural lever, run a CPU init-probe
+to predict whether it can even matter (`autoresearch/bin/deepnet_probe.py` is the
+template). At step 0, with random data, measure:
+- **forward residual-stream RMS growth** across depth (does the lever change the forward
+  signal, or does RMSNorm already handle it?),
+- **per-layer gradient-norm cv** (does it rebalance updates?),
+- **post-optimizer-update cv** — apply Muon's `zeropower_polar_express` to the grads and
+  re-measure: *if the optimizer erases the lever's effect, the lever is redundant.*
+
+This is how the deepnet→Muon redundancy (rule 10) was settled **without** the 9-hour
+ladder. It won't replace the empirical run (training dynamics get the final say), but it
+cheaply kills "redundant-with-optimizer/norm" levers before they cost GPU. General rule:
+**a structural lever only earns a training run if a cheap init-probe shows it changes
+something the optimizer + norm don't already provide.**
 
 ## 4. LONG-CONTEXT PRINCIPLE — the loss-game vs the release diverge
 
