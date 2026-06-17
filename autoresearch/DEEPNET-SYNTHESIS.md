@@ -18,7 +18,7 @@ Three probes on a random batch at step 0 revealed the mechanism:
 
 **Finding:** DeepNet-α is redundant with Muon at the init level.
 
-### E1: The ladder (empirical, 8M + 13M logged; 23M pending) — IN PROGRESS
+### E1: The ladder (empirical, 8M + 13M logged; 23M in progress) — IN PROGRESS
 
 Matched-step deltas (baseline vs deepnet):
 
@@ -28,11 +28,11 @@ Matched-step deltas (baseline vs deepnet):
 | Δ @ step 10k   | −0.019 | — |
 | Δ @ step 20k   | −0.005 | — |
 | Δ @ step 30k   | −0.001 | — |
-| Δ @ final      | **+0.004** | **−0.004** |
+| Δ @ final      | **+0.004** | **−0.0039** |
 
-**Pattern:** deltas hover near **0 within the 0.02 noise band**, exactly as the Muon-redundancy prediction says. deepnet ≈ baseline at every rung and every step. Deepnet does NOT provide a lower floor or late stability (both arms bounce 3.93@20k→~4.4@30k under constant LR).
+**8M + 13M verdict (CONFIRMED):** deltas are **NULL within the 0.02 noise band** at both rungs, exactly as the Muon-redundancy prediction. deepnet ≈ baseline at every step and both rungs bounce identically late (3.93@20k→~4.4@30k under constant LR). Deepnet provides **no lower floor, no late stability, no advantage**.
 
-**Pending:** 23M baseline + deepnet, then auto-fit L(N) for exponent comparison. Prediction: identical slopes (both ~constant intercept shift, or nearly flat if baseline itself is flat).
+**23M in progress (queued on remote box).** Once logged, the 3-rung set will trigger auto-fit `scaling_fit.py`. Prediction: identical or near-identical exponent slopes (deepnet's NULL verdict is depth-independent, so the fitted L(N) will be parallel — confirming H0/H2 conclusively). If 23M deepnet delta is also NULL, the ladder's exponent comparison is already decisive: deepnet does not bend the scaling curve.
 
 ### E3: α vs α+β (deepnet_ab arm, 8M pending)
 

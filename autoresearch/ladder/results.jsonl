@@ -1,1 +1,4 @@
 {"arch": "baseline", "N": 1450000, "tokens": 155000000, "val_loss": 4.3208, "seed": 42, "rung": "Ladder8M155MConfig"}
+{"arch": "deepnet", "N": 1450000, "tokens": 155000000, "val_loss": 4.3252, "seed": 42, "rung": "Ladder8M155MConfig"}
+{"arch": "baseline", "N": 3170000, "tokens": 252000000, "val_loss": 4.0953, "seed": 42, "rung": "Ladder13M252MConfig"}
+{"arch": "deepnet", "N": 3170000, "tokens": 252000000, "val_loss": 4.0914, "seed": 42, "rung": "Ladder13M252MConfig"}
