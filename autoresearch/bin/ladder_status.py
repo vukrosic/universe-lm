@@ -73,7 +73,7 @@ def summarize(recs):
         archs.add(r["arch"])
     other = sorted(a for a in archs if a != "baseline")
     print(f"\n=== Ladder status: {len(recs)} points, arms = {', '.join(sorted(archs))} ===")
-    hdr = f"{'N (non-embed)':>14} {'rung':>22} {'baseline':>9}" + "".join(f"{a:>16}" for a in other)
+    hdr = f"{'N (non-embed)':>14} {'rung':>22} {'baseline':>9}" + "".join(f"{a:>18}" for a in other)
     print(hdr); print("-" * len(hdr))
     for (N, rung) in sorted(by_rung):
         row = by_rung[(N, rung)]
@@ -82,12 +82,12 @@ def summarize(recs):
         for a in other:
             v = row.get(a)
             if v is None:
-                cells += f"{'—':>16}"
+                cells += f"{'—':>18}"
             elif base is None:
-                cells += f"{('%.4f'%v):>16}"
+                cells += f"{('%.4f'%v):>18}"
             else:
                 d = v - base
-                cells += f"{('%.4f (%+.4f)'%(v,d)):>16}"
+                cells += f"{('%.4f (%+.4f)'%(v,d)):>18}"
         print(cells)
     # distinct-N count per arch (need >=3 to fit)
     nN = defaultdict(set)

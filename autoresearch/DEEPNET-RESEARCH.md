@@ -77,7 +77,11 @@ losses, baseline vs deepnet:
 | 10000 | 4.9784  | 4.9591  | **−0.019** |
 | 20000 | 3.9345  | 3.9297  | **−0.005** |
 | 30000 | 4.4690  | 4.4676  | **−0.001** |
-| final | **4.3208** | (pending, ≈baseline) | |
+| **final** | **4.3208** | **4.3252** | **+0.004** |
+
+**8M VERDICT (final, logged): NULL — deepnet is marginally WORSE (+0.004), within the
+0.02 band.** Prediction empirically confirmed: deepnet-α ≈ baseline at the 8M rung on
+every axis (init, mid, late bounce, final). The Muon-redundancy story holds end to end.
 
 **RESOLVED — full redundancy on every axis.** deltas at every matched step: +0.001,
 −0.019, −0.005, −0.001 → deepnet ≈ baseline throughout. And the open stability question
