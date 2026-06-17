@@ -1,10 +1,13 @@
 # The Pipeline — how a claim earns its place
 
-> ## 🔒 HARD RULE — operator approval is the ONLY gate into the ledger
-> _Set by Vuk, 2026-06-17. No exceptions, no self-promotion._
+> ## 🔒 HARD RULE — operator approval is the ONLY gate into the measured ledger
+> _Set by Vuk, 2026-06-17. No exceptions, no self-promotion. Unchanged when the ledger was
+> folded into the LLM Manual — it governs **measured** `L###/D###/C###` entries only; the
+> citation-gated field rules (`FM-*`) are a separate surface the assistant may write freely._
 >
-> 1. The assistant may create or edit files **ONLY** in `book/drafts/`.
-> 2. A numbered ledger file (`book/D###`, `book/L###`, `book/C###`) may be created or
+> 1. The assistant may create or edit measured-rule files **ONLY** in `drafts/`.
+> 2. A numbered ledger file (`D###`, `L###`, `C###` — placed in its topical section folder)
+>    may be created or
 >    modified **only after Vuk explicitly approves that specific promotion.** Clearing the
 >    numeric gates below makes a draft *eligible* for approval — it does **not** authorize
 >    the write. Eligible ≠ approved.
@@ -20,8 +23,10 @@ Two surfaces, one-way gates. This file is the *process*; the entries are the *pr
 
 - **`drafts/`** — the bench. Mutable, unnumbered, **not citable**. Where an idea lives
   until measurement decides its tier. Rename or delete freely.
-- **`book/`** (here) — the ledger. Numbered, citable, **append-only identity**: never
-  renumber, never re-letter an existing file (links are permanent — see README).
+- **the section folders** (`01-…/` … `07-…/`) — the ledger. Approved measured entries
+  (`L###/D###/C###`) live here beside the field rules they test. Numbered, citable,
+  **append-only identity**: never renumber, never re-letter an existing file (links are
+  permanent — see README).
 
 An idea crosses from bench to ledger only by clearing an objective gate. That crossing is
 the "strict system of entering" — it is the whole point of this file.
@@ -34,7 +39,7 @@ DRAFT ─┬─ admit as → C###   conjecture        believed, untested in-scop
        ├─ admit as → L###!  law (strong)      paired, ≥3 seeds, clears the noise floor
        └─ admit as → D###   derivation        deductive from stated assumptions
 
-in-book moves:
+in-ledger moves:
    L###?  ── upgrade ──→ L###!     same file, same number; only the Status line changes
    any    ── demote  ──→ DEAD      its own Falsifier fired in-scope; mark, keep the file
    C###   ── confirm ──→ new L###  cross-letter never renames; C gets "→ promoted to L###"
@@ -62,7 +67,7 @@ screen band = **0.02**. Measurement gate = paired differencing ([D001](D001-pair
 
 ## Admission checklist (the strict part)
 
-A draft **cannot** enter the book until it carries all six fields the README mandates
+A draft **cannot** enter the ledger until it carries all six fields the README mandates
 (Statement · Status · Scope · Evidence/Derivation · Falsifier · Links). Practical bars:
 
 - **No Falsifier → stays a draft.** A claim you can't kill isn't a law.
