@@ -1,0 +1,8 @@
+{"ts":"2026-06-16T02:37:06Z","agent":"daemon","idea":"254-entmax-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T02:49:44Z","agent":"daemon","idea":"254-entmax-alibi","from":"running","to":"needs-recode","round":1,"note":"run FAILED (FAIL): device: auto -> CUDA: NVIDIA GeForce RTX 3060 (12.5 GB)"}
+{"ts":"2026-06-16T02:56:59Z","agent":"claude","idea":"254-entmax-alibi","from":"needs-recode","to":"needs-run","round":2,"note":"bumped timeout 12m→20m (entmax Tsallis iter ~2x softmax); first run timed out at step 150/732, val 7.02 on track"}
+{"ts":"2026-06-16T03:11:54Z","agent":"daemon","idea":"254-entmax-alibi","from":"needs-run","to":"running","round":2,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T03:24:30Z","agent":"daemon","idea":"254-entmax-alibi","from":"running","to":"needs-recode","round":2,"note":"run FAILED (FAIL): device: auto -> CUDA: NVIDIA GeForce RTX 3060 (12.5 GB)"}
+{"ts":"2026-06-16T03:28:20Z","agent":"claude","idea":"254-entmax-alibi","from":"needs-recode","to":"needs-run","round":3,"note":"round 2 timeout at 12m; batched with 257 so 12m was max timeout. Now 20m run.json. Will re-launch in next batch with the 5 stack experiments (264-268)."}
+{"ts":"2026-06-16T03:30:38Z","agent":"daemon","idea":"254-entmax-alibi","from":"needs-run","to":"running","round":3,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T03:43:53Z","agent":"daemon","idea":"254-entmax-alibi","from":"running","to":"rejected","round":3,"note":"run FAILED (FAIL): device: auto -> CUDA: NVIDIA GeForce RTX 3060 (12.5 GB)"}

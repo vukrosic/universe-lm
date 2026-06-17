@@ -1,8 +1,8 @@
 ---
 id: 222-mid-ffn-layernorm
-status: needs-taste
+status: needs-review
 round: 1
-updated: 2026-06-16T01:00:00Z
+updated: 2026-06-16T00:46:19Z
 transfer-risk: med
 plain: Insert a LayerNorm in the middle of the FFN, between the up-projection and the activation/gate (or between the activation and the down-projection). At init the LN is gain=1, bias=0, so it is the identity and the FFN is unchanged; the model gets a free knob to re-scale the FFN's mid-state.
 ---

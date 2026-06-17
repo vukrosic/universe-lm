@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T16:08:41Z","agent":"daemon","idea":"302-combo-best-of-each","from":"needs-run","to":"running","round":3,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T16:23:23Z","agent":"daemon","idea":"302-combo-best-of-each","from":"running","to":"done","round":3,"note":"NULL: trt=6.2075 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ0.0077)"}

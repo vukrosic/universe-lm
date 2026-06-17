@@ -1,0 +1,16 @@
+{"ts":"2026-06-16T08:48:13Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:48:50Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:50:53Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:51:28Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:53:30Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:54:06Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:56:09Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:56:43Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:58:44Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T09:20:30Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"mac-restart interrupted in-flight run (no results, no arq tmux, GPU idle) — clean relaunch"}
+{"ts":"2026-06-16T09:20:56Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T09:35:36Z","agent":"reset-button","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T09:41:48Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T10:49:21Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"needs-run","round":1,"note":"reclaimed: queue died (stale 67m)"}
+{"ts":"2026-06-16T10:49:21Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T11:00:05Z","agent":"daemon","idea":"287-deepnet-poly-alibi-pre-lm-head-rmsnorm","from":"running","to":"done","round":1,"note":"NULL: trt=6.2266 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2209±0.02 (Δ0.0057)"}

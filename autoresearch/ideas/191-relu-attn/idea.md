@@ -1,8 +1,8 @@
 ---
 id: 191-relu-attn
-status: needs-run
+status: rejected
 round: 1
-updated: 2026-06-15T08:50:07Z
+updated: 2026-06-16T08:42:36Z
 transfer-risk: med
 plain: Replace the softmax in attention with a ReLU (positive-part) — the score becomes ReLU(Q·K/sqrt(d)) normalized by the sum, with no exponential in sight.
 ---

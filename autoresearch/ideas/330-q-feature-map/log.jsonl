@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T23:10:31Z","agent":"daemon","idea":"330-q-feature-map","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T23:25:20Z","agent":"daemon","idea":"330-q-feature-map","from":"running","to":"done","round":,"note":"NULL: trt=6.3847 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ0.2127)"}

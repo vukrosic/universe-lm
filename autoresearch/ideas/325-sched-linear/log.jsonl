@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T22:25:19Z","agent":"daemon","idea":"325-sched-linear","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T22:33:56Z","agent":"daemon","idea":"325-sched-linear","from":"running","to":"needs-recode","round":,"note":"run FAILED (FAIL): torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 768.00 MiB. GPU 0 has a total capacity of 11.63 GiB of which 621.75 MiB is free. Process 4045345 h"}

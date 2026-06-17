@@ -5,6 +5,25 @@
 > This file is the *strategy*: which levers are worth a GPU slot at all. Written
 > 2026-06-15 from the 208–216 batch against the **alibi champion (val 6.2403)**.
 
+## RULE 0 — NOVEL ARCHITECTURES ONLY. NO HYPERPARAMETER SEARCH. (operator, 2026-06-17)
+> **"dont do basic hyperparam search, you must try novel architectures."**
+>
+> A valid lever changes the **forward pass or the objective** — a *mechanism*:
+> attention variants, positional schemes, normalization/residual structure,
+> FFN/mixing structure, loss/objective structure, token-mixing. This is the
+> brief's mandate ("identity-init MECHANISMS ... without hyperparameter tuning").
+>
+> **NEVER queue a sweep of a scalar training/optimizer knob:** learning rate
+> (`muon_lr`/`adamw_lr` or any ×mult), LR ratio, `schedule_type`/warmup,
+> `weight_decay`, `muon_momentum`, `batch_size`/`gradient_accumulation_steps`,
+> `embedding_scale` or any init-magnitude. These are hyperparameter search, not
+> mechanisms — out of scope regardless of how they screen.
+>
+> *History:* ideas 303–328 drifted into exactly this HP search (LR/wd/momentum/
+> batch/schedule/ratio) and were called out. Do not repeat. If the only ideas you
+> can think of are knob-tweaks, that's a signal to go read recent architecture
+> papers, not to file a knob-tweak.
+
 ## The budget is the constraint — internalize it
 The tier is **tiny1m3m: 0.94M params, ~92 update steps, seed 42, 3M tokens.**
 Everything below follows from "92 steps." A lever only matters if it can express

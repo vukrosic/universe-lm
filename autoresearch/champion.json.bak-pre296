@@ -1,0 +1,61 @@
+{
+  "_comment": "The current CHAMPION architecture — the live baseline every new experiment is measured against and stacked on top of. The daemon updates this automatically on each new record; new experiments subclass `config_class` and are judged vs `val` (no baseline re-measure). Empty `stub` => fall back to the bare base config.",
+  "stub": "_arq_267-deepnet-poly-alibi.py",
+  "config_class": "configs.llm_config.Tiny1M3MAlibiConfig",
+  "flags": ["use_deepnet_alpha", "use_poly_alibi"],
+  "_flags_note": "The champion's defining levers ON TOP OF config_class. The live champion is config_class + these flags; config_class alone is NOT the champion. confirm_paired.py applies these to BOTH arms so the control is the real champion (not the bare base) — prevents the 267 over-credit bug where poly-alibi was confirmed vs plain alibi instead of vs alibi+deepnet.",
+  "val": 6.2209,
+  "val_note": "PROMOTED 2026-06-16 via 3-seed paired CONFIRM (confirm_paired.py). Trt 3-seed mean (42/123/7 = 6.2125/6.2306/6.2197, std 0.0074) vs ctrl (alibi) 3-seed mean 6.2539, paired Δ-0.0330±0.0098 SEM, well past 0.018 band. Tiny1M3MAlibiConfig + use_deepnet_alpha + use_poly_alibi. Replaces 253-deepnet-alpha (val 6.2367). Alibi + DeepNet-α (Wang 2022, arXiv:2203.00555, α=1/√24, 0 new params) + use_poly_alibi (per-head linear+quadratic distance decay, +48 params, c_h=0 at init). Three different orthogonal axes (positional bias + residual scaling + curvature) compounding at 0.94M/92 steps. See autoresearch/ideas/267-deepnet-poly-alibi/ and autoresearch/closed.md.",
+  "val_single_seed_original": 6.2147,
+  "band": 0.04,
+  "seed": 42,
+  "lineage": [
+    {
+      "idea": "175-alibi-slopes",
+      "config_class": "configs.llm_config.Tiny1M3MAlibiConfig",
+      "val": 6.2403,
+      "promoted": "2026-06-15"
+    },
+    {
+      "idea": "175-alibi-slopes",
+      "config_class": "configs.llm_config.Tiny1M3MAlibiConfig",
+      "val": 6.2539,
+      "val_runs": [6.2650, 6.2556, 6.2412],
+      "event": "re-pinned to honest 3-seed mean (was 6.2403, a lucky single seed)",
+      "repinned": "2026-06-15"
+    },
+    {
+      "idea": "253-deepnet-alpha-alibi",
+      "config_class": "configs.llm_config.Tiny1M3MAlibiConfig",
+      "val": 6.2367,
+      "val_runs": [6.2309, 6.2434, 6.2359],
+      "event": "MANUAL promotion: deepnet-alpha 3-seed mean Δ-0.0172 from alibi champion (2.73σ below band). First real challenger to alibi in this session.",
+      "promoted": "2026-06-16"
+    },
+    {
+      "idea": "267-deepnet-poly-alibi",
+      "config_class": "configs.llm_config.Tiny1M3MAlibiConfig",
+      "val": 6.2209,
+      "val_runs": [6.2125, 6.2306, 6.2197],
+      "event": "CONFIRMED via paired 3-seed confirm (confirm_paired.py 2026-06-16). Trt 3-seed mean 6.2209 vs ctrl (alibi) 3-seed mean 6.2539, paired Δ-0.0330±0.0098 SEM, well past 0.018 band. Replaces 253-deepnet-alpha as champion. Three-axis stack: alibi + DeepNet-α + use_poly_alibi.",
+      "promoted": "2026-06-16"
+    }
+  ],
+  "rejected_promotions": [
+    {
+      "idea": "180-qk-logit-conv",
+      "val": 0.984,
+      "val_acc": 0.8784,
+      "reason": "LEAK: val 0.984 / acc 0.878 at tiny1m3m is impossible legitimately (real ~6.24 / ~0.14). The qk-logit-conv treatment breaks the causal mask and sees future tokens. Auto-promoted by the daemon before the leak guard existed; reverted 2026-06-15.",
+      "reverted": "2026-06-15"
+    },
+    {
+      "idea": "209-canon-conv-alibi",
+      "val": 6.2519,
+      "reason": "FALSE WIN: judged against the per-box BASE control mean (6.3988) instead of the alibi champion (6.2403). On a fresh box_key the daemon re-measured a baseline whose controls ran Tiny1M3MConfig (base), not the champion stub; 6.2519 < 6.3988 read as a WIN. 6.2519 is actually +0.0116 WORSE than the champion 6.2403 (a NULL). Auto-promoted 2026-06-15; reverted same day. Fixed: finalize_one now pins the bar to the champion's val.",
+      "reverted": "2026-06-15"
+    }
+  ],
+  "updated": "2026-06-16"
+}
+

@@ -1,0 +1,5 @@
+{"ts":"2026-06-16T07:28:09Z","agent":"claude","idea":"280-deepnet-poly-alibi-rope-base-qk-layernorm","from":"needs-run","to":"needs-run","round":1,"note":"5-flag stack to break 6.20 record"}
+{"ts":"2026-06-16T07:29:37Z","agent":"daemon","idea":"280-deepnet-poly-alibi-rope-base-qk-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T07:31:28Z","agent":"reset-button","idea":"280-deepnet-poly-alibi-rope-base-qk-layernorm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T07:38:01Z","agent":"daemon","idea":"280-deepnet-poly-alibi-rope-base-qk-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T07:47:01Z","agent":"daemon","idea":"280-deepnet-poly-alibi-rope-base-qk-layernorm","from":"running","to":"done","round":1,"note":"NULL: trt=6.2200 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2209±0.02 (Δ-0.0009)"}

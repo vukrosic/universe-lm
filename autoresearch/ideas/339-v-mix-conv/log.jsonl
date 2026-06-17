@@ -1,1 +1,2 @@
 {"ts":"2026-06-17T00:25:27Z","agent":"daemon","idea":"339-v-mix-conv","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T00:41:18Z","agent":"daemon","idea":"339-v-mix-conv","from":"running","to":"rejected","round":,"note":"LEAK: val=0.4224 implausibly below baseline 6.172 (likely broken causal mask / label leak) — not a win, not promoted"}

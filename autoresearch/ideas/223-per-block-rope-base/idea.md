@@ -1,8 +1,8 @@
 ---
 id: 223-per-block-rope-base
-status: needs-taste
+status: tasting
 round: 1
-updated: 2026-06-16T01:00:00Z
+updated: 2026-06-16T00:46:25Z
 transfer-risk: med
 plain: Give each transformer block its own learnable RoPE base frequency (the knob that controls how fast the rotary embedding "wraps around"). Currently all blocks share the same base; this lets early layers use one frequency and late layers another.
 ---

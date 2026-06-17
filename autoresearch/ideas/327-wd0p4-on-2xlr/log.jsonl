@@ -1,0 +1,3 @@
+{"ts":"2026-06-16T22:54:16Z","agent":"daemon","idea":"327-wd0p4-on-2xlr","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T23:00:55Z","agent":"daemon","idea":"327-wd0p4-on-2xlr","from":"running","to":"needs-run","round":,"note":"reclaimed: queue died (stale 29694180m)"}
+{"ts":"2026-06-16T23:00:56Z","agent":"daemon","idea":"327-wd0p4-on-2xlr","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}

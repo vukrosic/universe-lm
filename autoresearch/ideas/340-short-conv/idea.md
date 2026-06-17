@@ -1,5 +1,5 @@
 ---
-status: running
+status: done
 ---
 # 340-short-conv
 

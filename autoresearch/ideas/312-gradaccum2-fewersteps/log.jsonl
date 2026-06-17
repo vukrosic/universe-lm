@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T20:36:58Z","agent":"daemon","idea":"312-gradaccum2-fewersteps","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T20:51:37Z","agent":"daemon","idea":"312-gradaccum2-fewersteps","from":"running","to":"done","round":,"note":"NULL: trt=6.2622 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ0.0624)"}

@@ -1,5 +1,5 @@
 ---
-status: running
+status: rejected
 ---
 # 339-v-mix-conv
 

@@ -1,8 +1,8 @@
 ---
 id: 220-bit-linear-b158
-status: needs-taste
+status: rejected
 round: 1
-updated: 2026-06-16T01:00:00Z
+updated: 2026-06-16T08:42:36Z
 transfer-risk: low
 plain: Replace the float weights in the QKV and FFN linear projections with ternary weights in {-1, 0, +1}, trained via a straight-through estimator. At init every weight rounds to 0 so the projections are silent and the model is bit-identical to baseline; training learns which entries to keep.
 ---

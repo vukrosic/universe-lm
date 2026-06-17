@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T00:46:05Z","agent":"taste","idea":"222-mid-ffn-layernorm","from":"needs-taste","to":"tasting","round":1,"note":"claimed"}
+{"ts":"2026-06-16T00:46:19Z","agent":"taste","idea":"222-mid-ffn-layernorm","from":"tasting","to":"needs-review","round":1,"note":"accept: novel FFN-internal normalization placement; orthogonal to closed 017/142 (block-level norms, null) and 153/170 (FFN activation/gating shape, null); per-block not depth-compounding; bit-identical at step 0; both win and null informative"}

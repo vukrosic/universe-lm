@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T23:54:23Z","agent":"daemon","idea":"335-q-per-token-rope","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T00:03:06Z","agent":"daemon","idea":"335-q-per-token-rope","from":"running","to":"done","round":,"note":"NULL: trt=nan inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δnan)"}

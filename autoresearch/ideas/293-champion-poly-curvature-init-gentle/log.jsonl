@@ -1,0 +1,4 @@
+{"ts":"2026-06-16T13:27:11Z","agent":"daemon","idea":"293-champion-poly-curvature-init-gentle","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T13:28:56Z","agent":"reset-button","idea":"293-champion-poly-curvature-init-gentle","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T13:56:19Z","agent":"daemon","idea":"293-champion-poly-curvature-init-gentle","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T14:54:55Z","agent":"daemon","idea":"293-champion-poly-curvature-init-gentle","from":"running","to":"done","round":1,"note":"NULL: trt=6.2094 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2209±0.02 (Δ-0.0115)"}

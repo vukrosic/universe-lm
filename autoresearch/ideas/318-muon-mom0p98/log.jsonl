@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T21:35:15Z","agent":"daemon","idea":"318-muon-mom0p98","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T21:50:04Z","agent":"daemon","idea":"318-muon-mom0p98","from":"running","to":"done","round":,"note":"NULL: trt=6.2653 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ0.0655)"}

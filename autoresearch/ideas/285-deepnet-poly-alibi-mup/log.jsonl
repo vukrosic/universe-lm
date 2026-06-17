@@ -1,0 +1,12 @@
+{"ts":"2026-06-16T08:48:12Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:48:49Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:50:53Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:51:28Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:53:30Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:54:06Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:56:09Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:56:43Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:58:44Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T09:20:30Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"needs-run","round":1,"note":"mac-restart interrupted in-flight run (no results, no arq tmux, GPU idle) — clean relaunch"}
+{"ts":"2026-06-16T09:20:56Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T09:29:40Z","agent":"daemon","idea":"285-deepnet-poly-alibi-mup","from":"running","to":"done","round":1,"note":"NULL: trt=7.3956 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2209±0.02 (Δ1.1747)"}

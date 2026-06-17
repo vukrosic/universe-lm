@@ -1,0 +1,19 @@
+{"ts":"2026-06-16T07:29:42Z","agent":"claude","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"needs-run","round":1,"note":"test multi-flag combination to break 6.20"}
+{"ts":"2026-06-16T07:38:01Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T07:52:48Z","agent":"reset-button","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T08:09:13Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:15:05Z","agent":"reset-button","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T08:20:07Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:20:51Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:22:53Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:23:36Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:25:39Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:26:23Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:28:25Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:29:08Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:31:10Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:31:55Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:33:58Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:34:59Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-run","round":1,"note":"launch aborted: ABORT:gpu-busy-1proc — GPU not idle (1-by-1 guard)"}
+{"ts":"2026-06-16T08:37:01Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T08:48:07Z","agent":"daemon","idea":"283-deepnet-poly-alibi-layernorm","from":"running","to":"needs-recode","round":1,"note":"run FAILED (FAIL): torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 768.00 MiB. GPU 0 has a total capacity of 11.63 GiB of which 231.75 MiB is free. Process 3659251 h"}

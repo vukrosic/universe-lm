@@ -1,0 +1,4 @@
+{"ts":"2026-06-16T00:53:06Z","agent":"daemon","idea":"230-poly-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T00:53:18Z","agent":"daemon","idea":"230-poly-alibi","from":"running","to":"needs-recode","round":1,"note":"build-smoke failed: SMOKE_FAIL: ImportError: cannot import name 'Tiny1M3MPolyAlibiConfig' from 'configs.llm_config' (/root/universe-lm/configs/llm_config.py)"}
+{"ts":"2026-06-16T00:59:23Z","agent":"daemon","idea":"230-poly-alibi","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T01:05:50Z","agent":"daemon","idea":"230-poly-alibi","from":"running","to":"done","round":1,"note":"NULL: trt=6.2428 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2539±0.04 (Δ-0.0111)"}

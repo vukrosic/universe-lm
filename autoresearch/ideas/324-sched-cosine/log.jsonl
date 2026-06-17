@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T22:25:19Z","agent":"daemon","idea":"324-sched-cosine","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T22:33:54Z","agent":"daemon","idea":"324-sched-cosine","from":"running","to":"done","round":,"note":"NULL: trt=6.1934 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ-0.0064)"}

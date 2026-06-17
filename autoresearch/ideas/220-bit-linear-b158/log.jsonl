@@ -1,0 +1,3 @@
+{"ts":"2026-06-16T00:45:32Z","agent":"implement-button","idea":"220-bit-linear-b158","from":"needs-taste","to":"implementing","round":1,"note":"claimed by implement button"}
+{"ts":"2026-06-16T00:46:00Z","agent":"done-button","idea":"220-bit-linear-b158","from":"implementing","to":"needs-run","round":1,"note":"auto-finalized on implement-done"}
+{"ts":"2026-06-16T08:42:36Z","agent":"daemon-cleanup","idea":"220-bit-linear-b158","from":"needs-run","to":"rejected","round":1,"note":"phantom: needs-run with no arq stub/run.json (daemon SKIPped every tick); stale BASE-config idea predating the alibi+deepnet-alpha+poly-alibi champion line; revive as a champion-stacked variant if still interesting"}

@@ -1,0 +1,3 @@
+{"ts":"2026-06-16T18:44:19Z","agent":"daemon","idea":"305-combo-no-warmup","from":"needs-run","to":"running","round":4,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T18:46:56Z","agent":"daemon","idea":"305-combo-no-warmup","from":"needs-run","to":"running","round":4,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T19:07:51Z","agent":"daemon","idea":"305-combo-no-warmup","from":"running","to":"done","round":4,"note":"NULL: trt=6.2009 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ0.0011)"}

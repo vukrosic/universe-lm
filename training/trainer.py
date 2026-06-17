@@ -559,6 +559,22 @@ def setup_muon_optimizer(model: nn.Module, config: LLMConfig):
             and param.requires_grad
         ):
             is_muon_candidate = True
+        # 203 — Route the per-block `se_gamma_raw` scalar (0-D, init -10)
+        # to Muon. The `is_muon_candidate` default requires `ndim==2` so a
+        # 0-D scalar would otherwise land on AdamW. Per the idea spec, 1-D
+        # gain scalars benefit from Muon's LR scale (AdamW at peak LR 0.024
+        # is ~10× too hot for a scalar); mirrors the closed 021 / 207
+        # reviewer precedent. The parameter only exists when
+        # `use_se_pre_wo=True` so this branch is naturally gated by the
+        # model's parameter layout. Step-0 forward is unaffected (the
+        # routing decision is an optimizer-group choice, not a forward
+        # op). See `autoresearch/ideas/203-pre-wo-se-channel-attn/idea.md`.
+        if (
+            'se_gamma' in name
+            and param.ndim < 2
+            and param.requires_grad
+        ):
+            is_muon_candidate = True
         # R4 lever — SOAP: route 2-D non-Muon AdamW params to the SOAP
         # optimizer (Adam in Shampoo's eigenbasis). Only 2-D params
         # (`token_embedding`, `emb_proj`, `out_proj`) — 1-D scalars
@@ -1463,6 +1479,32 @@ def train_model(
             # getattr so the base LLMConfig is unchanged.
             z_loss_lambda = getattr(config, "z_loss_lambda", 0.0)
             use_z_loss = getattr(config, "use_z_loss", False) and z_loss_lambda > 0.0
+            # 198 — Residual-stream L2-norm z-loss. Auxiliary training
+            # term `c · mean(log(1 + ||r||²))` where `r` is the
+            # per-token final residual stream (stashed on the model in
+            # `models/llm.py` `_run_post_embed`). `c = zloss_coef`,
+            # default 1e-4 (PaLM / LLaMA 2 / Gemma family). The
+            # penalty is the *complementary* axis to 167's logit-side
+            # z-loss (167 targets the LM head's output magnitude via
+            # the partition function, with gradient pressure on the
+            # residual stream attenuated by `1/sqrt(d_model)` factors
+            # through the head). 198 targets the residual stream
+            # *directly*, so the gradient flows through every backbone
+            # weight without LM-head attenuation. The stash is read
+            # off the model via `getattr(model, "_residual_zloss",
+            # None)`; when the flag is off (or the stash wasn't
+            # populated), substitute `logits.new_zeros(())` so the
+            # loss equation has an exact `+ 0.0` term. Train-only;
+            # eval stays plain CE (the term is added inside the train
+            # branch and not in the eval path). Logged per-step via
+            # `residual_zloss.detach().item()` and the per-token
+            # `residual_norm` (mean and max) for the falsification
+            # signature trace (`||r||_L2` at steps `{0, 100, 500,
+            # 1000, 2000}` with binding threshold
+            # `5·sqrt(d_model) = 40`). See
+            # `autoresearch/ideas/198-z-loss-on-residual/idea.md`.
+            zloss_coef = getattr(config, "zloss_coef", 1e-4)
+            use_residual_zloss = getattr(config, "use_residual_zloss", False) and zloss_coef > 0.0
 
             # OH2 LabelSmooth (output-head ablation #2): CE with smoothing ε.
             # Train-only; eval stays plain CE (see reporting rule in
@@ -1550,6 +1592,19 @@ def train_model(
                         if use_z_loss
                         else logits.new_zeros(())
                     )
+                    # 198 — Residual-stream L2-norm z-loss (AMP branch).
+                    # The model stashes `self._residual_zloss` (a 0-dim
+                    # scalar carrying the autograd graph for backward)
+                    # when the flag is on. When the flag is off, the
+                    # stash is None and we substitute a 0-dim zero
+                    # scalar so the loss equation has an exact `+ 0.0`
+                    # term (the baseline path is bit-identical when
+                    # the flag is off).
+                    residual_zloss = (
+                        model._residual_zloss
+                        if (use_residual_zloss and getattr(model, "_residual_zloss", None) is not None)
+                        else logits.new_zeros(())
+                    )
                     # OH3 ConfPenalty (output-head ablation #3): aux term = -β·H(softmax(logits)).
                     # Anti-overconfidence regularizer. Train-only; eval stays plain CE
                     # (see reporting rule in docs/research/output_head/plan.md).
@@ -1596,7 +1651,7 @@ def train_model(
                         )
                     else:
                         ba_kl = logits.new_zeros(())
-                    loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty + poly_loss + rdrop_kl + ba_kl) / config.gradient_accumulation_steps
+                    loss = (ce_loss + entropy_reg_loss + z_loss + residual_zloss + conf_penalty + poly_loss + rdrop_kl + ba_kl) / config.gradient_accumulation_steps
                 loss.backward()
             else:
                 # 133 — SeqMix: mirror of the AMP branch above.
@@ -1656,6 +1711,18 @@ def train_model(
                     if use_z_loss
                     else logits.new_zeros(())
                 )
+                # 198 — Residual-stream L2-norm z-loss (CPU branch).
+                # Mirrors the AMP branch above. When the flag is off
+                # the stash is None and we substitute a 0-dim zero
+                # scalar so the loss equation has an exact `+ 0.0`
+                # term. When the flag is on the stash is the 0-dim
+                # scalar `c · mean(log(1 + ||r||²))` carrying the
+                # autograd graph for backward.
+                residual_zloss = (
+                    model._residual_zloss
+                    if (use_residual_zloss and getattr(model, "_residual_zloss", None) is not None)
+                    else logits.new_zeros(())
+                )
                 # OH3 ConfPenalty (output-head ablation #3): aux term = -β·H(softmax(logits)).
                 # Anti-overconfidence regularizer. Train-only; eval stays plain CE
                 # (see reporting rule in docs/research/output_head/plan.md).
@@ -1699,7 +1766,7 @@ def train_model(
                     )
                 else:
                     ba_kl = logits.new_zeros(())
-                loss = (ce_loss + entropy_reg_loss + z_loss + conf_penalty + poly_loss + rdrop_kl + ba_kl) / config.gradient_accumulation_steps
+                loss = (ce_loss + entropy_reg_loss + z_loss + residual_zloss + conf_penalty + poly_loss + rdrop_kl + ba_kl) / config.gradient_accumulation_steps
                 loss.backward()
 
             # Detach z-loss to a python float for logging only
@@ -1713,6 +1780,32 @@ def train_model(
 
             # Detach poly loss to a python float for logging only (graph no longer needed)
             poly_loss_val = poly_loss.detach().item()
+
+            # 198 — Detach residual-stream z-loss and the per-token
+            # residual norm to python floats for logging only. The
+            # `residual_zloss` scalar carries the autograd graph for
+            # backward (added to `loss` in both the AMP and CPU
+            # branches above); `.detach().item()` here is purely for
+            # the pbar / falsification signature. The
+            # `residual_norm` is a `[B, T]`-shaped float tensor
+            # stashed on the model in `_run_post_embed`; we read
+            # `.mean()` and `.max()` as `.item()`-detached floats for
+            # the falsification signature trace (`||r||_L2` at steps
+            # `{0, 100, 500, 1000, 2000}` with binding threshold
+            # `5·sqrt(d_model) = 40`). When the flag is off the stash
+            # is None and we report 0.0 — the pbar shows the
+            # contribution is exactly zero on the baseline path.
+            residual_zloss_val = residual_zloss.detach().item()
+            res_norm_mean = (
+                model._residual_norm.mean().item()
+                if getattr(model, "_residual_norm", None) is not None
+                else 0.0
+            )
+            res_norm_max = (
+                model._residual_norm.max().item()
+                if getattr(model, "_residual_norm", None) is not None
+                else 0.0
+            )
 
             # Optimizer step
             if (step + 1) % config.gradient_accumulation_steps == 0:
@@ -1939,6 +2032,8 @@ def train_model(
                     'ent': f'{entropy_reg_val:+.2e}',
                     'cp': f'{conf_penalty_val:+.2e}',
                     'pl': f'{poly_loss_val:+.2e}',
+                    'rzl': f'{residual_zloss_val:+.2e}',
+                    'rn': f'{res_norm_mean:.2f}',
                     'lr': f'{current_lr:.5f}'
                 })
                 # Console print for visibility

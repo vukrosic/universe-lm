@@ -1,0 +1,4 @@
+{"ts":"2026-06-16T13:27:11Z","agent":"daemon","idea":"294-champion-uniform-slope-4x","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T13:28:56Z","agent":"reset-button","idea":"294-champion-uniform-slope-4x","from":"running","to":"needs-run","round":1,"note":"auto-requeued stale GPU run (no live supervisor)"}
+{"ts":"2026-06-16T13:56:19Z","agent":"daemon","idea":"294-champion-uniform-slope-4x","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T14:54:59Z","agent":"daemon","idea":"294-champion-uniform-slope-4x","from":"running","to":"needs-confirm","round":1,"note":"SCREEN-WIN (1 seed): trt=6.2000 vs champion configs.llm_config.Tiny1M3MAlibiConfig 6.2209±0.02 (Δ-0.0209) — REQUIRES paired 3-seed confirm before promotion: autoresearch/bin/confirm_paired.py 294-champion-uniform-slope-4x <flags>"}

@@ -58,25 +58,39 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
-def make_stub(idea, champion_class, flags):
-    """champion (Ctrl) vs champion+flags (Trt). @dataclass is mandatory or the
-    inherited dataclass __init__ resets the new flag to its parent default."""
+def make_stub(idea, champion_class, base_flags, flags):
+    """Paired Ctrl (the REAL champion) vs Trt (champion + the new lever).
+
+    base_flags = the champion's OWN defining flags (e.g. use_deepnet_alpha). The
+    champion's config_class usually does NOT encode them — the live champion is a
+    base config + flags set in its run stub — so BOTH arms must apply base_flags,
+    or the control silently collapses to the bare base config and the confirm
+    credits the treatment with the champion's own gain. That is the 267 bug:
+    ctrl ran plain Tiny1M3MAlibiConfig (6.2539) instead of alibi+deepnet (6.2367),
+    so poly-alibi was credited with deepnet's −0.017 on top of its own marginal.
+
+    `flags` = the NEW lever(s) under test, applied to the treatment arm only.
+    @dataclass is mandatory or the inherited dataclass __init__ resets the flags."""
     mod, _, cls = champion_class.rpartition(".")
-    flag_lines = "\n".join(f"    {fl.strip()}: bool = True" for fl in flags)
+    base = [f.strip() for f in base_flags if f and f.strip()]
+    new = [f.strip() for f in flags if f and f.strip()]
+    ctrl_lines = "\n".join(f"    {fl}: bool = True" for fl in base) or "    pass"
+    trt_lines = "\n".join(f"    {fl}: bool = True" for fl in (base + new)) or "    pass"
     return f'''#!/usr/bin/env python
-"""Auto-generated paired confirm runner for {idea}: champion + [{", ".join(flags)}]."""
+"""Auto-generated paired confirm runner for {idea}.
+Ctrl = champion [{", ".join(base) or "base"}]; Trt = champion + [{", ".join(new)}]."""
 from dataclasses import dataclass
 from {mod} import {cls}
 
 
 @dataclass
 class Ctrl({cls}):
-    pass
+{ctrl_lines}
 
 
 @dataclass
 class Trt({cls}):
-{flag_lines}
+{trt_lines}
 
 
 C = Trt
@@ -96,14 +110,14 @@ def remote_dir(idea):
     return f"/root/arq/confirm_{idea}"
 
 
-def launch(idea, flags, ssh, scp, repo, venv):
+def launch(idea, flags, base_flags, ssh, scp, repo, venv):
     champ = load_json(CHAMPION_JSON)
     stub_name = f"_arq_confirm_{idea}.py"
     stub_local = os.path.join(ROOT, stub_name)
     with open(stub_local, "w") as f:
-        f.write(make_stub(idea, champ["config_class"], flags))
+        f.write(make_stub(idea, champ["config_class"], base_flags, flags))
 
-    r = sh(scp + [stub_local, f"{repo}/"])
+    r = sh(scp + [stub_local, f"{ssh[-1]}:{repo}/"])
     if r.returncode != 0:
         sys.exit(f"scp failed: {r.stderr.strip()}")
 
@@ -127,8 +141,23 @@ def launch(idea, flags, ssh, scp, repo, venv):
         sys.exit(f"ABORT: build-smoke did not pass:\n{r.stdout}\n{r.stderr}")
 
     rd = remote_dir(idea)
-    driver = (f"#!/bin/bash\ncd {repo}\nmkdir -p {rd}\nrm -f {rd}/DONE\nPY={venv}/bin/python\n"
+    # GPU-free guard before each run: the queue-daemon drains the same box 1-by-1
+    # (it refuses to launch while any compute proc holds the GPU). A tiny1m3m run
+    # is ~6.6 GB of 12 GB, so two concurrent processes OOM. We mirror the daemon's
+    # guard here — wait until no other compute proc holds the GPU, THEN run — so a
+    # confirm coexists with a live daemon without OOM and without stopping it
+    # (a stopped daemon = idle GPU, the #1 lab failure). Each $PY is foreground, so
+    # the next iteration only proceeds once this run finished and the GPU freed.
+    wait_gpu = ("  while [ \"$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null "
+                "| grep -c .)\" -gt 0 ]; do sleep 5; done\n")
+    # Clear DONE *and* any stale per-run logs from a prior confirm of this idea.
+    # Without this, a re-run leaves old {arm}_{seed}.log files and --collect reads
+    # a stale (or fresh+stale mix) 6/6 set, emitting a bogus verdict — exactly how
+    # the buggy plain-alibi 267 result kept resurfacing. `*_*.log` matches the arm
+    # logs (ctrl_42.log …) but not driver.log (no underscore).
+    driver = (f"#!/bin/bash\ncd {repo}\nmkdir -p {rd}\nrm -f {rd}/DONE {rd}/*_*.log\nPY={venv}/bin/python\n"
               f"for seed in {' '.join(SEEDS)}; do for arm in ctrl trt; do\n"
+              f"{wait_gpu}"
               f"  echo \"[$(date -u +%H:%M:%S)] START $arm seed=$seed\"\n"
               f"  $PY {stub_name} $arm $seed > {rd}/${{arm}}_${{seed}}.log 2>&1\n"
               f"  echo \"[$(date -u +%H:%M:%S)] END $arm seed=$seed -> $(grep 'Final Val Loss' {rd}/${{arm}}_${{seed}}.log|tail -1)\"\n"
@@ -203,24 +232,44 @@ def promote_champion(idea, trt_mean, ctrl_runs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("idea")
-    ap.add_argument("flags", nargs="?", help="comma-separated flag name(s) to add to champion")
+    ap.add_argument("flags", nargs="?", help="comma-separated NEW flag name(s) to add to the champion (treatment arm)")
+    ap.add_argument("--base-flags", default=None,
+                    help="comma-separated flag(s) that DEFINE the champion control arm "
+                         "(e.g. use_deepnet_alpha). Both arms get these; only `flags` differ. "
+                         "Defaults to champion.json's `flags` field. Pass this to test a lever's "
+                         "MARGINAL gain over a flag-defined champion (avoids the bare-base control bug).")
     ap.add_argument("--band", type=float, default=0.018)
     ap.add_argument("--collect", action="store_true", help="just parse a finished run")
     ap.add_argument("--promote", action="store_true")
     a = ap.parse_args()
     ssh, scp, _, repo, venv = box_ssh_base()
 
+    # Control-arm flags: explicit --base-flags wins, else champion.json's `flags`
+    # (the champion's own defining levers), else none (bare config_class). Without
+    # this the control collapses to the base config and over-credits the treatment.
+    if a.base_flags is not None:
+        base_flags = [f for f in a.base_flags.split(",") if f.strip()]
+    else:
+        base_flags = load_json(CHAMPION_JSON).get("flags", []) or []
+
     if a.collect:
         vals, done = collect(a.idea, ssh, repo, a.band, a.promote)
-        if not done and len(vals) < 6:
-            print(f"not finished yet: have {len(vals)}/6 runs", file=sys.stderr)
+        # Require the DONE marker — never judge on log presence alone. A re-run's
+        # stale {arm}_{seed}.log files can read as a full 6/6 set BEFORE the fresh
+        # run finishes (that is how the buggy plain-alibi 267 verdict resurfaced).
+        # DONE is written only after all 6 fresh runs complete, so it is the only
+        # safe completion signal.
+        if not done:
+            print(f"not finished yet: have {len(vals)}/6 runs, DONE marker absent", file=sys.stderr)
             sys.exit(2)
         judge(a.idea, vals, a.band, a.promote)
         return
 
     if not a.flags:
         sys.exit("need flags-csv to launch (e.g. use_value_residual)")
-    launch(a.idea, a.flags.split(","), ssh, scp, repo, venv)
+    print(f"control arm = champion + {base_flags or '[bare config]'}; "
+          f"treatment arm = + {a.flags.split(',')}")
+    launch(a.idea, a.flags.split(","), base_flags, ssh, scp, repo, venv)
     print(f"\nrunning ~30 min. collect with:\n  autoresearch/bin/confirm_paired.py {a.idea} --collect"
           + (" --promote" if a.promote else ""))
 

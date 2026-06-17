@@ -1,8 +1,8 @@
 ---
 id: 217-mix-norm
-status: needs-repitch
+status: done
 round: 1
-updated: 2026-06-16T00:42:07Z
+updated: 2026-06-16T01:20:26Z
 transfer-risk: low
 plain: Let each transformer block mix two well-known normalizations (RMSNorm and LayerNorm) using a learnable per-block knob. Start with all-RMSNorm so the first training step is identical to today, then let the model learn which blocks prefer which centering.
 ---

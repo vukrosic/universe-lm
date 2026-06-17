@@ -1,1 +1,2 @@
 {"ts":"2026-06-17T00:25:27Z","agent":"daemon","idea":"341-unet-skips","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-17T00:55:31Z","agent":"daemon","idea":"341-unet-skips","from":"running","to":"done","round":,"note":"NULL: trt=6.1800 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.172±0.02 (Δ0.0080)"}

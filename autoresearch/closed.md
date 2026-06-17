@@ -29,6 +29,94 @@ The code-implementer never closes — if blocked it bounces the idea back to
 - 162-q-only-norm — null: trt=6.4303 vs fresh baseline 6.4346±0.0458 (Δ=-0.0043, inside band; pass bar -0.005 missed by 0.0007) at tiny1m3m; train_loss 6.4129 (between ctrls 6.3893/6.3782/6.4391), val_acc 0.1456 (between ctrls 0.1441/0.1448/0.1425); +192 params (+0.020%, 12 RMSNorm(d_k=16) weights × 12 blocks, no bias), Q-only RMSNorm pre-softmax leaves K raw; attribution insight: 016-qk-norm WIN was carried by K-side or symmetry, NOT Q-side (with 165-k-only-norm as orthogonal K-side ablation); closes the Q-side of the QK-norm-attribution axis at 0.94M — 2026-06-14
 
 <!-- reviewer/evidence step appends one line per close here -->
+- 341-unet-skips — null: Δ=0.0080 at tiny1m3m (inside variance) — 2026-06-17
+- 340-short-conv — null: Δ=0.0061 at tiny1m3m (inside variance) — 2026-06-17
+- 339-v-mix-conv — LEAK (rejected): val=0.4224 implausibly below baseline 6.172 at tiny1m3m — likely broken causal mask / label leak, NOT a win — 2026-06-17
+- 338-mish-glu — null: Δ=-0.0114 at tiny1m3m (inside variance) — 2026-06-17
+- 337-lowrank-wo — null: Δ=-0.0054 at tiny1m3m (inside variance) — 2026-06-17
+- 336-lowrank-wq — null: Δ=0.0024 at tiny1m3m (inside variance) — 2026-06-17
+- 335-q-per-token-rope — null: Δ=nan at tiny1m3m (inside variance) — 2026-06-17
+- 334-tied-output-mlp — null: Δ=-0.0164 at tiny1m3m (inside variance) — 2026-06-16
+- 333-v-layernorm — null: Δ=0.0127 at tiny1m3m (inside variance) — 2026-06-16
+- 332-lowrank-wv — null: Δ=-0.0017 at tiny1m3m (inside variance) — 2026-06-16
+- 331-se-pre-wo — null: Δ=0.0058 at tiny1m3m (inside variance) — 2026-06-16
+- 330-q-feature-map — null: Δ=0.2127 at tiny1m3m (inside variance) — 2026-06-16
+- 329-gmlp-sgu — null: Δ=-0.0123 at tiny1m3m (inside variance) — 2026-06-16
+- 324-sched-cosine — null: Δ=-0.0064 at tiny1m3m (inside variance) — 2026-06-16
+- 322-mom0p90-batch1 — null: Δ=-0.0007 at tiny1m3m (inside variance) — 2026-06-16
+- 321-muon-mom0p80 — null: Δ=0.0014 at tiny1m3m (inside variance) — 2026-06-16
+- 320-muon-mom0p85 — null: Δ=-0.0067 at tiny1m3m (inside variance) — 2026-06-16
+- 319-wd0p3 — null: Δ=0.0177 at tiny1m3m (inside variance) — 2026-06-16
+- 318-muon-mom0p98 — null: Δ=0.0655 at tiny1m3m (inside variance) — 2026-06-16
+- 317-muon-mom0p90 — null: Δ=-0.0085 at tiny1m3m (inside variance) — 2026-06-16
+- 316-wd0p1 — null: Δ=0.0168 at tiny1m3m (inside variance) — 2026-06-16
+- 315-wd0 — null: Δ=0.0180 at tiny1m3m (inside variance) — 2026-06-16
+- 314-batch1-lr2x — null: Δ=-0.0010 at tiny1m3m (inside variance) — 2026-06-16
+- 313-batch1-lr1p5 — null: Δ=-0.0023 at tiny1m3m (inside variance) — 2026-06-16
+- 312-gradaccum2-fewersteps — null: Δ=0.0624 at tiny1m3m (inside variance) — 2026-06-16
+- 311-batch1-moresteps — null: Δ=-0.0104 at tiny1m3m (inside variance) — 2026-06-16
+- 310-emb-scale-2x — null: Δ=0.0011 at tiny1m3m (inside variance) — 2026-06-16
+- 309-emb-scale-half — null: Δ=0.0080 at tiny1m3m (inside variance) — 2026-06-16
+- 305-combo-no-warmup — null: Δ=0.0011 at tiny1m3m (inside variance) — 2026-06-16
+- 304-combo-lr-0p7x — null: Δ=0.0174 at tiny1m3m (inside variance) — 2026-06-16
+- 303-combo-lr-1p5x — null: Δ=-0.0107 at tiny1m3m (inside variance) — 2026-06-16
+- 302-combo-best-of-each — null: Δ=0.0077 at tiny1m3m (inside variance) — 2026-06-16
+- 301-combo-frozen-slope — null: Δ=0.0099 at tiny1m3m (inside variance) — 2026-06-16
+- 300-combo-slope4-curv4 — null: Δ=-0.0082 at tiny1m3m (inside variance) — 2026-06-16
+- 299-combo-curv5 — null: Δ=-0.0101 at tiny1m3m (inside variance) — 2026-06-16
+- 298-combo-curv4 — null: Δ=0.0124 at tiny1m3m (inside variance) — 2026-06-16
+- 293-champion-poly-curvature-init-gentle — null: Δ=-0.0115 at tiny1m3m (inside variance) — 2026-06-16
+- 291-champion-geometric-slope — SCREEN-WIN (needs-confirm): trt=6.2009 vs champion 6.2209±0.02 (Δ-0.0200, at the screen bar) at tiny1m3m; geometric-3× per-head alibi slope warm-start (ALIBI_SLOPE env knob) on the deepnet+poly-alibi champion. 1-seed lucky-seed guard → parked needs-confirm, NOT promoted; awaits paired 3-seed confirm. NOTE: first re-run after box was fixed from stale branch (orig 'NULL Δ-0.0062' was a no-op artifact). geometric > uniform (290) on the champion — poly-alibi already supplies per-head curvature so the skewed schedule complements it — 2026-06-16
+- 290-champion-uniform-slope — null (right-sign, just over bar): trt=6.2019 vs champion 6.2209±0.02 (Δ-0.0190, 0.001 short of the 6.2009 screen bar) at tiny1m3m; uniform-3× alibi slope warm-start on the champion. Right-sign — the deep-dive's slope-init lever transfers (Δ-0.040 on plain alibi → Δ-0.019 here, partly redundant with poly-alibi). 291 (geometric) edged it to a screen-win. Re-run after box stale-branch fix (orig 'Δ-0.0062' was a no-op) — 2026-06-16
+- 289-deepnet-beta-init-matched — null: trt=6.2550 vs champion 6.2209±0.02 (Δ+0.0341 WRONG-SIGN) at tiny1m3m; DeepNet-β init down-scale at β=0.204 (matched to forward α) over-suppresses the residual-writing projections at 0.94M/92 steps. Re-run after box stale-branch fix (orig 'Δ-0.0062' was a no-op) — 2026-06-16
+- 288-deepnet-beta-init — null: trt=6.2631 vs champion 6.2209±0.02 (Δ+0.0422 WRONG-SIGN) at tiny1m3m; DeepNet-β init down-scale at canonical β=0.319 over-suppresses (worse than 289's milder 0.204). Both brackets wrong-sign ⇒ closes the DeepNet-β-init axis on the champion: shipping α (forward) WITHOUT β (init) is correct at this tier. Re-run after box stale-branch fix (orig 'Δ-0.0062' was a no-op) — 2026-06-16
+- 287-deepnet-poly-alibi-pre-lm-head-rmsnorm — null: Δ=0.0057 at tiny1m3m (inside variance) — 2026-06-16
+- 286-deepnet-poly-alibi-embed-sqrtd — null: Δ=0.0603 at tiny1m3m (inside variance) — 2026-06-16
+- 285-deepnet-poly-alibi-mup — null: Δ=1.1747 at tiny1m3m (inside variance) — 2026-06-16
+- 281-deepnet-poly-alibi-rope-base-layernorm — null: Δ=0.0004 at tiny1m3m (inside variance) — 2026-06-16
+- 280-deepnet-poly-alibi-rope-base-qk-layernorm — null: Δ=-0.0009 at tiny1m3m (inside variance) — 2026-06-16
+- 279-deepnet-poly-alibi-qk-layernorm — null: Δ=-0.0131 at tiny1m3m (inside variance) — 2026-06-16
+- 278-deepnet-rope-base-poly-alibi — null: Δ=-0.0134 at tiny1m3m (inside variance) — 2026-06-16
+- 277-deepnet-drop-path — null: Δ=-0.0142 at tiny1m3m (inside variance) — 2026-06-16
+- 276-deepnet-attn-sink — null: Δ=-0.0230 at tiny1m3m (inside variance) — 2026-06-16
+- 275-deepnet-value-residual — null: Δ=-0.0208 at tiny1m3m (inside variance) — 2026-06-16
+- 274-deepnet-qk-norm-post-rope — null: Δ=-0.0233 at tiny1m3m (inside variance) — 2026-06-16
+- 273-deepnet-qk-layernorm — null: Δ=-0.0314 at tiny1m3m (inside variance) — 2026-06-16
+- 272-deepnet-qk-norm-depth — null: Δ=-0.0161 at tiny1m3m (inside variance) — 2026-06-16
+- 271-deepnet-sub-ln — null: Δ=-0.0205 at tiny1m3m (inside variance) — 2026-06-16
+- 270-deepnet-mix-norm — null: Δ=-0.0236 at tiny1m3m (inside variance) — 2026-06-16
+- 269-deepnet-kerple-log — null: Δ=-0.0089 at tiny1m3m (inside variance) — 2026-06-16
+- 268-deepnet-q-only-norm — null: Δ=-0.0155 at tiny1m3m (inside variance) — 2026-06-16
+- 267-deepnet-poly-alibi — null: Δ=-0.0392 at tiny1m3m (inside variance) — 2026-06-16
+- 266-deepnet-k-only-norm — null: Δ=-0.0202 at tiny1m3m (inside variance) — 2026-06-16
+- 265-deepnet-layernorm — null: Δ=-0.0158 at tiny1m3m (inside variance) — 2026-06-16
+- 264-deepnet-rope-base — null: Δ=-0.0367 at tiny1m3m (inside variance) — 2026-06-16
+- 254-entmax-alibi — reject: exhausted 3 recode rounds (MAX_RECODE_ROUNDS=3), axis abandoned — 2026-06-16
+- 257-deepnet-confirm-s7 — null: Δ=-0.0180 at tiny1m3m (inside variance) — 2026-06-16
+- 256-deepnet-confirm-s123 — null: Δ=-0.0105 at tiny1m3m (inside variance) — 2026-06-16
+- 255-cosine-attn-alibi — null: Δ=0.0470 at tiny1m3m (inside variance) — 2026-06-16
+- 253-deepnet-alpha-alibi — null: Δ=-0.0230 at tiny1m3m (inside variance) — 2026-06-16
+- 251-poly-confirm-s7 — null: Δ=0.0039 at tiny1m3m (inside variance) — 2026-06-16
+- 250-poly-confirm-s123 — null: Δ=0.0124 at tiny1m3m (inside variance) — 2026-06-16
+- 232-poly-logit-stack — null: Δ=0.0158 at tiny1m3m (inside variance) — 2026-06-16
+- 231-kerple-log-alibi — null: Δ=0.0449 at tiny1m3m (inside variance) — 2026-06-16
+- 217-mix-norm — null: Δ=-0.0030 at tiny1m3m (inside variance) — 2026-06-16
+- 230-poly-alibi — null: Δ=-0.0111 at tiny1m3m (inside variance) — 2026-06-16
+- 198-pre-ffn-attnmix — null: Δ=0.1630 at tiny1m3m (inside variance) — 2026-06-16
+- 202-grouped-value-projection — null: Δ=0.1667 at tiny1m3m (inside variance) — 2026-06-16
+- 192-pre-rope-qk-rotation — null: Δ=0.1633 at tiny1m3m (inside variance) — 2026-06-16
+- 195-qk-clamp-min-max — null: Δ=0.1555 at tiny1m3m (inside variance) — 2026-06-15
+- 189-cosformer-linear-attn — null: Δ=0.1348 at tiny1m3m (inside variance) — 2026-06-15
+- 192-topk-attn — null: Δ=0.1261 at tiny1m3m (inside variance) — 2026-06-15
+- 190-per-layer-qk-norm — null: Δ=0.1220 at tiny1m3m (inside variance) — 2026-06-15
+- 216-logit-scale-alibi — null: Δ=0.0141 at tiny1m3m (inside variance) — 2026-06-15
+- 215-cope-challenger — null: Δ=0.2894 at tiny1m3m (inside variance) — 2026-06-15
+- 214-ssmax-alibi — null: Δ=0.0381 at tiny1m3m (inside variance) — 2026-06-15
+- 213-gated-attn-alibi — null: Δ=0.0494 at tiny1m3m (inside variance) — 2026-06-15
+- 211-swiglu-alibi — null: Δ=0.0000 at tiny1m3m (inside variance) — 2026-06-15
+- 210-qk-layernorm-alibi — null: Δ=0.0213 at tiny1m3m (inside variance) — 2026-06-15
+- 188-cross-block-kv-share — null: Δ=0.0113 at tiny1m3m (inside variance) — 2026-06-15
+- 204-cross-block-attn-score-share — null: Δ=0.0000 at tiny1m3m (inside variance) — 2026-06-15
 - 209-canon-conv-alibi — null: trt=6.2519 vs champion alibi 6.2403±0.04 (Δ=+0.0116, inside variance) at tiny1m3m — 2026-06-15 [corrected: daemon first logged a FALSE WIN vs the per-box base control 6.3988; canon-conv does not beat alibi]
 - 208-value-residual-alibi — null: Δ=0.0191 at tiny1m3m (inside variance) — 2026-06-15
 - 191-token-attn-gain — null: Δ=0.0278 at tiny1m3m (inside variance) — 2026-06-15
@@ -143,3 +231,37 @@ The code-implementer never closes — if blocked it bounces the idea back to
 169-qk-norm-depth — null: Δ=-0.020 at tiny1m3m (inside variance; pass bar met on absolute 016-ctrl reference but box band gates) — 2026-06-15
 171-dropconnect-wo — null: Δ=+0.0478 wrong-sign at tiny1m3m (weight-level regularization axis unambiguously bad) — 2026-06-15
 172-per-head-rope-base — null: Δ=+0.0109 wrong-sign tiny at tiny1m3m (inside band; global 500k RoPE base sufficient, per-head frequency specialization doesn't bind at 0.94M) — 2026-06-15
+- 212-t5rpe-challenger — reject: mathematical duplicate of 166-t5-rpe (closed null 2026-06-14); same per-head per-bucket zero-init additive logit-bias via Tiny1M3MT5RPEConfig (H×B=4×32, +1,488 params, +0.16%); only the control bar differs (212 frames as ALiBi challenger, 166 ran vs no-PE base), but the lever added at step 0 is identical and the 166 close reason ("per-head additive logit-bias at T=2048 dominated by accumulated QK dot-product magnitudes ~10 vs one-shot bias ~0; cannot bind at this scale") applies identically here; transfer-risk 'low' in 212 is unjustified vs 166's 'med' (T5 encoder-decoder-native, autoregressive-LM case less validated); 166 closed the additive-logit-bias PE family at 0.94M, re-evaluate at >=135M Phase-2 — running 212 at tiny1m3m violates the loop's own dedup rule — 2026-06-16
+- 255-cosine-attn-alibi — null: trt=6.3009 vs champion 6.2539±0.04 (Δ=+0.0470 wrong-sign, 1.18× the 0.04 cache band) at tiny1m3m; train_loss 6.2779 (worse than 253's 6.1845, also wrong-sign); val_acc 0.1556 (vs 253's 0.1622); replaces QK dot product with cosine similarity QK^T / (||Q||·||K||) per head — cosine attention rescales dot products to [-1, 1] which collapses with the alibi additive logit bias (alibi slopes are added to pre-softmax logits, cosine normalization fights the relative-position decay); same null pattern as 156-moa, 162-q-only-norm on attention-shape levers at 0.94M/12L/4H; closes cosine-attention axis on alibi (189-cos-attn was the prior no-alibi close); re-evaluate at >=135M Phase-2 — 2026-06-16
+- 253-deepnet-alpha-alibi — WIN: trt=6.2367 (3-seed mean: 42/123/7 = 6.2309/6.2434/6.2359, std 0.0063) vs alibi 6.2539±0.04 (Δ-0.0172, 2.73σ below) at tiny1m3m; DeepNet-α fixed residual scaling (Wang 2022, 0 new params, step-0-active); MANUAL promotion 2026-06-16 (1-seed val 6.2309 was SCREEN-WIN parked in needs-confirm, 256/257 3-seed confirm passed). First real challenger to alibi this session — 2026-06-16
+- 264-deepnet-rope-base — SCREEN-WIN superseded (1-seed lucky draw 6.2172; 3-seed confirm not run since 267-deepnet-poly-alibi was a stronger signal and confirmed first). at tiny1m3m — 2026-06-16
+- 267-deepnet-poly-alibi — SCREEN-WIN superseded by 3-seed confirm (see 3-seed WIN entry below): trt=6.2147 (1-seed 42, lucky draw below 3-seed mean 6.2209) at tiny1m3m; 3-seed paired confirm validated the 1-seed as real — 2026-06-16
+- 267-deepnet-poly-alibi — WIN: trt=6.2209 (3-seed mean 42/123/7 = 6.2125/6.2306/6.2197, std 0.0074) vs ctrl (alibi) 3-seed mean 6.2539 (paired Δ-0.0330±0.0098 SEM, well past 0.018 band) at tiny1m3m; Tiny1M3MAlibiConfig + use_deepnet_alpha + use_poly_alibi; CONFIRMED via paired 3-seed confirm (confirm_paired.py 2026-06-16). 3-axis stack: alibi (linear distance bias) + DeepNet-α (α=1/√24 sublayer scaling, 0 new params) + poly-alibi (per-head linear+quadratic distance decay, +48 params, c_h=0 at init). New champion — 2026-06-16
+- 296-champion-slope-curvature-combo — WIN: trt=6.1998 (3-seed mean 6.1947/6.2131/6.1916 @42/123/7; paired CONFIRM) vs champion-267 ctrl 6.2216, paired Δ-0.0218±0.0034 SEM > band 0.018 — PROMOTED, replaces 267 (6.2209). First champion-era record. ENV-driven lever (slope+curvature step-0 warm-start), 0 new params — 2026-06-16
+
+- 303-308 LR-VALUE sweep (global peak-LR ×mult on combo champion 296, seed42 screen) — 2026-06-16: ×0.7=6.217(+0.017) / ×1.0=6.1998 / ×1.5(303)=6.1891(-0.011) / **×2.0(306)=6.1750(-0.0248, SCREEN-WIN, clears 0.02 band, confirming)** / ×2.5(307)=6.1809(-0.0189) / ×3.0(308)=6.1922(-0.0076). Clean parabola, minimum at ×2.0 (muon_lr=0.048/adamw_lr=0.006×2=0.012) — bracketed both sides = genuine optimum. warmup_ratio axis closed earlier (305 no-warmup NULL +0.0011). LR axis CLOSES at ×2.0 pending the env-aware paired 3-seed confirm_306.
+
+- 306 confirm (combo+×2.0LR vs combo champion 296, env-aware paired 3-seed) — 2026-06-16: CONFIRM **NULL (sub-band)**. ctrl[42,123,7]=[6.1947,6.2131,6.1916] mean 6.1998 (reproduces champion val exactly); trt=[6.1750,6.2028,6.1903] mean 6.1894; paired Δ=−0.0104 (all 3 seeds right-sign: −0.0197/−0.0103/−0.0013) but |Δ|<0.018 band → NOT promoted. ×2.0 LR is a real ~2σ sub-band gain; the seed-42 screen −0.0248 was partly lucky (guard worked). LR axis CLOSED: ×2.0 best single point but not a standalone record. Champion stays combo 296. Next: test whether emb_scale stacks on the ×2.0LR base to clear the band combined (ideas 309/310).
+
+- 309/310 embedding_scale bracket (on combo+×2.0LR base, seed42 screen) — 2026-06-16: emb_scale=4.0(×0.5)→6.2078 (Δ+0.0080 vs champ, +0.033 vs ×2LR-base 6.1750); emb_scale=16.0(×2)→6.2009 (Δ+0.0011). BOTH off-default worse → default sqrt(d_model)=8.0 is optimal; emb=16 also worse than ×2LR-alone so it does NOT stack to clear the band. **embedding_scale axis CLOSED** (default already tuned). Mechanism: residual-stream init magnitude already well-set by sqrt(d_model) at tiny1m3m.
+
+- 311/312 batch-size/#steps bracket (combo champion base LR, seed42 screen) — 2026-06-16: batch=1 (2× steps, 1464)→6.1894 (Δ−0.0104, RIGHT-sign sub-band); grad_accum=2 (½ steps, 366)→6.2622 (Δ+0.0624, much worse). Monotonic: MORE optimizer steps helps, fewer badly hurts → model is UPDATE-STARVED at 3M tokens, confirming the LR×2 finding via an independent lever. batch=1 alone gives the SAME −0.0104 as LR×2. NOT closed as null — it's a confirmed sub-band gain; stacking batch=1 + higher LR next (313/314) to try to clear the band cumulatively.
+
+- 313/314 batch=1 + LR stack (combo champion, seed42 screen) — 2026-06-16: 313 (batch=1 + ×1.5LR)→6.1975 (Δ−0.0023), WORSE than batch=1-alone 6.1894 (+0.0081). 314 (batch=1 + ×2.0LR) overshoot (init loss 10.8, expected worse). CONCLUSION: the two update levers (LR-value, batch/#steps) are SUBSTITUTES not complements — they do NOT stack; batch=1 already maxes useful optimization, extra LR overshoots (smaller batch wants LOWER LR). **Optimization-amount axis CLOSED at −0.0104 sub-band** (best single configs: ×2.0LR or batch=1, both honest ~6.189). Pivoting to a different family (regularization: weight_decay sweep 315/316) to find a lever that STACKS on the −0.0104 to clear the band.
+
+- 315/316 weight_decay-DOWN (combo champion, seed42 screen) — 2026-06-16: wd=0.0→6.2178 (Δ+0.0180 WORSE); wd=0.1→(pending). Removing weight decay HURTS → "underfit wants less reg" falsified; with Muon/AdamW the wd=0.2 default couples with effective-LR and is doing real work. WD-down direction dead; wd-UP moderate-EV (deferred). Pivot to muon_momentum (317/318).
+
+- 316 weight_decay=0.1 → 6.2166 (Δ+0.0168 worse). With 315 (wd=0→6.2178): WD-DOWN axis CLOSED (both ~+0.017 worse; gain concentrated at the 0.2 default). Trend improves with higher WD → testing wd=0.3 (319) for the up-direction.
+
+- 317 muon_momentum=0.90 → 6.1913 (Δ−0.0085 vs champ, RIGHT-sign sub-band) — 2026-06-16: LOWERING Muon momentum (0.95→0.90) helps; muon_momentum is a LIVE lever, direction=down. Following gradient (320 mom=0.85, 321 mom=0.80). 318 (mom=0.98) pending for the up-side.
+
+- 318 muon_momentum=0.98 → 6.2653 (Δ+0.0655 much worse) — 2026-06-16: confirms steep momentum gradient (higher BAD, lower GOOD; strongly convex). With 317(0.90→−0.0085): optimum ~0.85-0.90. Following down (320/321) + testing momentum×batch1 and momentum×LR2 stacking (322/323).
+
+- 319 weight_decay=0.3 → 6.2175 (Δ+0.0177 worse) — WD-UP also bad; WEIGHT_DECAY axis fully CLOSED (0.0/0.1/0.3 all ~+0.017-0.018 worse, 0.2 default optimal). — 2026-06-16
+- 320 muon_momentum=0.85 → 6.1931 (Δ−0.0067, slightly worse than 0.90's −0.0085) → momentum OPTIMUM ≈ 0.90 (−0.0085 sub-band). — 2026-06-16
+
+- 321 muon_momentum=0.80 → 6.2012 (Δ+0.0014) — completes muon_momentum parabola: 0.80(+0.0014)/0.85(−0.0067)/0.90(−0.0085)/0.95(champ)/0.98(+0.0655). MOMENTUM axis characterized: convex, optimum=0.90, gain −0.0085 SUB-BAND. — 2026-06-16
+
+- 322 mom0.90+batch1 → 6.1991 (Δ−0.0007, anti-stack: worse than either alone) — momentum does NOT stack with batch=1. — 2026-06-16
+- 323 mom0.90+×2.0LR → 6.1762 seed42 (Δ−0.0236, SCREEN-WIN, clears 0.02 bar) — BUT ≈ ×2LR-alone-seed42 (6.1750); momentum ~neutral on top of ×2LR → likely the same lucky-seed-42 that confirmed sub-band for ×2LR (honest mean 6.1894). Running efficient 2-seed trt confirm (123,7) vs known combo-champ ctrl 6.1998. — 2026-06-16
+- 323-mom0p90-lr2x — WIN: trt=6.1720 (3-seed mean 6.1762/6.1669/6.1728 @42/123/7; env-aware paired CONFIRM) vs combo-296 champion ctrl 6.1998 (6.1947/6.2131/6.1916, reused from 306 confirm, identical config/box/seeds), paired Δ-0.0278 (per-seed -0.0185/-0.0462/-0.0188, ALL right-sign, each at/past the 0.02 band) > band 0.02 — PROMOTED new champion, replaces 296 (6.1998). Combo 296 + muon_momentum 0.90 + peak-LR ×2.0. The two update-amount knobs STACK super-additively (×2.0 LR alone -0.0104 sub-band [306], mom 0.90 alone -0.0085 sub-band [317], COMBINED -0.0278; NOT substitutes — contrast 322 mom+batch1 anti-stack). Carried by seed123 (6.1669) + seed7 (6.1728), not a lucky-seed-42 redux. 0 new params — 2026-06-17

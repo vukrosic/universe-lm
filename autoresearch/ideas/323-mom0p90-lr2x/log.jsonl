@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T21:56:10Z","agent":"daemon","idea":"323-mom0p90-lr2x","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T22:25:17Z","agent":"daemon","idea":"323-mom0p90-lr2x","from":"running","to":"needs-confirm","round":,"note":"SCREEN-WIN (1 seed): trt=6.1762 vs champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ-0.0236) — REQUIRES paired 3-seed confirm before promotion: autoresearch/bin/confirm_paired.py 323-mom0p90-lr2x <flags>"}

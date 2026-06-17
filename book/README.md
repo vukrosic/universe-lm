@@ -34,20 +34,22 @@ Upgrade tentative→strong with more seeds; demote anything a new result breaks.
 
 Ideas do not get written straight into the ledger. They start on the bench in
 [`drafts/`](drafts/) — unnumbered, mutable, not citable — and cross over only by clearing
-an objective gate. The gates, the lanes (draft → C / L? / L! / D), the demotion rules, and
-the live status board are in **[PIPELINE.md](PIPELINE.md)**. Templates:
+an objective gate **AND receiving explicit operator approval** (the 🔒 HARD RULE at the top of
+[PIPELINE.md](PIPELINE.md) — the assistant may only write to `drafts/`; numbered entries
+require Vuk's sign-off). The gates, the lanes (draft → C / L? / L! / D), the demotion rules,
+and the live status board are in **[PIPELINE.md](PIPELINE.md)**. Templates:
 [`_TEMPLATE-entry.md`](_TEMPLATE-entry.md), [`drafts/_TEMPLATE-draft.md`](drafts/_TEMPLATE-draft.md).
 
 ## Index
 
-- [D001 — Paired seeds cancel common-mode noise](D001-paired-variance-reduction.md) — why same-seed differencing is the measurement gate
-- [L001 — The seed-noise floor at tiny scale](L001-noise-floor.md) — ~0.015 val-loss SD; sub-0.02 unpaired diffs are invisible
-- [L002 — Concave distance penalties underperform linear](L002-concave-penalty-hurts.md) — kerple-log loses by 0.056 (paired, conclusive)
-- [L003 — ALiBi shape invariance](L003-alibi-shape-invariance.md) — among growing penalties, curvature is irrelevant
-- [L004 — A growing distance penalty is load-bearing](L004-distance-penalty-is-load-bearing.md) — ALiBi vs nothing = +0.155 (paired, the dominant lever)
-- [L005 — ALiBi slope init is a reliability knob](L005-alibi-init-is-a-reliability-knob.md) — geometric seeding buys steadiness (~3×), not score
-- [L006 — Value-residual does not stack on a distance penalty](L006-value-residual-no-stack-alibi.md) — a stand-alone win that vanishes inside the ALiBi recipe (tentative null)
-- [L007 — Sub-threshold levers compound](L007-sub-threshold-levers-compound.md) — DeepNet-α and poly-ALiBi each miss the floor alone, clear it stacked (the champion)
+_The ledger is **empty** — no entry has been operator-approved yet._
+
+Candidate claims live on the bench in [`drafts/`](drafts/). A set of well-evidenced
+foundational candidates (the former D001 + L001–L007: paired-variance gate, noise floor,
+concave-penalty-loss, ALiBi shape invariance, distance-penalty load-bearing, slope-init
+reliability, value-residual non-stack, sub-threshold compounding) was drafted from existing
+evidence and is **awaiting approval** before it can be numbered (text recoverable from git
+history, commit 39ecf04).
 
 ## Naming
 

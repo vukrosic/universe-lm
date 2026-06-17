@@ -1,5 +1,5 @@
 ---
-status: running
+status: done
 ---
 # 338-mish-glu
 

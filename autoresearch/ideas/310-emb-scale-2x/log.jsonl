@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T20:20:16Z","agent":"daemon","idea":"310-emb-scale-2x","from":"needs-run","to":"running","round":,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T20:34:55Z","agent":"daemon","idea":"310-emb-scale-2x","from":"running","to":"done","round":,"note":"NULL: trt=6.2009 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.1998±0.02 (Δ0.0011)"}

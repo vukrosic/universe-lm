@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T01:55:36Z","agent":"daemon","idea":"232-poly-logit-stack","from":"needs-run","to":"running","round":1,"note":"claimed: queued by daemon"}
+{"ts":"2026-06-16T02:06:11Z","agent":"daemon","idea":"232-poly-logit-stack","from":"running","to":"done","round":1,"note":"NULL: trt=6.2697 inside champion configs.llm_config.Tiny1M3MAlibiConfig 6.2539±0.04 (Δ0.0158)"}

@@ -1,5 +1,21 @@
 # The Pipeline — how a claim earns its place
 
+> ## 🔒 HARD RULE — operator approval is the ONLY gate into the ledger
+> _Set by Vuk, 2026-06-17. No exceptions, no self-promotion._
+>
+> 1. The assistant may create or edit files **ONLY** in `book/drafts/`.
+> 2. A numbered ledger file (`book/D###`, `book/L###`, `book/C###`) may be created or
+>    modified **only after Vuk explicitly approves that specific promotion.** Clearing the
+>    numeric gates below makes a draft *eligible* for approval — it does **not** authorize
+>    the write. Eligible ≠ approved.
+> 3. "It was already in the README index," "the evidence clearly supports it," and
+>    "I'm just materializing a planned entry" are **NOT** approval. Only Vuk saying so is.
+> 4. Any ledger file that was not explicitly approved is to be **deleted** (recoverable
+>    from git history if later approved).
+>
+> Workflow: assistant writes/updates a `DRAFT-*.md`, reports it as eligible → Vuk approves →
+> *then* the assistant (or Vuk) creates the numbered entry.
+
 Two surfaces, one-way gates. This file is the *process*; the entries are the *product*.
 
 - **`drafts/`** — the bench. Mutable, unnumbered, **not citable**. Where an idea lives
@@ -71,16 +87,19 @@ identity until admitted.
 
 Everything in flight. Update on every admission / upgrade / kill.
 
+_Lane "**draft (await-approval)**" = the evidence clears its numeric gate and the claim is
+eligible, but it is NOT in the ledger until Vuk approves the promotion (🔒 HARD RULE)._
+
 | ID / draft | Claim (short) | Lane | Waiting on |
 |---|---|---|---|
-| D001 | Paired seeds cancel common-mode noise | **D** | — (assumption re-confirmed each batch) |
-| L001 | Seed-noise floor ≈ 0.015 SD, band 0.02 | **L!** | — |
-| L002 | Concave penalty loses to linear | **L!** | — |
-| L003 | ALiBi shape invariance (curvature irrelevant) | **L!** | scope-extension test under deepnet (see draft) |
-| L004 | Growing distance penalty is load-bearing (+0.155) | **L!** | longer-context re-test |
-| L005 | ALiBi slope init = reliability knob | **L!** (mean claim L?) | mean claim needs Δ clearing 0.02 w/ CI≠0 |
-| L006 | Value-residual gives no gain atop ALiBi | **L?** (tentative null) | 3-seed paired confirm of the null (Δ≤−0.02 would flip it to a win) |
-| L007 | DeepNet-α + poly-ALiBi compound past the floor | **L!** | fresh ≥3-seed confirm of the stack; clean poly-vs-linear-under-deepnet run |
+| _cand_ paired-variance | Paired seeds cancel common-mode noise | **draft (await-approval) → D** | Vuk's approval to number as D001 |
+| _cand_ noise-floor | Seed-noise floor ≈ 0.015 SD, band 0.02 | **draft (await-approval) → L!** | Vuk's approval to number as L001 |
+| _cand_ concave-penalty | Concave penalty loses to linear | **draft (await-approval) → L!** | Vuk's approval |
+| _cand_ alibi-shape-invariance | ALiBi shape invariance (curvature irrelevant) | **draft (await-approval) → L!** | Vuk's approval; scope-extension note under deepnet |
+| _cand_ distance-penalty-load-bearing | Growing distance penalty is load-bearing (+0.155) | **draft (await-approval) → L!** | Vuk's approval; longer-context re-test |
+| _cand_ slope-init-reliability | ALiBi slope init = reliability knob | **draft (await-approval) → L!** (mean L?) | Vuk's approval; mean claim needs Δ clearing 0.02 w/ CI≠0 |
+| _cand_ value-residual-no-stack | Value-residual gives no gain atop ALiBi | **draft (await-approval) → L?** | Vuk's approval; 3-seed paired confirm of the null |
+| _cand_ sub-threshold-compound | DeepNet-α + poly-ALiBi compound past the floor | **draft (await-approval) → L!** (323 super-add = L?) | Vuk's approval; 323 n=3 CI straddles 0 |
 | _draft_ single-seed-inflation | 1-seed screen-win over-estimates honest Δ by ≈1 SD | **draft → L?** | a 3rd inflation case (shrink-CI off 0) for L! |
 | _draft_ tiny-update-starvation | tiny1m3m update-starved; LR×mom compound super-additively | **draft → L?** | ≥5-seed re-run of 323 to move the magnitude CI off 0 (n=3 CI straddles 0) |
 | _draft_ identical-construction-differencing | paired Δ measures the lever only if both arms built identically | **draft → D** | a numbered slot (deductive; 0.0-nonsense-flag control passes) |
