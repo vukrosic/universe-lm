@@ -785,6 +785,18 @@ class LLMConfig:
     # (no `nn.Parameter` created, no stash, no blend). See
     # `autoresearch/ideas/021-value-residual/plan.md`.
     use_value_residual: bool = False
+    # AttnRes — Attention Residuals (Kimi Team / MoonshotAI, arXiv:2603.15031).
+    # Replace the inter-layer residual stream with softmax attention over depth:
+    # the input to block l is a per-token softmax-weighted aggregate of all prior
+    # block outputs (o_0 = embedding, o_j = output of block j), keyed by
+    # RMSNorm(o_j) and a learned per-layer pseudo-query w_l. Full variant
+    # (O(L) stored outputs — Block AttnRes is unnecessary at this depth).
+    # `w_l` zero-init ⇒ uniform depth-softmax ⇒ mean-of-prior-outputs at step 0
+    # (NOT bit-identical to the baseline last-output residual; documented
+    # trade-off — see experiments/attn-res-depth/NOTES.md). It's a DEPTH lever:
+    # Δ vs baseline is expected to grow with n_layers. Default off → no
+    # Parameter created, no forward branch taken, baseline path bit-identical.
+    use_attn_res: bool = False
     # 167 — Output logit z-loss (PaLM-style `log(Z)²` penalty,
     # Chowdhery et al. 2022, arXiv:2204.02311, §3.3). Auxiliary
     # training loss term `λ · mean(log(Z)²)` where `Z =
@@ -4336,6 +4348,43 @@ class Ladder52M1042MConfig(LLMConfig):
     n_kv_heads: int = 2       # 3:1 GQA
     max_seq_len: int = 2048
     train_tokens: int = 1_042_000_000
+
+
+# ============================================================================
+# AttnRes — Attention Residuals depth-lever experiment (arXiv:2603.15031).
+# Treatment configs = the ladder rungs above + `use_attn_res=True`. The CONTROL
+# arm is the plain ladder config (use_attn_res defaults False). Run each rung
+# PAIRED (control then treatment, seed 42, same box) and report the within-box
+# Δ = treatment_val − control_val. AttnRes is a DEPTH lever, so the experiment
+# is the TREND of Δ vs n_layers, not any single rung:
+#   8M (8L) → 13M (8L)  : depth FIXED, width grows → Δ should stay ~flat
+#   8M (8L) → 23M (15L) → 52M (21L) : depth grows → Δ should grow (the win)
+# Extrapolated target: Full135M2700MConfig (30L). See
+# experiments/attn-res-depth/NOTES.md and the branch README.
+# ============================================================================
+
+@dataclass
+class AttnResLadder8M155MConfig(Ladder8M155MConfig):
+    """AttnRes treatment @ rung 1 (8 layers). Control = Ladder8M155MConfig."""
+    use_attn_res: bool = True
+
+
+@dataclass
+class AttnResLadder13M252MConfig(Ladder13M252MConfig):
+    """AttnRes treatment @ rung 2 (8 layers — width-control vs rung 1)."""
+    use_attn_res: bool = True
+
+
+@dataclass
+class AttnResLadder23M469MConfig(Ladder23M469MConfig):
+    """AttnRes treatment @ rung 3 (15 layers). Control = Ladder23M469MConfig."""
+    use_attn_res: bool = True
+
+
+@dataclass
+class AttnResLadder52M1042MConfig(Ladder52M1042MConfig):
+    """AttnRes treatment @ rung 4 (21 layers). Control = Ladder52M1042MConfig."""
+    use_attn_res: bool = True
 
 
 # ============================================================================

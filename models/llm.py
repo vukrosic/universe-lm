@@ -926,6 +926,32 @@ class MinimalLLM(nn.Module):
             self.cosformer_gammas = nn.Parameter(
                 torch.full((config.n_layers,), self.cosformer_gamma_init)
             )
+        # AttnRes — Attention Residuals (arXiv:2603.15031). One learned
+        # pseudo-query vector w_l per layer, stored as a single 2-D Parameter
+        # of shape (n_layers, d_model) (zero-init ⇒ uniform depth-softmax at
+        # step 0; routes to Muon under the standard ndim==2 rule). Keys are a
+        # parameter-free RMSNorm of the prior block outputs (computed in the
+        # forward loop). AttnRes REPLACES the inter-layer residual stream, so
+        # it is mutually exclusive with the other residual-stream rewrites.
+        # Default off → no Parameter created, baseline path bit-identical.
+        self.use_attn_res = getattr(config, "use_attn_res", False)
+        if self.use_attn_res:
+            if (
+                self.use_unet_skips
+                or getattr(config, "use_hyper_connections", False)
+                or self.use_gau
+                or self.use_yoco
+                or self.tie_layer_groups > 1
+            ):
+                raise ValueError(
+                    "use_attn_res replaces the inter-layer residual stream and "
+                    "is mutually exclusive with use_unet_skips / "
+                    "use_hyper_connections / use_gau / use_yoco / "
+                    "tie_layer_groups>1"
+                )
+            self.attn_res_query = nn.Parameter(
+                torch.zeros(config.n_layers, config.d_model)
+            )
         deep_value_embed_hidden = getattr(config, "deep_value_embed_hidden", None)
         value_embed_rank = self.emb_rank if self.emb_rank is not None else config.d_model
         # #86 Interleaved global attention: when global_attn_every_k > 0,
@@ -2341,6 +2367,13 @@ class MinimalLLM(nn.Module):
         """
         # Pass through transformer blocks
         unet_skips = []
+        # AttnRes (arXiv:2603.15031): forward-pass-local list of block
+        # outputs. Seeded with the post-embedding residual stream as o_0;
+        # each block output o_l is appended at the end of the loop body. The
+        # input to block l is recomputed at the top of the loop as a
+        # depth-softmax aggregate over this list. `None` when the lever is off
+        # → the loop's AttnRes branches are skipped (baseline path bit-identical).
+        attn_res_outs = [x] if self.use_attn_res else None
         # 021 — Value Residual: V_1 is a forward-pass-local stash;
         # layer 0 writes its post-W_V/post-GQA/post-transpose V to
         # `block.attention._v_residual`, and we then pass it as
@@ -2457,6 +2490,25 @@ class MinimalLLM(nn.Module):
                 if self.unet_bridge_norm:
                     skip = self.unet_bridge_norms[skip_idx](skip)
                 x = x + gate * skip
+            # AttnRes (arXiv:2603.15031): replace the input to this block with
+            # a per-token softmax-weighted aggregate over all prior block
+            # outputs (o_0 = embedding, o_j = output of block j). Keys are a
+            # parameter-free RMSNorm of each o_j (normalize magnitude across
+            # depth so deep, large-norm layers don't dominate the softmax);
+            # the learned per-layer pseudo-query w_i = attn_res_query[i] scores
+            # them. At i=0 the list holds only o_0 ⇒ softmax over one element
+            # ⇒ x is unchanged. At step 0 every w_i=0 ⇒ uniform weights ⇒ x =
+            # mean(o_0..o_i) (the documented uniform-init trade-off, NOT the
+            # baseline last-output residual). Full variant, O(L) memory.
+            if self.use_attn_res:
+                V = torch.stack(attn_res_outs, dim=0)            # [L+1, B, T, d]
+                K = V * torch.rsqrt(
+                    V.pow(2).mean(-1, keepdim=True) + 1e-6
+                )                                                # RMSNorm keys
+                w = self.attn_res_query[i]                       # [d]
+                logits = torch.einsum('d,nbtd->nbt', w, K)       # [L+1, B, T]
+                alpha = logits.softmax(dim=0)
+                x = torch.einsum('nbt,nbtd->btd', alpha, V)      # [B, T, d]
             # 116 — Hyper-Connections: when on, the per-position
             # wrapper applies (A_l, B_l, C_l) stream mixing around the
             # tied block. Default off → direct block call (baseline path
@@ -2654,6 +2706,10 @@ class MinimalLLM(nn.Module):
                     prev_W_down = block.feed_forward._prev_W_down
             if self.use_unet_skips and i < self.unet_skip_count:
                 unet_skips.append(x)
+            # AttnRes: record this block's output o_l for the depth-attention
+            # aggregate at the top of every later iteration.
+            if self.use_attn_res:
+                attn_res_outs.append(x)
             # 129 — YOCO: compute (K_g, V_g) once at the boundary
             # between the lower and upper halves. The next iteration
             # of the loop (i + 1 == yoco_split) will read this as
