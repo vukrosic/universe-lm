@@ -54,10 +54,12 @@ ARM_FLAGS = {
     "deepnet_ab": {"use_deepnet_alpha": True, "use_deepnet_beta_init": True},  # E3: + canonical beta init downscale ((8L)^-1/4)
     "rezero":     {"use_re_zero": True},                                       # E4: specificity ctrl — learned SCALAR alpha, init 0
     "layerscale": {"use_layer_scale": True},                                   # E4: specificity ctrl — canonical LayerScale, learned per-CHANNEL gamma init 1e-4 (Touvron 2021; NOT the use_layerscale (1+g) variant)
-    # Long-context-safe candidates (flags already wired) — uncomment to enable as arms:
-    # "ropebase":  {"rope_base": 100_000.0},
-    # "qknorm":    {"use_qk_norm_post_rope": True},
-    # "diffattn":  {"use_diff_attn": True},
+    # Long-context-safe candidates (flags already wired):
+    "ropebase100k":  {"rope_base": 100_000},
+    "ropebase250k":  {"rope_base": 250_000},
+    "ropebase500k":  {"rope_base": 500_000},
+    "qknorm":        {"use_qk_norm_post_rope": True},
+    "diffattn":      {"use_diff_attn": True},
 }
 
 # Per-rung ENGINEERING (NOT architecture): memory-safe micro-batch + grad-accum
