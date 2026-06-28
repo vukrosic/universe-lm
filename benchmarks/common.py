@@ -92,5 +92,61 @@ def get_device_and_dtype():
     else:
         dtype = torch.float32
         print("Using float32 precision (CPU mode)")
-    
+
     return device, dtype
+
+
+class HFModelAdapter(torch.nn.Module):
+    """Wrap a HuggingFace CausalLM so the benchmark suite can call it exactly
+    like a universe-lm MinimalLLM.
+
+    The benchmarks call the model two ways:
+      - ARC:       outputs = model(input_ids, labels=input_ids); outputs.loss
+      - HellaSwag: logits  = model(input_ids, return_aux_loss=False)
+    HF models support `labels=` natively and return `.logits`; we just absorb
+    the extra `return_aux_loss` kwarg and return raw logits when no labels.
+    """
+
+    def __init__(self, hf_model):
+        super().__init__()
+        self.hf = hf_model
+
+    def forward(self, input_ids, labels=None, return_aux_loss=False, **kwargs):
+        outputs = self.hf(input_ids=input_ids, labels=labels)
+        if labels is not None:
+            return outputs            # has .loss (HF computes the shift internally)
+        return outputs.logits         # raw logits tensor
+
+
+def load_hf_model(model_name, device='cuda', dtype=torch.bfloat16):
+    """Load a HuggingFace baseline (e.g. 'HuggingFaceTB/SmolLM2-135M') as a
+    drop-in model for the benchmark suite.
+
+    Returns (model, config, tokenizer) — same contract as
+    load_model_from_checkpoint, so compare_models can treat it identically.
+    """
+    from transformers import AutoModelForCausalLM
+
+    print(f"Loading HF baseline: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    hf_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype)
+    hf_model = hf_model.to(device).eval()
+
+    model = HFModelAdapter(hf_model)
+    config = hf_model.config  # HF config exposes hidden_size / num_hidden_layers / num_attention_heads
+
+    print(f"✅ Baseline loaded: {model_name}")
+    print(f"   Parameters: {sum(p.numel() for p in hf_model.parameters()):,}")
+    print(f"   Precision: {dtype}")
+
+    return model, config, tokenizer
+
+
+def model_size_info(config):
+    """Pull (hidden_size, num_layers, num_heads) from either a universe-lm
+    LLMConfig (d_model / n_layers / n_heads) or a HF config
+    (hidden_size / num_hidden_layers / num_attention_heads)."""
+    hidden = getattr(config, 'hidden_size', None) or getattr(config, 'd_model', 'N/A')
+    layers = getattr(config, 'num_hidden_layers', None) or getattr(config, 'n_layers', 'N/A')
+    heads = getattr(config, 'num_attention_heads', None) or getattr(config, 'n_heads', 'N/A')
+    return {'hidden_size': hidden, 'num_layers': layers, 'num_heads': heads}

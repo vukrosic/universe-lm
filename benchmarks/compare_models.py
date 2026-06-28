@@ -20,45 +20,58 @@ from pathlib import Path
 from tabulate import tabulate
 import sys
 
-from common import load_model_from_checkpoint, get_device_and_dtype, get_model_info
+from common import (
+    load_model_from_checkpoint,
+    load_hf_model,
+    model_size_info,
+    get_device_and_dtype,
+)
 from arc_challenge import evaluate_arc
 from hellaswag import evaluate_hellaswag
 
 
-def compare_checkpoints(checkpoints, benchmarks=['arc', 'hellaswag'], max_samples=None):
-    """Compare multiple checkpoints on selected benchmarks"""
-    
+def compare_checkpoints(checkpoints, benchmarks=['arc', 'hellaswag'],
+                        max_samples=None, hf_baselines=None):
+    """Compare universe-lm checkpoints (and optional HuggingFace baselines such
+    as SmolLM2-135M) on selected benchmarks."""
+
     device, dtype = get_device_and_dtype()
     print(f"Device: {device}\n")
-    
+
+    # Build a unified work list: ('checkpoint', path) and ('hf', model_name).
+    targets = [('checkpoint', c) for c in (checkpoints or [])]
+    targets += [('hf', m) for m in (hf_baselines or [])]
+
     all_results = []
-    
-    for checkpoint_path in checkpoints:
-        checkpoint_path = Path(checkpoint_path)
-        
+
+    for kind, ref in targets:
         print("="*70)
-        print(f"Evaluating: {checkpoint_path}")
+        print(f"Evaluating: {ref}")
         print("="*70)
-        
-        # Load model
+
+        # Load model (checkpoint or HF baseline)
         try:
-            model, config, tokenizer = load_model_from_checkpoint(
-                checkpoint_path, device=device, dtype=dtype
-            )
+            if kind == 'hf':
+                model, config, tokenizer = load_hf_model(ref, device=device, dtype=dtype)
+                exp_name = ref.split('/')[-1]
+                ref_str = ref
+            else:
+                ref = Path(ref)
+                model, config, tokenizer = load_model_from_checkpoint(
+                    ref, device=device, dtype=dtype
+                )
+                exp_name = ref.parent.parent.name
+                ref_str = str(ref)
         except Exception as e:
-            print(f"❌ Error loading checkpoint: {e}")
+            print(f"❌ Error loading {ref}: {e}")
             continue
-        
+
         result = {
-            'checkpoint': str(checkpoint_path),
-            'exp_name': checkpoint_path.parent.parent.name,
-            'model_info': {
-                'hidden_size': getattr(config, 'hidden_size', 'N/A'),
-                'num_layers': getattr(config, 'num_hidden_layers', 'N/A'),
-                'num_heads': getattr(config, 'num_attention_heads', 'N/A'),
-            }
+            'checkpoint': ref_str,
+            'exp_name': exp_name,
+            'model_info': model_size_info(config),
         }
-        
+
         # Run ARC-Challenge
         if 'arc' in benchmarks:
             print("\n" + "-"*70)
@@ -131,36 +144,42 @@ def main():
     parser.add_argument('--benchmarks', nargs='+', default=['arc', 'hellaswag'],
                         choices=['arc', 'hellaswag'],
                         help='Which benchmarks to run')
+    parser.add_argument('--hf-baselines', dest='hf_baselines', nargs='+', default=None,
+                        help='HuggingFace models to benchmark alongside, e.g. '
+                             'HuggingFaceTB/SmolLM2-135M (the model we race to beat)')
     parser.add_argument('--max-samples', type=int, default=None,
                         help='Maximum samples per benchmark (None = all)')
     parser.add_argument('--output', type=str, default=None,
                         help='Output JSON file for comparison results')
     args = parser.parse_args()
-    
+
     # Get checkpoint paths
     checkpoint_paths = args.checkpoints or args.checkpoint_list
-    
-    if not checkpoint_paths:
-        print("Error: No checkpoints specified")
+
+    if not checkpoint_paths and not args.hf_baselines:
+        print("Error: specify at least one checkpoint or --hf-baselines model")
         parser.print_help()
         sys.exit(1)
-    
+
     print("="*70)
     print("MODEL BENCHMARK COMPARISON")
     print("="*70)
-    print(f"Checkpoints: {len(checkpoint_paths)}")
+    print(f"Checkpoints: {len(checkpoint_paths or [])}")
+    if args.hf_baselines:
+        print(f"HF baselines: {', '.join(args.hf_baselines)}")
     print(f"Benchmarks: {', '.join(args.benchmarks)}")
     if args.max_samples:
         print(f"Samples per benchmark: {args.max_samples}")
     else:
         print(f"Samples per benchmark: All (full evaluation)")
     print()
-    
+
     # Run comparison
     results = compare_checkpoints(
         checkpoint_paths,
         benchmarks=args.benchmarks,
-        max_samples=args.max_samples
+        max_samples=args.max_samples,
+        hf_baselines=args.hf_baselines,
     )
     
     # Print comparison table

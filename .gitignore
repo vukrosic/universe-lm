@@ -311,3 +311,13 @@ scratch/
 
 # transient per-experiment stubs — delivered to the box by scp, never committed
 _arq_*.py
+
+# --- local environments / heavy local-only dirs (not for the repo) ---
+.venv*/
+.lm-eval-src/
+/local_results/
+/temp/
+/tmp/
+/checkpoints/
+*.pt
+benchmark_comparison_results.json

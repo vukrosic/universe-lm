@@ -1,187 +1,142 @@
-# Open Superintelligence Lab
+# universe-lm
 
-**A fully-open AI research lab building and releasing real LLMs that compete with the best — in public, together.**
+**An open effort to train a ~135M language model that beats [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M) — built in public, every day.**
 
-💬 **[Do AI research with us on Discord](https://discord.gg/6AbXGpKTwN)**
+The thesis is the differentiator: even fully-open labs keep results secret for ~3 months while a paper is written. **Here every run, config, and number is public the day it happens.** That's the fastest way to do science — and the reason this repo exists.
 
-A high-performance codebase for LLM research, pretraining, and optimization: testing new architectures, optimizers, or training.
-
-- Modular transformer with GQA, RoPE, and RMSNorm
-- Muon optimizer alongside AdamW
-- Training script, flexible configuration
-
-- `models/`: Transformer layers and components (RoPE, RMSNorm, Multi-Head Attention).
-- `optimizers/`: Muon optimizer (outperforms AdamW and all others).
-- `training/`: Core trainer logic and utilities.
-- `configs/`: Hyperparameter and dataset configurations.
-- `utils/`: Logging, plotting, and helper functions.
-
-## 🧪 Experiments You Can Run (donate GPU time)
-
-Each experiment lives on its own branch, fully wired and ready to run. **If you
-have a spare GPU**, pick one, run the paired control + treatment (one command
-each, `seed=42`), and report the within-box Δ back via an issue or
-[Discord](https://discord.gg/6AbXGpKTwN). Every datapoint helps us find the
-recipe that scales to a 135M model beating SmolLM2-135M.
-
-| Experiment | What it tests | Smallest run | Branch |
-|---|---|---|---|
-| **Attention Residuals (AttnRes)** | Replace the fixed inter-layer residual with softmax attention over depth ([arXiv:2603.15031](https://arxiv.org/abs/2603.15031)). A depth lever — should help more as layers grow. | ~1 hr · 8M params (8 layers) | [`experiment/attn-res-v1`](https://github.com/vukrosic/universe-lm/tree/experiment/attn-res-v1) |
-
-**To run one:** check out its branch — the branch README has the exact two
-commands (control + treatment) and a copy-paste prompt you can hand to your AI
-coding agent. e.g. for AttnRes:
-
-```bash
-git clone -b experiment/attn-res-v1 https://github.com/vukrosic/universe-lm.git
-cd universe-lm   # now read this branch's README, top section
-```
-
-*Want to add your own? Branch from `main`, wire the idea behind a config flag,
-add a branch README with the run commands, and open a PR adding a row here.*
-
-*A backlog of possibly-future ideas (unvetted, may not help) sits at the
-[bottom of this README](#-idea-backlog-possibly-future-ideas).*
-
-## 🏁 The Speedrun
-
-**Race to train the best 10M LLM in ~33 minutes — every win builds toward a fully-open 135M model that beats [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M).**
-
-One race: **lowest val loss on a 10M-param model trained on 200M tokens** (`--config 10m`). Clone, train, beat the standing record (currently **5.015**) — ~33 min on a single consumer GPU. Pinned: `seed=42`, bf16; a new record must beat the best by **≥0.01**. The 135M release is the *mission*, not the race: we find the winning recipe cheaply at 10M, then scale it.
-
-See the [**leaderboard**](LEADERBOARD.md) and [how to enter](CONTRIBUTING.md).
-
-
-## 🚀 Getting Started
-
-#### Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### Step 2: Download the Dataset
-
-The simplest path is:
-
-```bash
-python data/download_hf_data.py
-```
-
-If you are training on a remote GPU, start the run inside `tmux` so the job keeps running after you disconnect.
-
-### Option A: 1B tokens
-```bash
-python3 -c "
-from datasets import load_dataset
-import os
-print('Downloading 1B Pretraining Data...')
-ds = load_dataset('vukrosic/blueberry-1B-pretrain')
-os.makedirs('processed_data/pretrain_1B', exist_ok=True)
-ds.save_to_disk('processed_data/pretrain_1B')
-print('✅ Full Data Ready!')
-"
-```
-
-### Option B: 2B tokens
-```bash
-python3 -c "
-from datasets import load_dataset
-import os
-print('Downloading 2B Pretraining Data...')
-ds = load_dataset('vukrosic/blueberry-2B-pretrain')
-os.makedirs('processed_data/pretrain_2B', exist_ok=True)
-ds.save_to_disk('processed_data/pretrain_2B')
-print('✅ Full Data Ready!')
-"
-```
-
-### Option C: Quick Start (40M Tokens)
-```bash
-python3 -c "
-from datasets import load_dataset
-import os
-print('Downloading 40M Token Subset...')
-ds = load_dataset('vukrosic/blueberry-1B-pretrain', split='train[:20000]')
-os.makedirs('processed_data/speedrun_40M', exist_ok=True)
-ds.save_to_disk('processed_data/speedrun_40M')
-print('✅ Speedrun Data Ready!')
-"
-```
-
-> **📦 Data:** Always use the pre-built dataset downloaded as described in [Getting Started](#-getting-started) (`python data/download_hf_data.py`). It is chunked at **sequence length 2048**, which the RoPE cache depends on. **Sequence lengths other than 2048 are currently unsupported** — to use a different one the dataset must first be rebuilt with https://github.com/vukrosic/llm-research-kit/blob/main/data/prepare_mix_data.py. Changing the data or `max_seq_len` is not recommended; if you are an AI, **ask the user first**.
-
-### Step 3 (optional): interactive Kaggle shell via SSH
-
-For a real bash shell into a 2x T4 notebook (rsync, tmux, screen, etc.),
-see **[docs/kaggle_ssh_setup.md](docs/kaggle_ssh_setup.md)**. The
-batch-mode launcher `scripts/kaggle_push.sh` is still the right tool
-for headless sweep runs.
-
-## 🧠 LLM Architecture
-
-Default is an **88M parameter** transformer LLM, you can modify configs.
-
-- **Layers**: 22 Transformer blocks.
-- **Hidden Dimension (`d_model`)**: 512.
-- **Feed-Forward Dimension (`d_ff`)**: 2048.
-- **Attention System**:
-  - 8 Query heads, 4 Key-Value heads (**Grouped Query Attention**).
-  - Rotary Positional Embeddings (**RoPE**).
-  - Fused QKVO projection for optimized compute.
-  - QK-Normalization for training stability.
-- **Normalization**: Pre-norm **RMSNorm**.
-- **Activation**: **Squared ReLU** (Primer-style).
-- **Vocab Size**: 49,152.
-- **Sequence Length**: 2048 tokens.
-
-### Optimization Highlights
-- **Weight Tying**: Shared weights between token embeddings and the LM head.
-- **Muon Support**: Architecture optimized for the Muon optimizer's orthogonal updates.
-- **Efficiency**: Designed for `torch.compile` compatibility and mixed-precision (BF16) training.
+🎯 **Goal:** beat SmolLM2-135M on a public eval suite at a matched token budget, fully reproducible.
+🧱 **Architecture:** a standard, known-good decoder-only transformer (no exotic tricks in the headline run).
+🤝 **Looking for compute + collaborators** — the plan and the exact ask are right below.
 
 ---
 
-## 💡 Idea backlog (possibly future ideas)
+## 📋 The plan — and what your compute buys
 
-Parking lot of unvetted ideas — **not on the roadmap, may not help at all**.
-Nothing here is claimed to work; it's just a list to pull from when picking the
-next experiment. To try one: wire it behind a config flag, branch it, and it
-graduates to [Experiments You Can Run](#-experiments-you-can-run-donate-gpu-time).
-Two groups: **(A)** new architectures / mechanisms (higher ceiling, more likely to
-move loss, more work); **(B)** recipe & hyperparameter levers (cheaper, lower ceiling).
+**If you're considering giving compute, read this first.**
 
-#### A. New architectures & mechanisms (higher ceiling)
+**In one paragraph.** universe-lm trains a ~135M-parameter decoder-only transformer to beat SmolLM2-135M on a public eval suite at a *matched* token budget — and publishes every run, config, and number the same day it happens. The architecture is deliberately **standard and known-good**; the research lives in the **data recipe** plus a few cheap, zero-initialized levers, each found at small scale and confirmed at 135M. The code, the data pipeline, and the side-by-side benchmark harness are **already built and runnable** (see below). The only blocker is GPU time.
 
-These change *what the model computes* and have real pretraining results behind them.
+**What we're doing, concretely:**
+1. **Re-measure SmolLM2-135M on our exact harness** — so the comparison is apples-to-apples, not card-vs-card. (Ready today; one command.)
+2. **Train the `135m` preset** on the open data pipeline and score it **head-to-head** against that baseline.
+3. **Search recipes cheaply at 10M params**, then promote only the winners up to 135M (overnight runs, not month-long shots).
+4. **Lock the headline number** with confirmation runs + ablations, every artifact public.
 
-| Idea | What it might do | Source |
+**The compute, tiered (≈1,200–1,500 A100-hours total, estimates refined against the real cluster):**
+
+| Phase | What runs on the GPUs | Est. A100-h | Decision gate |
+|---|---|---|---|
+| **0 — Pilot** | validate the pipeline end-to-end + first full 135M run, scored vs SmolLM2-135M on the same harness | **~200** | a real head-to-head number → go / no-go |
+| **1 — Data** | FineWeb-Edu / DCLM-style filtering vs the current mix at 135M — the single biggest lever | ~400 | best data recipe locked |
+| **2 — Levers** | confirm the cheap, zero-init levers (value embeddings, per-head Q-gain, RoPE base, sliding window) at 135M | ~400 | which levers actually help |
+| **3 — Lock-in** | best-recipe full runs + ablation confirmations to publish a reproducible win | ~400 | the headline result |
+
+**The first commitment is only ~200 hours** — enough to see a real, reproducible number before you scale further. Every hour runs **exact public code** in this repo: nothing hidden, nothing proprietary, fully reproducible, published daily. 135M fits on a single GPU, so it's plain **single-node data parallelism** (DDP/FSDP) — no tensor/pipeline setup, any A100/H100 box works.
+
+A one-page architecture-and-plan note is in [`docs/architecture.pdf`](docs/architecture.pdf). To talk: open an issue, or reach **[@vukrosic](https://github.com/vukrosic)** — based in **Zhongguancun, Beijing**, happy to meet in person.
+
+---
+
+## 🏁 The bar: beat SmolLM2-135M, same harness
+
+The win condition is a **head-to-head on the same benchmark harness, same samples** — not a val-loss on a private corpus, and not comparing against someone else's reported numbers (those vary by harness). This repo benchmarks **our model and SmolLM2-135M side by side**, so the comparison is apples-to-apples.
+
+| Benchmark | What it tests | SmolLM2-135M | universe-lm |
+|---|---|---|---|
+| **ARC-Challenge** | grade-school science MCQ | _run to measure_ | _run to measure_ |
+| **HellaSwag** | commonsense sentence completion | _run to measure_ | _run to measure_ |
+
+Measure both with one command (no checkpoint needed for the baseline):
+
+```bash
+# SmolLM2-135M baseline on the same harness
+python benchmarks/compare_models.py \
+    --hf-baselines HuggingFaceTB/SmolLM2-135M \
+    --benchmarks arc hellaswag
+
+# head-to-head once you have a checkpoint
+python benchmarks/compare_models.py \
+    checkpoints/best_model.pt \
+    --hf-baselines HuggingFaceTB/SmolLM2-135M \
+    --benchmarks arc hellaswag
+```
+
+> SmolLM2-135M publishes a broader benchmark table on its model card; we re-measure it here so both models are scored identically. GSM8K, HumanEval and MBPP harnesses also live in `benchmarks/` and `evals/` for later.
+
+---
+
+## 🧠 The architecture (headline run)
+
+The headline target is the `135m` preset — a **basic transformer we know works**, matched to SmolLM2-135M's exact shape (576-d, 30 layers) so the comparison isolates *data + recipe*, not architecture gimmicks.
+
+```bash
+python train_llm.py --config 135m --output_dir checkpoints
+```
+
+| | Default (`default`) | Headline target (`135m`) |
 |---|---|---|
-| **LayerNorm Scaling (Curse of Depth)** | Scale each LN output by `1/√depth`. Pre-LN's output variance grows exponentially with depth → deep layers become near-useless (pruning the back half barely hurts). LNS makes deeper layers contribute. Lowest PPL across 130M–7B; **directly complements our depth lever + 30-layer target**. | [2502.05795](https://arxiv.org/abs/2502.05795) |
-| **Parallax (local-linear attention)** | Keep softmax, add a learned branch probing the KV covariance (local-*linear* upgrade to softmax's local-*constant* estimate). Beats softmax at 0.6B/1.7B, **param- & compute-matched** — and **Muon unlocks it** (our exact optimizer). | [2605.29157](https://arxiv.org/abs/2605.29157) |
-| **MUDD — multiway dynamic dense connections** | Per-token, input-dependent dense skips into BOTH the residual stream and attention values. Sibling to our AttnRes work; live in the current nanogpt record (#81). | [2502.12170](https://arxiv.org/abs/2502.12170) |
-| **Looped / recurrent-depth LM** | Reuse a weight-shared block N times (depth without params); sharply improves multi-hop/composition, adds adaptive compute via entropy-regularized exit. Param-efficiency is our constraint; distinct from plain layer-tying. | [LoopLM 2510.25741](https://arxiv.org/abs/2510.25741) · [Huginn 2502.05171](https://arxiv.org/abs/2502.05171) |
-| **Multi-Token Prediction (MTP)** | Auxiliary heads predict the next *k* tokens → better loss per token (data-efficiency). DeepSeek-V3 + nanogpt record (#53). | [DeepSeek-V3](https://arxiv.org/abs/2412.19437) |
-| **Intra-document attention masking** | Forbid attention across packed-doc boundaries — stops the model learning far-back = noise. Llama-3 data hygiene; 0 new params. Confirmed in nanogpt (EoS alignment, #26). | [Llama 3](https://arxiv.org/abs/2407.21783) |
-| **Hashed / bigram embeddings** | Replace the full `49 k × d` table (≈most of the params at small N) with token/bigram-hashed lookups into a small shared table. Attacks our biggest param sink. nanogpt record (#62/#83). | [parameter-golf](https://github.com/openai/parameter-golf) · [Hash emb 1709.03933](https://arxiv.org/abs/1709.03933) |
-| **Smaller-vocab tokenizer** | At small N the 49 k embedding dominates params; a ~half-size vocab at equal bytes/token frees budget for depth/width. | [TokenMonster](https://github.com/alasdairforsythe/tokenmonster) |
-| **CaseOps (bijective case factoring)** | Pull capitalization into a side channel so the vocab doesn't waste capacity on `the/The/THE`. Cheap input transform, shrinks effective vocab. | [parameter-golf](https://github.com/openai/parameter-golf) |
-| **Quantization-aware training (int4–6 / ternary)** | Train so weights survive low-bit packing (GPTQ / Hessian-aware). Scores capacity *per byte* — a fixed-size release holds more model. The winning parameter-golf lever. | [parameter-golf](https://github.com/openai/parameter-golf) · [GPTQ 2210.17323](https://arxiv.org/abs/2210.17323) |
-| **Paired-head Q/K orthogonalization** | Orthogonalize Q,K in *pairs of heads* instead of per full matrix — cheap attention conditioning. nanogpt record (#80). | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **Asymmetric layer composition** | Drop the first attention layer and first MLP layer — deep stacks don't need symmetric attn+MLP everywhere; frees params at ~zero cost. nanogpt records (#30/#35). | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **Test-time training** | Per-document parameter nudging at inference — 2026 nanogpt record. Genuine mechanism, but complex / inference-side. | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
+| Parameters | ~88M | **~134.5M** |
+| `d_model` | 512 | 576 |
+| Layers | 22 | 30 |
+| Attention | 8 query / 4 KV (GQA) | 9 query / 3 KV (GQA) |
+| `d_ff` | 2048 | 2304 (4× `d_model`) |
+| Vocab | 49,152 (SmolLM2 tokenizer) | 49,152 |
+| Context | 2048 | 2048 |
+| Token budget | — | ~2.7B (Chinchilla ~20×) |
 
-#### B. Recipe & hyperparameter levers (cheaper, lower ceiling)
+Both presets are the same family: **decoder-only, GQA + RoPE, pre-norm RMSNorm, QK-normalization, squared-ReLU (Primer) FFN, tied embedding/LM head, trained with Muon.** Experimental levers (value embeddings, per-head Q-gain, RoPE-base tuning, sliding-window attention, …) are **off by default** and live behind config flags — they are *experiments tested on top of* this baseline, not part of the headline run.
 
-Training-side knobs, schedules, optimizer swaps, and data — quick to try, but "just sweeps."
+---
 
-| Idea | What it might do | Source |
-|---|---|---|
-| **Full muP** | Maximal-update parameterization for HP transfer — tune LR/init once at 8M, carry to 135M without re-tuning. Makes the whole ladder→135M extrapolation valid. | [muP](https://arxiv.org/abs/2203.03466) |
-| **WSD learning-rate schedule** | Warmup → long stable → short decay-to-zero. SmolLM2 / MiniCPM recipe; our champion found the model "update-starved," which WSD directly addresses. Confirmed in nanogpt (terminal-LR decay, #19). | [MiniCPM](https://arxiv.org/abs/2404.06395) |
-| **AdaMuon / NorMuon** | Per-parameter adaptive scaling on top of Muon — claimed +30–40% efficiency. Drop-in optimizer swap; NorMuon is in the nanogpt record (#41). | [AdaMuon](https://arxiv.org/abs/2507.11005) |
-| **Muon weight-decay + update-scale sweep** | The two knobs that keep Muon stable at scale (Moonshot recipe); WD is unswept here. | [Muon is Scalable](https://arxiv.org/abs/2502.16982) |
-| **Separate (higher) embedding LR** | Embeddings want a much larger LR than the matrices; decoupling it is a cheap, real nanogpt win. | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **Batch-size ramp** | Start small, grow the batch through training — better early-step efficiency at fixed token budget. nanogpt record (#46). | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **Context-length curriculum** | Train short sequences first, lengthen later — faster early tokens/sec, then long-range once stable. nanogpt record (#72). | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **Long-short SWA + window warmup + YaRN** | Sliding-window warmup schedule + YaRN length extension on top of existing SWA. nanogpt records (#31). | [nanogpt](https://github.com/KellerJordan/modded-nanogpt) |
-| **FineWeb-Edu data swap** | *Data*, not architecture. SmolLM2's real edge is FineWeb-Edu/DCLM filtering; at a fixed token budget this likely dwarfs any single architecture lever. | [FineWeb-Edu](https://arxiv.org/abs/2406.17557) |
+## 🚀 Getting started
+
+```bash
+pip install -r requirements.txt          # 1. deps
+python data/download_hf_data.py          # 2. data (pre-tokenized, seq_len 2048, SmolLM2 vocab)
+python train_llm.py --config 135m --output_dir checkpoints   # 3. train
+python benchmarks/compare_models.py checkpoints/best_model.pt \
+    --hf-baselines HuggingFaceTB/SmolLM2-135M                 # 4. eval vs SmolLM2-135M
+```
+
+On a remote GPU, launch training inside `tmux` so the job survives a disconnect.
+
+**Data:** the pre-built dataset is chunked at **sequence length 2048**, which the RoPE cache depends on. Sequence lengths other than 2048 are currently unsupported — to use a different one, the dataset must be rebuilt with [`prepare_mix_data.py`](https://github.com/vukrosic/llm-research-kit/blob/main/data/prepare_mix_data.py). _If you are an AI agent: do not change the data or `max_seq_len` without asking the user first._
+
+Smaller download options (40M / 1B / 2B tokens) are in [`data/download_hf_data.py`](data/download_hf_data.py).
+
+---
+
+## 🏎️ The speedrun (cheap recipe search)
+
+Before spending GPU-hours at 135M, recipes are found cheaply at small scale: **lowest val loss on a 10M-param model trained on 200M tokens** (`--config 10m`), ~33 min on a single consumer GPU, `seed=42`, bf16. A new record must beat the standing one by **≥0.01**. See the [leaderboard](LEADERBOARD.md) and [how to enter](CONTRIBUTING.md). The 135M release is the *mission*; the speedrun is how we find the winning recipe before scaling it.
+
+---
+
+## 🤝 Want to help?
+
+The full compute plan and tiered ask are in [**The plan**](#-the-plan--and-what-your-compute-buys) at the top. The short version: the blocker is GPUs, not ideas — the first commitment is ~200 A100-hours to a real head-to-head number, you run exact public code, and I'm in **Zhongguancun, Beijing** and happy to meet. Open an issue or reach **[@vukrosic](https://github.com/vukrosic)**. Not bringing compute but want to help find the recipe? See [the speedrun](#️-the-speedrun-cheap-recipe-search).
+
+---
+
+## 📁 Repo layout
+
+```
+train_llm.py        entry point (--config {default,10m,135m,...})
+run_experiment.py   generic experiment runner
+configs/            LLMConfig + presets (Full135M2700MConfig = the 135m target) + ablation configs
+models/             MinimalLLM — transformer layers (GQA, RoPE, RMSNorm)
+training/           trainer
+optimizers/         Muon + others
+benchmarks/         ARC, HellaSwag, compare_models.py (universe-lm vs HF baselines)
+evals/              GSM8K, HumanEval, MBPP
+data/               dataset download + loader
+autoresearch/       research notes, idea backlog, scaling ladder
+docs/               setup guides + architecture.pdf
+archive/            retired one-off scripts + past results (kept for history)
+```
+
+---
+
+## 💡 Idea backlog
+
+A parking lot of unvetted levers to pull from when picking the next experiment lives in [`autoresearch/`](autoresearch/) — split into **(A)** new architectures/mechanisms (higher ceiling, more work) and **(B)** recipe/hyperparameter knobs (cheaper, lower ceiling). The single biggest known un-pulled lever is **data**: SmolLM2's real edge is FineWeb-Edu/DCLM filtering, which at a fixed token budget likely dwarfs any single architecture change.
