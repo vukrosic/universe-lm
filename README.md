@@ -10,6 +10,16 @@ The thesis is the differentiator: even fully-open labs keep results secret for ~
 
 ---
 
+## 🧑‍🔬 Contribute an idea (no GPU needed)
+
+New here? Your first task is **not** code. Read a bit of the literature and propose **one idea** to
+improve pretraining — the idea itself, plus the paper or repo it comes from. Post it in the
+community; proposals are reviewed every Sunday. Accepted ideas go into the lab queue and you get
+first claim on running one. Using AI to help you search and read is encouraged. Once your idea is
+accepted, see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the exact pull-request shape.
+
+---
+
 ## 📋 The plan — and what your compute buys
 
 **If you're considering giving compute, read this first.**
