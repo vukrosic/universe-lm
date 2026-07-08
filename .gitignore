@@ -321,3 +321,4 @@ _arq_*.py
 /checkpoints/
 *.pt
 benchmark_comparison_results.json
+.beads/
