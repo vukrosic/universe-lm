@@ -1,16 +1,55 @@
-# evals — coding benchmark suite
+# evals — model evaluation
 
-Lightweight pass@1 harness for the open coding-model lab. Every checkpoint
-that comes out of training gets evaluated here before it ships.
+Two things live here:
 
-## What's in the suite
+1. **`lm_eval_universe.py`** — the main harness. Wraps any lab checkpoint as
+   an EleutherAI lm-evaluation-harness model, so every standard benchmark is
+   scored with the *same code the SmolLM2-135M numbers were published with*.
+   This is what the flagship "beat SmolLM2" verdict uses. Prefer it over the
+   hand-rolled scripts below and in `benchmarks/` for anything it covers.
+2. **`humaneval.py` / `mbpp.py`** — legacy standalone coding pass@1 scripts,
+   kept for the code-execution path until `lm_eval` code tasks are validated.
 
-| Eval | What it tests | Problems | Format |
+## Two-tier philosophy (important)
+
+Lab models are 23M–135M params on ~1B tokens. Codegen/math/graduate-bio
+abilities emerge much later, so we split the suite:
+
+| Suite | Tasks | At lab scale | Purpose |
 |---|---|---|---|
-| `humaneval` | Short Python functions from docstrings | 164 | pass@1 via test execution |
-| `mbpp` | "Mostly Basic Python Problems", sanitized split | ~257 | pass@1 via assert execution |
+| `core` | hellaswag, arc_easy/challenge, piqa, winogrande, openbookqa, boolq, commonsense_qa | above random — the real signal | flagship verdict vs SmolLM2-135M |
+| `bio`  | mmlu college/hs biology, anatomy | ~25% (random floor) | curve exists from day one |
+| `math` | gsm8k (5-shot) | ~0 | aspirational; tracked |
+| `code` | humaneval pass@1 (executes code) | ~0 | aspirational; **box-only** |
 
-The plan is to add `humanevalplus` (HumanEval+), `livecodebench` (contamination-free), and `bigcodebench` later. Keep this file in sync.
+Only `core` should drive promotion decisions right now. The others are wired
+so the score curves start accumulating before the models are big enough to
+move them.
+
+## Local-first, box is disposable
+
+Run and store evals **locally** (this is the source of truth); the GPU box is
+interruptible and replaceable. Typical loop: box trains → we pull the
+checkpoint (or its `model.pt`) down → eval locally on MPS/CPU → results commit
+to git → push. `core` runs fine on an M-series Mac (`--device mps`). Only
+`--suite code` needs the box (it executes model-generated code — never run it
+on your Mac).
+
+```bash
+# local smoke test (fast, MPS)
+python -m evals.lm_eval_universe --checkpoint lab_runs/B-S0/model.pt \
+    --suite core --limit 20 --device mps
+
+# full core suite
+python -m evals.lm_eval_universe --checkpoint lab_runs/B-S0/model.pt \
+    --suite core --out results/evals
+
+# code, on the box only
+python -m evals.lm_eval_universe --checkpoint lab_runs/B-S0/model.pt \
+    --suite code
+```
+
+Results: `results/evals/<run_name>/<suite>.json`. Legacy coding harness below.
 
 ## Quick start
 
