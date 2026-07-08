@@ -114,7 +114,7 @@ Before spending GPU-hours at 135M, recipes are found cheaply at small scale: **l
 
 ## 🤝 Want to help?
 
-The full compute plan and tiered ask are in [**The plan**](#-the-plan--and-what-your-compute-buys) at the top. The short version: the blocker is GPUs, not ideas — the first commitment is ~200 A100-hours to a real head-to-head number, you run exact public code, and I'm in **Zhongguancun, Beijing** and happy to meet. Open an issue or reach **[@vukrosic](https://github.com/vukrosic)**. Not bringing compute but want to help find the recipe? See [the speedrun](#️-the-speedrun-cheap-recipe-search).
+The full compute plan and tiered ask are in [**The plan**](#-the-plan--and-what-your-compute-buys) at the top. The short version: the blocker is GPUs, not ideas — the first commitment is ~200 A100-hours to a real head-to-head number, you run exact public code, and I'm in **Zhongguancun, Beijing** and happy to meet. Open an issue or reach **[@vukrosic](https://github.com/vukrosic)**. Not bringing compute but want to help find the recipe? See [the speedrun](#️-the-speedrun-cheap-recipe-search) — or claim a paper-implementation experiment from [`tasks/`](tasks/): each is a 1–2 day, few-dollar run with a clear acceptance bar, and accepted results get named credit on the published report.
 
 ---
 
@@ -129,6 +129,7 @@ training/           trainer
 optimizers/         Muon + others
 benchmarks/         ARC, HellaSwag, compare_models.py (universe-lm vs HF baselines)
 evals/              GSM8K, HumanEval, MBPP
+tasks/              claimable experiment tasks from recent papers (ICML/ICLR 2026)
 data/               dataset download + loader
 autoresearch/       research notes, idea backlog, scaling ladder
 docs/               setup guides + architecture.pdf
