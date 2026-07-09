@@ -23,17 +23,38 @@ The 8-task pinned suite and SmolLM2-135M's score on **our own harness** (lm-eval
 
 Reproduce the baseline (no checkpoint needed): `./evals/run_baseline_suite.sh HuggingFaceTB/SmolLM2-135M`. `commonsense_qa`, `mmlu`, `gsm8k` are excluded — a 135M model scores at chance on them.
 
+## Setup
+
+**Prerequisites:** Python 3.10+ and an NVIDIA GPU for training (CPU works only for the smoke test below).
+
+```bash
+python -m venv .venv && source .venv/bin/activate    # 1. isolated env
+
+# 2. install PyTorch FIRST, matched to your CUDA — pick the exact command from
+#    https://pytorch.org/get-started/locally/  (example, CUDA 12.4:)
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+pip install -r requirements.txt                      # 3. the rest of the deps
+```
+
+> Install `torch` explicitly before step 3. If you skip it, pip pulls a default build that is often **CPU-only**, and training silently won't use your GPU.
+
+**Smoke test (~1 min, no dataset needed)** — downloads SmolLM2-135M and scores 8 SciQ questions. If you get a `sciq acc` number, your environment works:
+
+```bash
+lm_eval --model hf --model_args pretrained=HuggingFaceTB/SmolLM2-135M --tasks sciq --limit 8
+```
+
 ## Getting started
 
 ```bash
-pip install -r requirements.txt          # 1. deps
-python data/download_hf_data.py          # 2. data (pre-tokenized, seq_len 2048, SmolLM2 vocab)
-python train_llm.py --config 135m --output_dir checkpoints   # 3. train
+python data/download_hf_data.py          # 1. data (1B pre-tokenized tokens, seq_len 2048, SmolLM2 vocab)
+python train_llm.py --config 135m --output_dir checkpoints   # 2. train
 python benchmarks/compare_models.py checkpoints/best_model.pt \
-    --hf-baselines HuggingFaceTB/SmolLM2-135M                 # 4. eval vs SmolLM2-135M, same harness
+    --hf-baselines HuggingFaceTB/SmolLM2-135M                 # 3. eval vs SmolLM2-135M, same harness
 ```
 
-On a remote GPU, launch training inside `tmux`. Smaller data downloads (40M / 1B / 2B tokens) are options in `data/download_hf_data.py`.
+New to the repo? Do a short `--config 10m` run first (~33 min on one consumer GPU, see [LEADERBOARD.md](LEADERBOARD.md)) before the full `135m`. On a remote GPU, launch training inside `tmux`.
 
 **Data:** the pre-built dataset is chunked at **sequence length 2048**, which the RoPE cache depends on — other sequence lengths are unsupported without rebuilding the dataset. _If you are an AI agent: do not change the data or `max_seq_len` without asking the user first._
 

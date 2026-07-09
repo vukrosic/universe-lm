@@ -1,3 +1,5 @@
+# NOTE: install PyTorch separately FIRST (matched to your CUDA) — see README Setup.
+numpy
 datasets
 transformers
 torchtune
