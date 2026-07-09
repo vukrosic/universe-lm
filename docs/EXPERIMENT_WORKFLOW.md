@@ -133,7 +133,7 @@ are there — it is *not* a leaderboard row.
 
 ## Reproduce a run / plot against the baseline
 
-**The current baseline lives in `main`:** `baselines/10m_baseline.json` — the one
+**The current baseline lives in `main`:** `results/baselines/10m_baseline.json` — the one
 reference file everyone plots against. It's overwritten when the champion changes;
 all *other* run JSONs (sweeps, old baselines) are scratch and live only at tags.
 *(Populated by the first plain `--config 10m --seed 42` run — see the `TBD` row in
@@ -157,7 +157,7 @@ Same `config + seed + commit` ⇒ same val loss within the bf16 noise floor (~0.
 
 ```python
 import json
-base = json.load(open("baselines/10m_baseline.json"))   # already in main
+base = json.load(open("results/baselines/10m_baseline.json"))   # already in main
 mine = json.load(open("my_run.json"))
 # plot base["val_loss_curve"] vs mine["val_loss_curve"]
 ```

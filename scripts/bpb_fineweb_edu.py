@@ -1,8 +1,8 @@
 """Compute FineWeb-Edu held-out bits-per-byte (BPB) for a causal LM.
 
 Tokenizer-independent scalar used as the A/B decision metric in
-plans/beat-smollm2-135m.md. Pinned to the protocol in
-plans/benchmark-protocol.md §5.
+docs/plans/beat-smollm2-135m.md. Pinned to the protocol in
+docs/plans/benchmark-protocol.md §5.
 
 Held-out slice: first 5 MB of UTF-8 text from HuggingFaceFW/fineweb-edu,
 config sample-10BT, train split (FineWeb-Edu ships no validation split;

@@ -1,6 +1,6 @@
 # Literature review: sub-200M / sub-400M open LMs (2024–2026)
 
-Compiled 2026-06-10 to inform `plans/beat-smollm2-135m.md`.
+Compiled 2026-06-10 to inform `docs/plans/beat-smollm2-135m.md`.
 Numbers are **paper / model card numbers** unless tagged `leaderboard`. We will
 rerun everything in Phase 0 (per the program plan), but the table below sets
 the SOTA expectations and the field of comparison.

@@ -1,67 +1,56 @@
 # Contributing to Universe
 
-You contribute **code, not compute.** You take a brief, your AI writes one
-experiment, and you open a pull request. A maintainer reviews and merges it, then
-runs it on a single reference GPU under a fixed integrity gate. You never run
-training yourself and no API keys ever change hands — **GitHub is the gate.**
+Everything lands as a **pull request**, and credit works one way: **accepted PRs get
+named credit on the published report.** There are two ways in.
 
-This keeps results trustworthy: every architecture is measured the same way, on
-the same box, with paired same-seed controls, so a win is a real win and not GPU
-noise. (Donating GPU compute is a separate path that opens later — for now the
-maintainer's box runs everything.)
+## Path 1 — Claim a paper task (the main path)
 
-## The loop in one picture
+Open [`tasks/`](tasks/) and pick a task (P1–P8 and growing). Each one is a self-contained
+1–2 day experiment from a recent paper: what to read, what to implement, what to train,
+and what an accepted result looks like. You run it yourself on a cheap rented GPU —
+most tasks cost **$2–25** at the 23M/52M configs.
 
-```
-pick a brief  ->  your AI writes one experiment  ->  open a PR
-                                                        |
-                                          maintainer reviews + merges
-                                                        |
-                            maintainer's daemon runs it on the reference box
-                              (same-seed paired controls, confirm gate)
-                                                        |
-                                   result lands on the record timeline
-```
+The rules that make a result acceptable are in [`tasks/README.md`](tasks/README.md).
+The short version:
 
-## What you submit
+1. **Baseline first.** Your first PR reproduces the pinned baseline
+   (`--config_class configs.llm_config.Ladder23M469MConfig`, seed 42) and reports the
+   loss curve, final val loss, wall-clock, and GPU. Every task compares against it.
+2. **Read the actual paper PDF** before running anything.
+3. **Equal token budgets between arms, control run in the same session,** config diff +
+   logs + **at least one figure** in the PR. No figure, not accepted.
+4. Data-axis arms are scored on the shared FineWeb-Edu held-out set
+   (`scripts/bpb_fineweb_edu.py`). Different tokenizers or corpora → report
+   **bits-per-byte**, never per-token loss.
 
-Each experiment is **one structural mechanism** stacked on the current champion,
-behind a feature flag that is **OFF by default**. A PR adds exactly three things:
+The live task board is beads (`bd ready` — see [TASKS.md](TASKS.md)); the task files in
+`tasks/papers/` are the briefs. Comment on the matching issue (or open one) to claim,
+so two people don't burn GPU money on the same task.
 
-1. **The mechanism**, behind a new `use_<name>` config flag (default `False`) in
-   the model code (`configs/`, `models/`). Default-OFF means merging your PR
-   changes nothing until the stub turns it on — so it can never silently regress
-   the champion.
-2. **An experiment stub** `_arq_<id>-<slug>.py` at the repo root that enables your
-   flag on top of the champion config and launches training. Copy an existing
-   `_arq_*.py` as a template — they all follow the same shape.
-3. **A queue entry** under `archive/internal/autoresearch/ideas/<id>-<slug>/`:
-   - `idea.md` — YAML frontmatter (`id`, `status: needs-run`, `plain:` one-line
-     hypothesis) then a short body: the mechanism, the citation, and a
-     **falsifiable claim** (e.g. "val < 6.1700 ⇒ screen-win").
-   - `run.json` — `{ "name": "<id>-<slug>", "arq_file": "_arq_<id>-<slug>.py", "job_timeout": "12m" }`
+## Path 2 — Take the speedrun record
 
-That is the whole deliverable. No training run, no metrics, no plots — the
-reference box produces those.
+Race for the **lowest val loss on the `10m` config** (~10M params, 200M tokens, ~33 min
+on one consumer GPU). Pinned: `seed=42`, bf16. A record must beat the standing one by
+**≥0.01**. Standings and tier details: [LEADERBOARD.md](LEADERBOARD.md).
 
-## The one rule: novel mechanisms, not hyperparameter search
+Mechanism PRs follow one shape:
 
-Submit **structural** ideas — attention, positional encoding, normalization, FFN,
-loss, residual routing. **Do not** sweep learning rate, weight decay, momentum,
-batch size, schedule, or init scale. Those axes are already tuned and closed; a PR
-that only changes a number will be rejected. Build your candidate the same way as
-the champion so the only difference measured is your mechanism.
+- **One structural mechanism per PR**, behind a new `use_<name>` config flag that is
+  **OFF by default** (in `configs/`, `models/`). Default-OFF means merging your PR
+  changes nothing until a run turns it on — it can never silently regress the champion.
+- **Structural ideas only** — attention, positional encoding, normalization, FFN, loss,
+  residual routing. **No hyperparameter sweeps**: learning rate, weight decay, batch
+  size, schedule, and init are tuned and closed; a PR that only changes a number will
+  be rejected.
+- Evidence in the PR: your run's `metrics.json`, the command line to reproduce it, and
+  the in-session control you compared against. Use `tiny1m3m` / `screen10m` to iterate
+  cheaply, but only a `10m` win takes the record.
 
-## How to start
+## Every PR, both paths
 
-1. Open a brief from the board (or an issue labeled `research`). It contains a
-   self-contained prompt you can hand straight to Claude Code, Codex, or any agent.
-2. Your agent forks/clones, implements the three pieces above, and opens a PR to
-   `main` titled after the brief.
-3. A maintainer reviews the code (the merge is the only trust boundary), merges,
-   and the daemon picks it up — builds it on the box's GPU venv (smoke test), runs
-   it, and confirms wins through the paired gate.
-4. The outcome shows up on the public record timeline. The champion only ever
-   moves through the confirm gate.
+- Reproducible: exact command line, config diff, seed, and committed `runs/<name>/metrics.json`.
+- Honest: negative results are welcome and get credited — a clean "this lever does
+  nothing here" saves everyone else the GPU money.
+- Clean: keep `model.pt`, checkpoints, and datasets out of git.
 
-Keep `model.pt` and any checkpoints out of git.
+Questions → open an issue or reach [@vukrosic](https://github.com/vukrosic).

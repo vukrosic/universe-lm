@@ -1,4 +1,4 @@
-# Data pipeline — Phase 3 of plans/beat-smollm2-135m.md
+# Data pipeline — Phase 3 of docs/plans/beat-smollm2-135m.md
 
 Status: v1 (2026-06-10). Owner: Phase 3.
 Hard ceiling: 4–5 TB on the Vast box. Must fit pre-tokenized 2T tokens.
@@ -25,7 +25,7 @@ Hard ceiling: 4–5 TB on the Vast box. Must fit pre-tokenized 2T tokens.
 
 Paper: *"SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model"*, [arXiv:2502.02737](https://arxiv.org/abs/2502.02737), §6.
 
-- **Architecture:** Llama2-style, GQA; 30L / 576h / 9 q-heads / 3 kv-heads; context 2k (base), 8k after the context-extension step; 2T tokens; WSD scheduler, **20% decay**, **peak LR 3.0e-3**; bfloat16, nanotron. (See `plans/beat-smollm2-135m.md` for our pinned target spec.)
+- **Architecture:** Llama2-style, GQA; 30L / 576h / 9 q-heads / 3 kv-heads; context 2k (base), 8k after the context-extension step; 2T tokens; WSD scheduler, **20% decay**, **peak LR 3.0e-3**; bfloat16, nanotron. (See `docs/plans/beat-smollm2-135m.md` for our pinned target spec.)
 - **Single-stage training** for 135M / 360M (the 1.7B used the 4-stage curriculum in §4). The 135M mix:
   - **English web:** DCLM re-filtered through the FineWeb-Edu classifier — drop `int_score=0`, downsample `1` and `2`.
   - **Code:** Stack-Edu, from the start (not introduced at Stage 3 like the 1.7B).

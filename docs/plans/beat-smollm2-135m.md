@@ -53,7 +53,7 @@ bracket + no task regression beyond bracket.
 ### Phase 0 — Pin the target (week of 2026-06-15, ~$0, CPU + small GPU)
 - [ ] Run lm-eval-harness on released SmolLM2-135M → `BASELINE.md` (scores,
       harness commit, task versions, exact commands)
-- [x] Harness pinned + smoke eval done (see `plans/benchmark-protocol.md`,
+- [x] Harness pinned + smoke eval done (see `docs/plans/benchmark-protocol.md`,
       `scripts/eval_baseline.sh`, `results/baseline-smollm2-135m/`) — full
       suite still needs a GPU box
 - DECIDED 2026-06-10: we take NOTHING from SmolLM2 — no arch config, no

@@ -88,7 +88,7 @@ def load_exact_step_baseline(config: LLMConfig) -> Dict[int, float]:
     """Load exact-step baseline values for log-only comparisons."""
     if config.train_tokens < 150_000_000:
         return {}
-    baseline_path = Path("baselines/10m_baseline.json")
+    baseline_path = Path("results/baselines/10m_baseline.json")
     if not baseline_path.exists():
         return {}
     with open(baseline_path) as f:
