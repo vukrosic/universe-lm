@@ -6,6 +6,23 @@
 - 🧱 **Architecture:** a standard, known-good decoder-only transformer (GQA + RoPE, RMSNorm, QK-norm, squared-ReLU FFN, Muon), matched to SmolLM2's shape. Experimental levers live behind default-OFF config flags. Details + the compute plan: [`docs/compute-plan.md`](docs/compute-plan.md).
 - 🤝 **The blocker is GPUs, not ideas** — the first ask is ~200 A100-hours to a real head-to-head number. Open an issue or reach [@vukrosic](https://github.com/vukrosic) (Zhongguancun, Beijing — happy to meet).
 
+### The bar, measured
+
+The 8-task pinned suite and SmolLM2-135M's score on **our own harness** (lm-eval-harness 0.4.12, zero-shot, seed 42, bf16; measured 2026-07-09). The win condition is beating the majority of these at a matched token budget.
+
+| Benchmark | What it tests | Metric | SmolLM2-135M | universe-lm |
+|---|---|---|---|---|
+| **SciQ** | science-exam MCQ | acc | 0.840 | _TBD_ |
+| **PIQA** | physical commonsense | acc | 0.684 | _TBD_ |
+| **ARC-Easy** | grade-school science MCQ | acc | 0.646 | _TBD_ |
+| **WinoGrande** | pronoun coreference | acc | 0.530 | _TBD_ |
+| **HellaSwag** | commonsense sentence completion | acc_norm | 0.430 | _TBD_ |
+| **LAMBADA** | long-range word prediction | acc (ppl) | 0.429 (19.05) | _TBD_ |
+| **OpenBookQA** | open-book science QA | acc_norm | 0.326 | _TBD_ |
+| **ARC-Challenge** | harder science MCQ | acc_norm | 0.300 | _TBD_ |
+
+Reproduce the baseline (no checkpoint needed): `./evals/run_baseline_suite.sh HuggingFaceTB/SmolLM2-135M`. `commonsense_qa`, `mmlu`, `gsm8k` are excluded — a 135M model scores at chance on them.
+
 ## Getting started
 
 ```bash
