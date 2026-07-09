@@ -23,6 +23,8 @@ The 8-task pinned suite and SmolLM2-135M's score on **our own harness** (lm-eval
 
 Reproduce the baseline (no checkpoint needed): `./evals/run_baseline_suite.sh HuggingFaceTB/SmolLM2-135M`. `commonsense_qa`, `mmlu`, `gsm8k` are excluded — a 135M model scores at chance on them.
 
+**First lab finding (2026-07-09) — data corpus, 52M / 204.8M tokens matched:** FineWeb-Edu beats raw FineWeb decisively — val-acc **0.3363 vs 0.3142** (+0.0221, ~55× the ±0.0004 noise band), perplexity **46.4 vs 57.2**. Same architecture, seed, and token budget; only the corpus differs. Educational-filtered data is a large, cheap lever at this scale.
+
 ## Setup
 
 **Prerequisites:** Python 3.10+ and an NVIDIA GPU for training (CPU works only for the smoke test below).
