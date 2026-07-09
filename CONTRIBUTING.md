@@ -35,7 +35,7 @@ behind a feature flag that is **OFF by default**. A PR adds exactly three things
 2. **An experiment stub** `_arq_<id>-<slug>.py` at the repo root that enables your
    flag on top of the champion config and launches training. Copy an existing
    `_arq_*.py` as a template — they all follow the same shape.
-3. **A queue entry** under `autoresearch/ideas/<id>-<slug>/`:
+3. **A queue entry** under `archive/internal/autoresearch/ideas/<id>-<slug>/`:
    - `idea.md` — YAML frontmatter (`id`, `status: needs-run`, `plain:` one-line
      hypothesis) then a short body: the mechanism, the citation, and a
      **falsifiable claim** (e.g. "val < 6.1700 ⇒ screen-win").

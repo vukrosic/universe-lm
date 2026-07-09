@@ -122,7 +122,6 @@ The full compute plan and tiered ask are in [**The plan**](#-the-plan--and-what-
 
 ```
 train_llm.py        entry point (--config {default,10m,135m,...})
-run_experiment.py   generic experiment runner
 configs/            LLMConfig + presets (Full135M2700MConfig = the 135m target) + ablation configs
 models/             MinimalLLM — transformer layers (GQA, RoPE, RMSNorm)
 training/           trainer
@@ -131,13 +130,14 @@ benchmarks/         ARC, HellaSwag, compare_models.py (universe-lm vs HF baselin
 evals/              GSM8K, HumanEval, MBPP
 tasks/              claimable experiment tasks from recent papers (ICML/ICLR 2026)
 data/               dataset download + loader
-autoresearch/       research notes, idea backlog, scaling ladder
+runs/               committed metrics.json per run + EVIDENCE_INDEX.md (the results record)
+plans/              win condition + pinned benchmark protocol
 docs/               setup guides + architecture.pdf
-archive/            retired one-off scripts + past results (kept for history)
+archive/            retired scripts, past results, internal lab machinery (kept for history)
 ```
 
 ---
 
 ## 💡 Idea backlog
 
-A parking lot of unvetted levers to pull from when picking the next experiment lives in [`autoresearch/`](autoresearch/) — split into **(A)** new architectures/mechanisms (higher ceiling, more work) and **(B)** recipe/hyperparameter knobs (cheaper, lower ceiling). The single biggest known un-pulled lever is **data**: SmolLM2's real edge is FineWeb-Edu/DCLM filtering, which at a fixed token budget likely dwarfs any single architecture change.
+A parking lot of unvetted levers to pull from when picking the next experiment lives in [`archive/internal/autoresearch/`](archive/internal/autoresearch/) — split into **(A)** new architectures/mechanisms (higher ceiling, more work) and **(B)** recipe/hyperparameter knobs (cheaper, lower ceiling). The single biggest known un-pulled lever is **data**: SmolLM2's real edge is FineWeb-Edu/DCLM filtering, which at a fixed token budget likely dwarfs any single architecture change.
